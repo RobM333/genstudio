@@ -488,3 +488,32 @@ kbd {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
   html { scroll-behavior: auto; }
 }
+
+/* Legal pages, agreement, footer */
+.legal { max-width: 760px; margin: 0 auto; padding: 24px 16px 64px; }
+.legal h1 { font-size: 30px; margin: 20px 0 4px; letter-spacing: -0.02em; }
+.legal h2 { font-size: 18px; margin: 28px 0 8px; }
+.legal p, .legal li { color: #d6d6e2; }
+.legal li { margin-bottom: 6px; }
+.legal a { color: var(--cyan); }
+.legal-back { display: inline-block; color: var(--muted) !important; text-decoration: none; margin-bottom: 16px; }
+.legal-links { margin-top: 40px; font-size: 14px; }
+.site-footer {
+  display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 32px; padding: 16px 4px;
+  border-top: 1px solid var(--line); font-size: 13px; color: var(--muted);
+}
+.site-footer a { color: var(--muted); }
+.site-footer a:hover { color: var(--text); }
+.agree {
+  background: var(--panel-solid); border: 1px solid var(--line-strong); border-radius: 22px; padding: 26px;
+  box-shadow: 0 40px 120px -30px rgba(0,0,0,0.9);
+  max-width: 520px; width: 100%;
+}
+.agree h2 { margin: 0 0 10px; font-size: 20px; }
+.agree ul { padding-left: 18px; color: #d6d6e2; margin: 0 0 16px; }
+.agree li { margin-bottom: 6px; }
+.agree-check { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; cursor: pointer; }
+.agree-check input { margin-top: 3px; width: 16px; height: 16px; accent-color: var(--accent); }
+.agree-check a { color: var(--cyan); }
+.agree-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
+.agree-actions .generate { width: auto; padding: 11px 18px; justify-content: center; }

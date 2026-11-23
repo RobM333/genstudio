@@ -6,6 +6,9 @@ import { autoAspectRatios, pickModel, type Quality } from "@/lib/router";
 import { fillTemplate, TEMPLATES, type Template } from "@/lib/templates";
 import type { AppMode } from "@/lib/config";
 import { HERO_MEDIA, INSPO_MEDIA, TEMPLATE_MEDIA, type ShowcaseMedia } from "@/lib/showcase";
+import { checkPrompt } from "@/lib/safety";
+import AgreeModal, { hasAcceptedTerms } from "./AgreeModal";
+import Link from "next/link";
 
 type Item = {
   id: string;
@@ -85,6 +88,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
   const [choice, setChoice] = useState<string>(AUTO); // "auto" or a model id
   const [quality, setQuality] = useState<Quality>("draft");
   const [sound, setSound] = useState(true);
+  const [askTerms, setAskTerms] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>("1:1");
   const [duration, setDuration] = useState<number | undefined>(undefined);
@@ -250,6 +254,15 @@ export default function Studio({ mode }: { mode: AppMode }) {
     const text = prompt.trim();
     if (!text) {
       setFormError("Describe what you want to create first.");
+      return;
+    }
+    const safety = checkPrompt(text);
+    if (!safety.ok) {
+      setFormError(safety.reason);
+      return;
+    }
+    if (!hasAcceptedTerms()) {
+      setAskTerms(true);
       return;
     }
     runJob({
@@ -709,6 +722,24 @@ export default function Studio({ mode }: { mode: AppMode }) {
           </div>
         </section>
       </main>
+
+      <footer className="site-footer">
+        <span>You are responsible for what you create with GenStudio.</span>
+        <span>
+          <Link href="/terms">Terms</Link> · <Link href="/acceptable-use">Acceptable use</Link> ·{" "}
+          <Link href="/privacy">Privacy</Link>
+        </span>
+      </footer>
+
+      {askTerms && (
+        <AgreeModal
+          onCancel={() => setAskTerms(false)}
+          onAgree={() => {
+            setAskTerms(false);
+            setTimeout(generate, 0);
+          }}
+        />
+      )}
 
       {open && (
         <div className="overlay" onClick={() => setOpen(null)}>

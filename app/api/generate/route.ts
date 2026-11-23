@@ -3,6 +3,7 @@ import { getMode } from "@/lib/config";
 import { getModel, isFalMediaUrl, type AspectRatio } from "@/lib/models";
 import { makeDemoMedia } from "@/lib/demo";
 import { fal } from "@/lib/fal";
+import { checkPrompt } from "@/lib/safety";
 
 export const dynamic = "force-dynamic";
 
@@ -23,6 +24,9 @@ export async function POST(req: Request) {
   if (!prompt) return NextResponse.json({ error: "Please describe what you want to create." }, { status: 400 });
   if (prompt.length > MAX_PROMPT)
     return NextResponse.json({ error: `Prompt is too long (max ${MAX_PROMPT} characters).` }, { status: 400 });
+
+  const safety = checkPrompt(prompt);
+  if (!safety.ok) return NextResponse.json({ error: safety.reason, blocked: true }, { status: 422 });
 
   const sourceUrl = model.needsSource ? String(body.sourceUrl ?? "") : undefined;
   if (model.needsSource && !sourceUrl) return NextResponse.json({ error: "No video to add sound to." }, { status: 400 });

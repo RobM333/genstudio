@@ -1,0 +1,114 @@
+import type { Metadata } from "next";
+import LegalPage from "@/components/LegalPage";
+
+export const metadata: Metadata = { title: "Privacy Policy · GenStudio" };
+
+// DRAFT for lawyer review. Update when accounts, payments or analytics are added.
+export default function Privacy() {
+  return (
+    <LegalPage title="Privacy Policy">
+      <p>
+        This policy explains what information GenStudio, operated by [Company name] (&quot;we&quot;), collects, why,
+        who we share it with, and the choices you have. In short: we collect only what we need to make your images and
+        videos, we don&apos;t sell your data, and we don&apos;t use your content to train AI.
+      </p>
+
+      <h2>1. What we collect</h2>
+      <ul>
+        <li>
+          <strong>Your content</strong>: the prompts, settings and any images or videos you give us, and the Outputs we
+          create for you.
+        </li>
+        <li>
+          <strong>Technical data</strong>: IP address, browser and device type, pages used, and error logs. Our hosting
+          provider collects this to deliver and protect the site.
+        </li>
+        <li>
+          <strong>Data stored in your browser</strong>: your gallery and your acceptance of these policies are saved in
+          your own browser (local storage), not on our servers. Clearing your browser data removes them.
+        </li>
+        <li>
+          <strong>Later, when accounts and payments launch</strong>: your name and email, and billing details handled
+          by our payment processor. We will never see or store your full card number.
+        </li>
+      </ul>
+      <p>
+        We don&apos;t collect face scans, voiceprints or other biometric identifiers, and we ask you not to put
+        sensitive personal information (such as health data or ID numbers) in prompts.
+      </p>
+
+      <h2>2. How we use it</h2>
+      <ul>
+        <li>To create your Outputs and run the Service.</li>
+        <li>To keep the Service safe: filtering prompts, preventing abuse, and responding to reports.</li>
+        <li>To fix problems and understand which features are used, using aggregated data.</li>
+        <li>To meet legal obligations.</li>
+      </ul>
+      <p>
+        <strong>We do not use your content to train AI models, we don&apos;t sell your personal information, and we
+        don&apos;t use it for targeted advertising.</strong>
+      </p>
+
+      <h2>3. Who we share it with</h2>
+      <ul>
+        <li>
+          <strong>AI providers</strong>: your prompts and Inputs are sent to fal.ai and the companies whose models you
+          choose (for example Black Forest Labs, Google, Kuaishou, MiniMax and Recraft) only to create your Outputs.
+          They process it under their own terms and privacy policies.
+        </li>
+        <li>
+          <strong>Service providers</strong>: hosting (Netlify), and later our database and payment providers. They act
+          on our instructions.
+        </li>
+        <li><strong>Authorities</strong>, when the law requires it or to protect people from serious harm.</li>
+        <li><strong>A buyer or successor</strong>, if our business is sold or merged, under this policy.</li>
+      </ul>
+      <p>
+        Generated files are stored by our AI provider at web addresses that are hard to guess but not password
+        protected. Anyone you share a file link with can open it.
+      </p>
+
+      <h2>4. How long we keep it</h2>
+      <p>
+        We keep content only as long as needed to provide the Service. Files stored by our AI provider are kept for
+        [retention period per provider]. Server logs are kept for up to [30] days. When accounts launch, deleting your
+        account deletes your content within [30] days, except where the law requires us to keep it.
+      </p>
+
+      <h2>5. Your rights</h2>
+      <p>
+        Depending on where you live (including under the GDPR in the EU and UK and the CCPA in California), you may have
+        the right to access, correct, delete or export your personal information, to object to or limit how we use it,
+        and to complain to your data protection authority. We honour Global Privacy Control signals. To use these
+        rights, email [privacy email]. We won&apos;t treat you differently for using them.
+      </p>
+
+      <h2>6. Cookies</h2>
+      <p>
+        We use only what is needed to run the site, such as browser storage for your gallery and your password sign-in.
+        We don&apos;t use advertising cookies. If we add analytics, we will update this policy and ask where required.
+      </p>
+
+      <h2>7. Security</h2>
+      <p>
+        We use encryption in transit (HTTPS), keep API keys on the server only, and limit who can access data. No system
+        is perfectly secure, so please don&apos;t put information in prompts that you wouldn&apos;t want stored.
+      </p>
+
+      <h2>8. International transfers</h2>
+      <p>
+        Our providers may process data in the United States and other countries. Where required, we rely on legal
+        safeguards such as Standard Contractual Clauses.
+      </p>
+
+      <h2>9. Children</h2>
+      <p>GenStudio is for adults 18 and over. We don&apos;t knowingly collect information from children.</p>
+
+      <h2>10. Changes and contact</h2>
+      <p>
+        We will post updates here and give notice of important changes. Questions: [privacy email], [Company name],
+        [address].
+      </p>
+    </LegalPage>
+  );
+}
