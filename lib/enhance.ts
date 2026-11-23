@@ -7,6 +7,7 @@
 // used instead, so generation never waits on the enhancer.
 
 import type { ModelInfo } from "./models";
+import { firstShot } from "./shots";
 
 const TIMEOUT_MS = 8000;
 export const DEFAULT_AVOID = "blur, distortion, morphing, changing faces or clothes, extra limbs, people passing through objects, smoke or dust clouds, broken things repairing themselves, glass reassembling, text, logos";
@@ -28,7 +29,6 @@ Rules:
 - For sports, uniforms or products, invent plain team colours and a made-up name or none. Never use real teams, clubs, leagues, jersey numbers tied to famous players, or brand logos.
 - For pictures, write one paragraph of about 60 to 110 words. For videos, follow the length given below. Plain English.`;
 
-const PLAIN_REPLY = "Reply with the prompt only. No title, no explanation, no quotes around the whole thing.";
 const JSON_REPLY = `Reply with JSON only, like {"prompt": "...", "note": "..."}.
 "note" is one short, friendly sentence to the user ONLY if you had to simplify or change their idea (for example "Your idea has three moments; a short clip can show one, so we focused on the dunk."). Otherwise "note" is "".`;
 const VIDEO_JSON_REPLY = `Reply with JSON only, like {"prompt": "...", "avoid": "...", "note": "..."}.
@@ -88,6 +88,9 @@ ${MOTION_PLAN}`;
 const STILL_RULES = `${LAYOUT_PLAN}
 Describe one frozen moment.`;
 
+// Ideas pasted from video scripts often describe several shots with a cut; a picture can show one.
+const ONE_FRAME = `A picture is ONE frame from ONE camera position. If the description has several shots, a cut, a second angle or events in order, picture only the first shot (keep its camera, subject and action, and keep the overall light, mood and colours), drop the rest, and say so in the note (for example "A picture shows one shot, so we pictured the low-angle bumper shot. Make it a video to get the aerial shot too.").`;
+
 function systemPrompt(model: ModelInfo, sound: boolean, purpose: Purpose, seconds = 5): string {
   if (purpose === "refix") {
     return `${COMMON}
@@ -122,7 +125,7 @@ ${VIDEO_JSON_REPLY}`;
       model.id.includes("nano-banana") || model.id.includes("recraft")
         ? "This model is good at text and graphic design. Keep any wording exact, describe layout, typography style and colour palette."
         : "Describe the subject first, then composition and framing, lighting, lens or camera (for photos) or art style (for illustrations), colour palette and mood.";
-    return `${COMMON}\nThis is for a still image. ${extra}\n${STILL_RULES}\n${PLAIN_REPLY}`;
+    return `${COMMON}\nThis is for a still image. ${extra}\n${STILL_RULES}\n${ONE_FRAME}\n${JSON_REPLY}`;
   }
   const soundLine =
     model.audio && sound
@@ -143,7 +146,7 @@ function refNote(kinds: string[]): string {
 
 /** Simple fallback used in demo mode or when the AI writer isn't available. */
 export function enhanceWithRules(prompt: string, model: ModelInfo, sound = true): string {
-  const p = prompt.trim().replace(/[.\s]+$/, "");
+  const p = (model.kind === "image" ? firstShot(prompt) : prompt).trim().replace(/[.\s]+$/, "");
   const lower = p.toLowerCase();
   const has = (...w: string[]) => w.some((x) => lower.includes(x));
   const add: string[] = [];

@@ -35,6 +35,10 @@ export function pickModel(opts: { kind: MediaKind; prompt: string; quality: Qual
       if (wantsText) {
         return { model: first(["fal-ai/nano-banana"], aspectRatio, kind), reason: "spells words in images correctly" };
       }
+      // FLUX Schnell is cheap but loses details in long, precise descriptions (camera, lens, layout).
+      if (isDetailed(prompt)) {
+        return { model: first(["fal-ai/nano-banana"], aspectRatio, kind), reason: "follows long, detailed descriptions closely" };
+      }
       return { model: first(["fal-ai/flux/schnell"], aspectRatio, kind), reason: "cheapest and fastest, good for trying ideas" };
     }
     if (wantsText) {
@@ -64,6 +68,13 @@ export function pickModel(opts: { kind: MediaKind; prompt: string; quality: Qual
 export function autoAspectRatios(kind: MediaKind): AspectRatio[] {
   const all: AspectRatio[] = ["1:1", "16:9", "9:16"];
   return all.filter((ar) => MODELS.some((m) => m.kind === kind && m.aspectRatios.includes(ar)));
+}
+
+/** A precise picture description: long, or with camera, lens or layout directions. */
+export function isDetailed(prompt: string): boolean {
+  const words = prompt.split(/\s+/).filter(Boolean).length;
+  const camera = (prompt.toLowerCase().match(/\b(\d{2,3}mm|lens|low angle|high angle|overhead|aerial|close-up|wide shot|medium shot|foreground|background|on the left|on the right|facing|silhouette)\b/g) ?? []).length;
+  return words > 30 || camera >= 2;
 }
 
 /** Long or story-like scenes with several people: weaker models mix up who is where. */

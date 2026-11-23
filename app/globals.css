@@ -1029,3 +1029,5 @@ select.text-input { appearance: auto; }
 .package p { margin: 4px 0 0; }
 .package-price { font-weight: 600; }
 .pricing-foot { margin-top: 36px; }
+.shots-warning { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.shots-actions { display: flex; gap: 8px; flex-wrap: wrap; }

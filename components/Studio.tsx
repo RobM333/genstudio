@@ -14,6 +14,7 @@ import ReferencesBox, { finishReference, loadRefs, saveRefs, type RefItem } from
 import BrandKit, { brandInfo, hasBrand, KIT_PICTURES, loadBrand, saveBrand, type Brand } from "./BrandKit";
 import { brandLine, colorName } from "@/lib/brand";
 import type { Direction, DirectorReply } from "@/lib/director";
+import { describesSeveralShots, firstShot } from "@/lib/shots";
 import { addSoundTo, animateShot, joinShots, lastFrame, planStory, startPicture, type Story } from "./storyRunner";
 import { lengthAdvice, LONG_LENGTHS, MAX_STORY_SECONDS, type ShotPlan } from "@/lib/storyboard";
 import { nextLength, readChat } from "@/lib/chat";
@@ -1748,8 +1749,12 @@ export default function Studio({ mode }: { mode: AppMode }) {
       {!directorShown && (
         <button className="director-ask" onClick={() => askDirector()} disabled={directorBusy || mode === "locked"}>
           <span>
-            🎬 <strong>{directorBusy ? "The director is thinking..." : "Ask the creative director"}</strong>
-            <span className="muted small"> Get 3 ways to shoot your idea: camera, light, pacing, length and shape. Pick one with a click.</span>
+            {kind === "image" ? "📸" : "🎬"} <strong>{directorBusy ? "The director is thinking..." : `Ask the creative director for your ${kind === "image" ? "picture" : "video"}`}</strong>
+            <span className="muted small">
+              {kind === "image"
+                ? " Get 3 ways to frame it as one still shot: angle, lens, light and composition. Pick one with a click."
+                : " Get 3 ways to film it: shots, camera moves, pacing, length and shape. Pick one with a click."}
+            </span>
           </span>
           <span className="tag">{mode === "demo" ? "Free" : "under 1 cent"}</span>
         </button>
@@ -1757,11 +1762,16 @@ export default function Studio({ mode }: { mode: AppMode }) {
       {directorShown && (
         <div className="director-box">
           <div className="director-head">
-            <strong>🎬 Your creative director</strong>
+            <strong>{kind === "image" ? "📸 Directing your picture" : "🎬 Directing your video"}</strong>
             <button className="link-btn" onClick={() => setDirector(null)}>
               Close
             </button>
           </div>
+          <p className="muted small director-kind">
+            {kind === "image"
+              ? "A picture is one frame from one camera, so each direction is a single shot. Want several shots or movement? Switch to Video clip."
+              : "Each direction plans the shots, the camera moves and the timing. The length and shape fill in when you pick one."}
+          </p>
           {director.read && <p className="muted small">{director.read}</p>}
           <div className="director-cards">
             {director.directions.map((d, i) => (
@@ -1828,6 +1838,19 @@ export default function Studio({ mode }: { mode: AppMode }) {
       />
       <span className="prompt-count">{prompt.length}/2000</span>
     </div>
+    {kind === "image" && describesSeveralShots(prompt) && (
+      <div className="notice warn small-notice shots-warning">
+        <span>⚠️ This describes more than one shot, with a cut. A picture can only show one shot, so the result would mix them up.</span>
+        <span className="shots-actions">
+          <button className="pill active" onClick={() => switchKind("video")}>
+            🎬 Make it a video
+          </button>
+          <button className="pill" onClick={() => setPrompt(firstShot(prompt))}>
+            Keep only the first shot
+          </button>
+        </span>
+      </div>
+    )}
     {directorPanel}
     <label className="enhance-toggle">
       <input type="checkbox" checked={enhance} onChange={(e) => setEnhance(e.target.checked)} />
