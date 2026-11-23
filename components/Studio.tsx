@@ -990,13 +990,39 @@ export default function Studio({ mode }: { mode: AppMode }) {
     go("create");
   }
 
+  /** Opens the Create form again with this result's settings filled in. A full ad comes back with its plan, ready to edit and rebuild. */
   function reuse(it: Item) {
     setTemplate(null);
+    setFormError(null);
+    setAdError(null);
+    if (it.ad) {
+      setAdMode(true);
+      setBrief({ product: it.ad.brief.product, audience: it.ad.brief.audience, seconds: it.ad.brief.seconds, tone: it.ad.brief.tone });
+      setAdShape(it.aspectRatio);
+      setAdPlan(JSON.parse(JSON.stringify(it.ad.plan)) as AdPlan);
+      if (it.ad.refs?.length) setRefs(it.ad.refs.map((r) => ({ ...r, kind: r.kind as RefItem["kind"] })));
+      setComposing(true);
+      go("create");
+      return;
+    }
+    setAdMode(false);
     setKind(it.kind);
-    setChoice(it.quality ? AUTO : it.modelId);
+    // Videos made from linked shots or from a picture go back to the matching text-to-video model.
+    const pickable = MODELS.some((m) => m.id === it.modelId);
+    setChoice(it.quality || !pickable ? AUTO : it.modelId);
     if (it.quality) setQuality(it.quality);
     setAspectRatio(it.aspectRatio);
-    setPrompt(it.prompt);
+    setPrompt(basePrompt(it));
+    if (it.kind === "video") {
+      if (it.story && (it.duration ?? 0) > 10) setStoryLen(LONG_LENGTHS.find((d) => d >= (it.duration ?? 0)) ?? MAX_STORY_SECONDS);
+      else {
+        setStoryLen(null);
+        if (it.duration) setDuration(it.duration);
+      }
+    }
+    setComposing(true);
+    go("create");
+    setTimeout(() => document.getElementById("prompt")?.focus(), 80);
   }
 
   function switchKind(k: MediaKind) {
