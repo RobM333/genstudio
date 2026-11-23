@@ -20,6 +20,7 @@ Rules:
 - Do not add real people, celebrities, brands, logos or trademarks the user did not mention.
 - Do not add any nudity, sexual content, violence or gore.
 - If the user's text is in quotes or they ask for words on screen, keep that text exactly, in quotes.
+- Never add any other words, slogans or captions to the image. If the user asked for no text, say "no text".
 - Write one paragraph, about 60 to 100 words, in plain English.
 - Reply with the prompt only. No title, no explanation, no quotes around the whole thing.`;
 
