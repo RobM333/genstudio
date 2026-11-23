@@ -187,6 +187,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
   const [loaded, setLoaded] = useState(false);
   const [filter, setFilter] = useState<"all" | MediaKind>("all");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [recreateAsk, setRecreateAsk] = useState<string | null>(null); // a result waiting for "yes" before an expensive new take
   const [view, setView] = useState<View>("home");
   const [formError, setFormError] = useState<string | null>(null);
   const [refs, setRefs] = useState<RefItem[]>([]);
@@ -1214,6 +1215,66 @@ export default function Studio({ mode }: { mode: AppMode }) {
     setComposing(true);
     go("create");
     setTimeout(() => document.getElementById("prompt")?.focus(), 80);
+  }
+
+  /** How many shots a linked-shot video was planned with. */
+  function storyShotCount(it: Item): number {
+    return Math.max(1, it.story?.wantShots || it.story?.shots.length || 1);
+  }
+
+  /** Estimated price of a new take of this result, or null if it can't be made again. */
+  function recreateCost(it: Item): number | null {
+    if (it.ad) return adCost(it.ad.plan, !!it.ad.refs?.length, !!it.ad.check?.on);
+    if (it.story) return storyCost(it.story.firstModelId, storyShotCount(it), it.story.sound, !!it.story.refs?.length);
+    const m = getModel(it.modelId);
+    if (!m) return null;
+    if (m.needsSource || m.takesImage) {
+      if (!it.sourceUrl) return null; // the picture it was made from is gone
+    }
+    return estimateCost(m, it.duration, it.kind === "video" && it.wantSound !== false);
+  }
+
+  /** Makes a new take straight away, with the same prompt and settings. It joins the same history and chat. */
+  function recreate(it: Item) {
+    setRecreateAsk(null);
+    if (it.ad) {
+      const job = newAdJob(it.ad.brief, JSON.parse(JSON.stringify(it.ad.plan)) as AdPlan, it.ad.refs, !!it.ad.check?.on);
+      startAd(job, { parentId: it.id, aspectRatio: it.aspectRatio });
+      return;
+    }
+    if (it.story) {
+      const n = storyShotCount(it);
+      const planned = it.story.shots.map((s) => s.prompt).filter(Boolean);
+      startStory(it.prompt, planned.length === n ? planned : [], n, {
+        refs: it.story.refs as RefItem[] | undefined,
+        templateName: it.templateName,
+        parentId: it.id,
+        fixNote: it.fixNote,
+        videoModelId: it.story.firstModelId,
+        sound: it.story.sound,
+        aspectRatio: it.aspectRatio,
+      });
+      return;
+    }
+    runJob({
+      kind: it.kind,
+      modelId: it.modelId,
+      prompt: it.prompt,
+      aspectRatio: it.aspectRatio,
+      duration: it.duration,
+      quality: it.quality,
+      autoReason: it.autoReason,
+      parentId: it.id,
+      templateName: it.templateName,
+      sound: it.kind === "video" ? it.wantSound !== false : undefined,
+      enhance: it.enhance !== false,
+      sourceUrl: it.sourceUrl,
+      editPrompt: it.editPrompt,
+      fixNote: it.fixNote,
+      purpose: it.purpose,
+      keyframeFor: it.keyframeFor,
+      refs: it.refs,
+    });
   }
 
   function switchKind(k: MediaKind) {
@@ -2542,6 +2603,20 @@ export default function Studio({ mode }: { mode: AppMode }) {
     </div>
   );
 
+  // A new take of the selected result, priced before anything is spent. Big jobs ask once more.
+  const reCost = selected && selected.status !== "pending" && mode !== "locked" ? recreateCost(selected) : null;
+  const rePrice = reCost === null ? "" : mode === "demo" ? "free in demo" : `est. ${formatCost(reCost)}`;
+  const reAsking = !!selected && recreateAsk === selected.id && reCost !== null;
+  const reButton = selected && reCost !== null && (
+    <button
+      className="btn btn-recreate"
+      title="Make a new take right away, with the same prompt and settings"
+      onClick={() => (mode !== "demo" && reCost >= 1 ? setRecreateAsk(selected.id) : recreate(selected))}
+    >
+      {selected.status === "failed" ? "Try again" : "Re-create"} <span className="btn-price">{rePrice}</span>
+    </button>
+  );
+
   const stage = selected ? (
     <div className="canvas-wrap">
       <div className={`canvas canvas-${selected.aspectRatio.replace(":", "x")}`}>
@@ -2626,6 +2701,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
               Download
             </button>
           )}
+          {!reAsking && reButton}
           <button className="btn" onClick={() => reuse(selected)}>
             Reuse prompt
           </button>
@@ -2633,6 +2709,23 @@ export default function Studio({ mode }: { mode: AppMode }) {
             Delete
           </button>
         </div>
+        {reAsking && (
+          <div className="recreate-ask">
+            <p>
+              Make a new take of this {selected.ad ? "ad" : selected.kind} with the same prompt and settings? Estimated cost{" "}
+              <strong>{formatCost(reCost!)}</strong>
+              {selected.ad?.check?.on ? ", plus a little more only if the quality check has to fix a scene" : ""}. {COST_NOTE}
+            </p>
+            <div className="viewer-actions">
+              <button className="btn btn-light" onClick={() => recreate(selected)}>
+                Yes, make it
+              </button>
+              <button className="btn" onClick={() => setRecreateAsk(null)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   ) : (
