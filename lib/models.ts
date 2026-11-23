@@ -233,14 +233,14 @@ export const ANIMATE_MODELS: ModelInfo[] = [
     kind: "video",
     tagline: "Top quality from your picture, with sound.",
     approxCost: "~$0.15 / second",
-    durations: [8],
+    durations: [4, 6, 8],
     aspectRatios: ["16:9", "9:16"],
     takesImage: true,
-    buildInput: ({ prompt, aspectRatio, sound, sourceUrl }) => ({
+    buildInput: ({ prompt, aspectRatio, duration, sound, sourceUrl }) => ({
       prompt,
       image_url: sourceUrl,
       aspect_ratio: aspectRatio,
-      duration: "8s",
+      duration: `${duration ?? 8}s`,
       generate_audio: sound !== false,
     }),
   },
