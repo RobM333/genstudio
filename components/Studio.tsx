@@ -1158,6 +1158,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
   const kindTemplates = templatesIn(tplCat).filter((t) => t.kind === kind);
   const selected = items.find((it) => it.id === selectedId) ?? items[0] ?? null;
   const recent = items.slice(0, 12);
+  const selSize = selected ? sizedFor(selected) : undefined; // a picture made for an exact size (Teams background...)
 
   function go(v: View) {
     setView(v);
@@ -2578,7 +2579,6 @@ export default function Studio({ mode }: { mode: AppMode }) {
     </div>
   );
 
-  const selSize = selected ? sizedFor(selected) : undefined;
   const stage = selected ? (
     <div className="canvas-wrap">
       <div
