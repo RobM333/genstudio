@@ -17,6 +17,7 @@ export type ModelInfo = {
   silentApproxPrice?: number; // USD per second when its sound is switched off (if cheaper)
   aspectRatios: AspectRatio[];
   needsSource?: boolean; // works on an existing video (sourceUrl) instead of making a new one
+  typicalSeconds?: number; // rough time a job takes once it starts, for the progress bar
   buildInput: (opts: {
     prompt: string;
     aspectRatio: AspectRatio;
@@ -36,6 +37,7 @@ export const MODELS: ModelInfo[] = [
   // ---------- Images ----------
   {
     id: "fal-ai/flux/schnell",
+    typicalSeconds: 4,
     name: "FLUX Schnell",
     kind: "image",
     tagline: "Fast and very cheap. Great for drafts.",
@@ -49,6 +51,7 @@ export const MODELS: ModelInfo[] = [
   },
   {
     id: "fal-ai/flux-pro/v1.1-ultra",
+    typicalSeconds: 15,
     name: "FLUX 1.1 Pro Ultra",
     kind: "image",
     tagline: "High detail, photo-real results.",
@@ -62,6 +65,7 @@ export const MODELS: ModelInfo[] = [
   },
   {
     id: "fal-ai/nano-banana",
+    typicalSeconds: 12,
     name: "Nano Banana (Google)",
     kind: "image",
     tagline: "Spells words correctly, great for thumbnails, ads and posters.",
@@ -75,6 +79,7 @@ export const MODELS: ModelInfo[] = [
   },
   {
     id: "fal-ai/recraft/v3/text-to-image",
+    typicalSeconds: 15,
     name: "Recraft V3",
     kind: "image",
     tagline: "Design and brand style, logos, illustrations.",
@@ -89,6 +94,7 @@ export const MODELS: ModelInfo[] = [
   // ---------- Videos ----------
   {
     id: "fal-ai/minimax/hailuo-02/standard/text-to-video",
+    typicalSeconds: 180,
     name: "Hailuo 02",
     kind: "video",
     tagline: "Good quality for a low price.",
@@ -103,6 +109,7 @@ export const MODELS: ModelInfo[] = [
   },
   {
     id: "fal-ai/kling-video/v2.5-turbo/pro/text-to-video",
+    typicalSeconds: 100,
     name: "Kling 2.5 Turbo Pro",
     kind: "video",
     tagline: "Cinematic motion, strong prompt following.",
@@ -117,6 +124,7 @@ export const MODELS: ModelInfo[] = [
   },
   {
     id: "fal-ai/veo3/fast",
+    typicalSeconds: 75,
     audio: true,
     silentApproxPrice: 0.1,
     name: "Google Veo 3 Fast",
@@ -140,6 +148,7 @@ export const MODELS: ModelInfo[] = [
  */
 export const ADD_SOUND_MODEL: ModelInfo = {
   id: "fal-ai/mmaudio-v2",
+    typicalSeconds: 25,
   name: "MMAudio (add sound)",
   kind: "video",
   tagline: "Adds matching sound effects and ambience to a silent video.",
@@ -160,6 +169,7 @@ export const ADD_SOUND_MODEL: ModelInfo = {
  */
 export const EDIT_IMAGE_MODEL: ModelInfo = {
   id: "fal-ai/flux-pro/kontext",
+    typicalSeconds: 12,
   name: "FLUX Kontext (fix)",
   kind: "image",
   tagline: "Changes part of an image and keeps the rest.",

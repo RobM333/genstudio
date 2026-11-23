@@ -8,6 +8,7 @@ import type { AppMode } from "@/lib/config";
 import { checkPrompt } from "@/lib/safety";
 import AgreeModal, { hasAcceptedTerms } from "./AgreeModal";
 import Link from "next/link";
+import { progressView, type Phase } from "@/lib/progress";
 
 type Item = {
   id: string;
@@ -37,6 +38,9 @@ type Item = {
   sourceUrl?: string; // image being fixed
   editPrompt?: string; // instruction sent to the fix model
   fixNote?: string; // what the user asked to change
+  stepStartedAt?: number; // when the current step started (or joined the queue)
+  phase?: Phase; // waiting in line, or being made
+  queuePosition?: number;
 };
 
 type JobSpec = {
@@ -166,6 +170,22 @@ export default function Studio({ mode }: { mode: AppMode }) {
           `/api/status?modelId=${encodeURIComponent(jobModelId)}&requestId=${encodeURIComponent(item.requestId)}`,
         );
         const data = await res.json().catch(() => ({}));
+        if (data.status === "IN_QUEUE" || data.status === "IN_PROGRESS") {
+          const phase: Phase = data.status === "IN_QUEUE" ? "queue" : "working";
+          setItems((prev) =>
+            prev.map((x) =>
+              x.id !== item.id
+                ? x
+                : {
+                    ...x,
+                    phase,
+                    queuePosition: data.queuePosition,
+                    // Start the clock when the job actually starts, not while it waits in line.
+                    stepStartedAt: x.phase === "queue" && phase === "working" ? Date.now() : (x.stepStartedAt ?? Date.now()),
+                  },
+            ),
+          );
+        }
         if (data.status === "COMPLETED" && data.url) {
           doneUrl = data.url as string;
           break;
@@ -221,7 +241,15 @@ export default function Studio({ mode }: { mode: AppMode }) {
       const enhancedPrompt = item.stage === "sound" ? item.enhancedPrompt : (data.enhancedPrompt as string | undefined);
       const next: Item = { ...item, jobModelId, duration, enhancedPrompt };
       if (data.status === "COMPLETED") return stepDone(next, data.url, data.demo);
-      update(item.id, { requestId: data.requestId as string, jobModelId, duration, enhancedPrompt });
+      update(item.id, {
+        requestId: data.requestId as string,
+        jobModelId,
+        duration,
+        enhancedPrompt,
+        stepStartedAt: Date.now(),
+        phase: "queue",
+        queuePosition: undefined,
+      });
       poll({ ...next, requestId: data.requestId as string });
     } catch {
       fail(item, "Couldn't reach the server.");
@@ -629,16 +657,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
                 onClick={() => it.status !== "pending" && setOpen(it)}
                 title={it.prompt}
               >
-                {it.status === "pending" && (
-                  <div className="tile-state">
-                    <span className="spinner" aria-hidden />
-                    <span>
-                      {it.stage === "sound"
-                        ? "Adding sound..."
-                        : `Creating ${it.quality === "draft" ? "draft" : it.quality === "final" ? "final" : it.kind}...`}
-                    </span>
-                  </div>
-                )}
+                {it.status === "pending" && <PendingTile item={it} />}
                 {it.status === "failed" && (
                   <div className="tile-state failed">
                     <span>Failed</span>
@@ -782,6 +801,46 @@ export default function Studio({ mode }: { mode: AppMode }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/** Rough time a step takes once it starts, scaled for longer videos. */
+function typicalSeconds(it: Item): number {
+  const m = getModel(it.jobModelId ?? it.modelId);
+  const base = m?.typicalSeconds ?? (it.kind === "video" ? 120 : 10);
+  if (m?.kind === "video" && !m.needsSource && it.duration && m.durations?.[0]) return base * (it.duration / m.durations[0]);
+  return base;
+}
+
+function PendingTile({ item }: { item: Item }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 500);
+    return () => clearInterval(t);
+  }, []);
+  const silentNeedsSound = item.kind === "video" && item.wantSound && !getModel(item.modelId)?.audio;
+  const steps = silentNeedsSound ? 2 : 1;
+  const step = item.stage === "sound" && steps === 2 ? 2 : 1;
+  const what = item.quality === "draft" ? "draft" : item.quality === "final" ? "final" : item.kind;
+  const view = item.requestId
+    ? progressView({
+        phase: item.phase ?? "queue",
+        queuePosition: item.queuePosition,
+        elapsedSec: (now - (item.stepStartedAt ?? now)) / 1000,
+        typicalSec: typicalSeconds(item),
+        step,
+        steps,
+        stepLabel: item.stage === "sound" ? "Adding sound" : item.fixNote ? "Fixing" : `Creating ${what}`,
+      })
+    : { percent: 1, label: item.enhance !== false ? "Improving your prompt" : "Sending", timeLeft: "starting" };
+  return (
+    <div className="tile-state">
+      <span className="progress-label">{view.label}</span>
+      <div className="progress" role="progressbar" aria-valuenow={Math.round(view.percent)} aria-valuemin={0} aria-valuemax={100}>
+        <div className="progress-fill" style={{ width: `${view.percent}%` }} />
+      </div>
+      <span className="muted small">{view.timeLeft}</span>
     </div>
   );
 }
