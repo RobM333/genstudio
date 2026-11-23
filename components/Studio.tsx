@@ -32,6 +32,8 @@ type Item = {
   stage?: "video" | "sound"; // which step is running
   jobModelId?: string; // model of the step being polled
   soundError?: string;
+  enhance?: boolean; // improve the prompt before generating
+  enhancedPrompt?: string; // the improved prompt the model actually used
 };
 
 type JobSpec = {
@@ -45,6 +47,7 @@ type JobSpec = {
   parentId?: string;
   templateName?: string;
   sound?: boolean;
+  enhance?: boolean;
 };
 
 const AUTO = "auto";
@@ -87,6 +90,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
   const [choice, setChoice] = useState<string>(AUTO); // "auto" or a model id
   const [quality, setQuality] = useState<Quality>("draft");
   const [sound, setSound] = useState(true);
+  const [enhance, setEnhance] = useState(true);
   const [askTerms, setAskTerms] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>("1:1");
@@ -175,7 +179,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
   function stepDone(item: Item, url: string, demo?: boolean) {
     if (item.kind === "video" && item.wantSound && !item.hasAudio && item.stage !== "sound") {
       const next: Item = { ...item, url, demo, stage: "sound" };
-      update(item.id, { url, demo, stage: "sound" });
+      update(item.id, { url, demo, stage: "sound", enhancedPrompt: item.enhancedPrompt });
       submitStep(next, ADD_SOUND_MODEL.id, url);
       return;
     }
@@ -186,6 +190,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
       demo,
       hasAudio: item.hasAudio || item.stage === "sound",
       soundError: undefined,
+      enhancedPrompt: item.enhancedPrompt,
     });
   }
 
@@ -201,14 +206,16 @@ export default function Studio({ mode }: { mode: AppMode }) {
           duration: item.duration,
           sound: item.wantSound,
           sourceUrl,
+          enhance: item.stage !== "sound" && item.enhance !== false,
         }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) return fail(item, data.error ?? "Something went wrong.");
       const duration = item.stage === "sound" ? item.duration : (data.duration ?? item.duration);
-      const next: Item = { ...item, jobModelId, duration };
+      const enhancedPrompt = item.stage === "sound" ? item.enhancedPrompt : (data.enhancedPrompt as string | undefined);
+      const next: Item = { ...item, jobModelId, duration, enhancedPrompt };
       if (data.status === "COMPLETED") return stepDone(next, data.url, data.demo);
-      update(item.id, { requestId: data.requestId as string, jobModelId, duration });
+      update(item.id, { requestId: data.requestId as string, jobModelId, duration, enhancedPrompt });
       poll({ ...next, requestId: data.requestId as string });
     } catch {
       fail(item, "Couldn't reach the server.");
@@ -271,6 +278,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
       aspectRatio,
       duration: length,
       sound: kind === "video" ? sound : undefined,
+      enhance,
       quality: isAuto ? quality : undefined,
       autoReason: isAuto ? auto.reason : undefined,
       templateName: template?.name,
@@ -293,6 +301,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
       autoReason: pick.reason,
       parentId: draft.id,
       sound: draft.kind === "video" ? draft.wantSound !== false : undefined,
+      enhance: draft.enhance !== false,
       templateName: draft.templateName,
     });
     setOpen(null);
@@ -523,6 +532,17 @@ export default function Studio({ mode }: { mode: AppMode }) {
             </>
           )}
 
+          <label className="enhance-toggle">
+            <input type="checkbox" checked={enhance} onChange={(e) => setEnhance(e.target.checked)} />
+            <span>
+              <strong>✨ Enhance my prompt</strong>
+              <span className="muted small">
+                {" "}
+                We add lighting, camera and style details for the chosen model. You can see the result on each item.
+              </span>
+            </span>
+          </label>
+
           {formError && <p className="error">{formError}</p>}
           <button className="generate" onClick={generate} disabled={mode === "locked"}>
             {isAuto && quality === "draft" ? `Generate ${kind} draft` : `Generate ${kind}`}
@@ -618,6 +638,22 @@ export default function Studio({ mode }: { mode: AppMode }) {
             </div>
             <div className="viewer-side">
               <p className="viewer-prompt">{open.prompt}</p>
+              {open.enhancedPrompt && open.enhancedPrompt !== open.prompt && (
+                <details className="enhanced-peek">
+                  <summary>✨ Enhanced prompt used</summary>
+                  <p>{open.enhancedPrompt}</p>
+                  <button
+                    className="pill"
+                    onClick={() => {
+                      setPrompt(open.enhancedPrompt!);
+                      setEnhance(false);
+                      setOpen(null);
+                    }}
+                  >
+                    Edit this prompt
+                  </button>
+                </details>
+              )}
               <dl className="meta">
                 <dt>Model</dt>
                 <dd>
