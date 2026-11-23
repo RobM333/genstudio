@@ -315,28 +315,70 @@ export default function Studio({ mode }: { mode: AppMode }) {
 
   return (
     <div className="shell">
+      <div className="aurora" aria-hidden />
       <header className="topbar">
-        <div className="brand">
-          <span className="logo" aria-hidden>◆</span> GenStudio
+        <a className="brand" href="#top" aria-label="GenStudio home">
+          <LogoMark />
+          <span className="wordmark">GenStudio</span>
+        </a>
+        <nav className="nav" aria-label="Sections">
+          <a href="#create">Create</a>
+          <a href="#templates">Templates</a>
+          <a href="#gallery">Gallery</a>
+        </nav>
+        <div className="topbar-right">
+          {pendingCount > 0 && (
+            <span className="running">
+              <span className="pulse" aria-hidden /> {pendingCount} rendering
+            </span>
+          )}
+          <ModeBadge mode={mode} />
         </div>
-        <ModeBadge mode={mode} />
       </header>
+
+      <section className="hero" id="top">
+        <p className="eyebrow">AI image &amp; video studio</p>
+        <h1>
+          Ideas in. <em>Scroll-stoppers</em> out.
+        </h1>
+        <p className="hero-sub">
+          The best image and video models in one place. Auto picks the right one for every job, cheap drafts
+          first, and you only pay for finals you love.
+        </p>
+        <ul className="stats">
+          <li>
+            <strong>{MODELS.length}</strong> top models
+          </li>
+          <li>
+            <strong>{TEMPLATES.length}</strong> ad templates
+          </li>
+          <li>
+            Drafts from <strong>$0.003</strong>
+          </li>
+        </ul>
+      </section>
 
       {mode === "demo" && (
         <div className="notice">
-          <strong>Demo mode.</strong> No AI service is connected yet, so you get free placeholder results. Everything
-          else works for real. Add a fal.ai key to switch on real generation.
+          <span className="notice-dot" aria-hidden />
+          <span>
+            <strong>Demo mode.</strong> No AI service is connected yet, so you get free placeholder results. Everything
+            else works for real. Add a fal.ai key to switch on real generation.
+          </span>
         </div>
       )}
       {mode === "locked" && (
         <div className="notice warn">
-          <strong>Almost live.</strong> A fal.ai key is set, but real generation stays off until you also set an{" "}
-          <code>APP_PASSWORD</code>, so strangers can&apos;t spend your credit.
+          <span className="notice-dot" aria-hidden />
+          <span>
+            <strong>Almost live.</strong> A fal.ai key is set, but real generation stays off until you also set an{" "}
+            <code>APP_PASSWORD</code>, so strangers can&apos;t spend your credit.
+          </span>
         </div>
       )}
 
       <main className="layout">
-        <section className="panel" aria-label="Create">
+        <section className="panel" aria-label="Create" id="create">
           <div className="tabs" role="tablist">
             {(["image", "video"] as MediaKind[]).map((k) => (
               <button
@@ -349,184 +391,229 @@ export default function Studio({ mode }: { mode: AppMode }) {
                   if (template && template.kind !== k) setTemplate(null);
                 }}
               >
+                <span className="tab-icon" aria-hidden>
+                  {k === "image" ? <IconImage /> : <IconVideo />}
+                </span>
                 {k === "image" ? "Image" : "Video"}
               </button>
             ))}
           </div>
 
-          <div className="label">Start from a template</div>
-          <div className="templates">
-            {kindTemplates.map((t) => (
-              <button
-                key={t.id}
-                className={template?.id === t.id ? "template active" : "template"}
-                onClick={() => chooseTemplate(template?.id === t.id ? null : t)}
-                title={t.use}
-              >
-                <span className="template-emoji" aria-hidden>
-                  {t.emoji}
-                </span>
-                <span className="template-name">{t.name}</span>
-                <span className="template-use">{t.use}</span>
-              </button>
-            ))}
-          </div>
-
-          {template && (
-            <div className="fields">
-              {template.fields.map((f) => (
-                <label key={f.key} className="field">
-                  <span>{f.label}</span>
-                  <input
-                    value={fields[f.key] ?? ""}
-                    placeholder={f.placeholder}
-                    onChange={(e) => setField(f.key, e.target.value)}
-                  />
-                </label>
-              ))}
+          <div className="step" id="templates">
+            <div className="step-head">
+              <span className="step-num">01</span> Start from a template
+              <span className="step-opt">optional</span>
             </div>
-          )}
-
-          <label className="label" htmlFor="prompt">
-            {template ? "Your prompt (edit freely)" : `Or describe your ${kind}`}
-          </label>
-          <textarea
-            id="prompt"
-            className="prompt"
-            rows={template ? 4 : 5}
-            maxLength={2000}
-            placeholder={EXAMPLES[kind][0]}
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) generate();
-            }}
-          />
-          {!template && (
-            <div className="examples">
-              {EXAMPLES[kind].map((ex) => (
-                <button key={ex} className="chip" onClick={() => setPrompt(ex)}>
-                  {ex.length > 42 ? ex.slice(0, 40) + "..." : ex}
+            <div className="templates">
+              {kindTemplates.map((t) => (
+                <button
+                  key={t.id}
+                  className={template?.id === t.id ? "template active" : "template"}
+                  onClick={() => chooseTemplate(template?.id === t.id ? null : t)}
+                  title={t.use}
+                  style={{ "--hue": String((TEMPLATES.indexOf(t) * 47 + 190) % 360) } as React.CSSProperties}
+                >
+                  <span className="template-art" aria-hidden>
+                    <span className="template-emoji">{t.emoji}</span>
+                    <span className="template-ar">{t.aspectRatio}</span>
+                  </span>
+                  <span className="template-name">{t.name}</span>
+                  <span className="template-use">{t.use}</span>
                 </button>
               ))}
             </div>
-          )}
 
-          <div className="label">Model</div>
-          <div className="models">
-            <button className={isAuto ? "model active" : "model"} onClick={() => setChoice(AUTO)}>
-              <span className="model-name">✨ Auto</span>
-              <span className="model-cost">recommended</span>
-              <span className="model-tag">Picks the best model for each job, and saves money on drafts.</span>
-            </button>
-            {models.map((m) => (
-              <button
-                key={m.id}
-                className={!isAuto && m.id === model.id ? "model active" : "model"}
-                onClick={() => setChoice(m.id)}
-              >
-                <span className="model-name">{m.name}</span>
-                <span className="model-tag">
-                  {m.tagline}
-                  {m.kind === "video" && (
-                    <span className={m.audio ? "sound-tag on" : "sound-tag"}>
-                      {m.audio ? "🔊 Makes its own sound" : "🔇 Silent (sound can be added)"}
-                    </span>
-                  )}
-                </span>
-                <span className="model-cost">{m.approxCost}</span>
-              </button>
-            ))}
-          </div>
-
-          {isAuto && (
-            <>
-              <div className="label">Quality</div>
-              <div className="segmented">
-                <button className={quality === "draft" ? "seg active" : "seg"} onClick={() => setQuality("draft")}>
-                  <strong>Draft</strong>
-                  <span>Cheap preview</span>
-                </button>
-                <button className={quality === "final" ? "seg active" : "seg"} onClick={() => setQuality("final")}>
-                  <strong>Final</strong>
-                  <span>Best quality</span>
-                </button>
-              </div>
-              <p className="auto-pick">
-                Auto will use <strong>{model.name}</strong>: {auto.reason}.
-              </p>
-            </>
-          )}
-
-          <div className="row">
-            <div>
-              <div className="label">Shape</div>
-              <div className="pills">
-                {shapes.map((ar) => (
-                  <button
-                    key={ar}
-                    className={ar === aspectRatio ? "pill active" : "pill"}
-                    onClick={() => setAspectRatio(ar)}
-                  >
-                    <span className={`ar ar-${ar.replace(":", "x")}`} aria-hidden /> {ar}
+            {template && (
+              <div className="fields">
+                <div className="fields-head">
+                  {template.emoji} {template.name}
+                  <button className="link" onClick={() => chooseTemplate(null)}>
+                    Clear
                   </button>
-                ))}
-              </div>
-            </div>
-            {model.durations && (
-              <div>
-                <div className="label">Length</div>
-                <div className="pills">
-                  {model.durations.map((d) => (
-                    <button key={d} className={d === length ? "pill active" : "pill"} onClick={() => setDuration(d)}>
-                      {d}s
-                    </button>
-                  ))}
                 </div>
+                {template.fields.map((f) => (
+                  <label key={f.key} className="field">
+                    <span>{f.label}</span>
+                    <input
+                      value={fields[f.key] ?? ""}
+                      placeholder={f.placeholder}
+                      onChange={(e) => setField(f.key, e.target.value)}
+                    />
+                  </label>
+                ))}
               </div>
             )}
           </div>
 
-          {kind === "video" && (
-            <>
-              <div className="label">Sound</div>
-              <div className="segmented">
-                <button className={sound ? "seg active" : "seg"} onClick={() => setSound(true)}>
-                  <strong>🔊 With sound</strong>
-                  <span>{formatCost(costWith)}</span>
-                </button>
-                <button className={!sound ? "seg active" : "seg"} onClick={() => setSound(false)}>
-                  <strong>🔇 No sound</strong>
-                  <span>{formatCost(costWithout)}</span>
-                </button>
+          <div className="step">
+            <label className="step-head" htmlFor="prompt">
+              <span className="step-num">02</span> {template ? "Your prompt (edit freely)" : `Describe your ${kind}`}
+            </label>
+            <div className="prompt-box">
+              <textarea
+                id="prompt"
+                className="prompt"
+                rows={template ? 4 : 5}
+                maxLength={2000}
+                placeholder={EXAMPLES[kind][0]}
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) generate();
+                }}
+              />
+              <span className="prompt-count">{prompt.length}/2000</span>
+            </div>
+            {!template && (
+              <div className="examples">
+                <span className="examples-label">Try:</span>
+                {EXAMPLES[kind].map((ex) => (
+                  <button key={ex} className="chip" onClick={() => setPrompt(ex)}>
+                    {ex.length > 42 ? ex.slice(0, 40) + "..." : ex}
+                  </button>
+                ))}
               </div>
-              {sound && (
-                <p className="auto-pick">
-                  {model.audio
-                    ? `${model.name} makes its own sound, including speech.`
-                    : `${model.name} is silent, so we add matching sound effects and ambience after (not speech). For speech, use Google Veo 3.`}
-                </p>
-              )}
-            </>
-          )}
+            )}
+          </div>
 
-          {formError && <p className="error">{formError}</p>}
-          <button className="generate" onClick={generate} disabled={mode === "locked"}>
-            {isAuto && quality === "draft" ? `Generate ${kind} draft` : `Generate ${kind}`}
-            {pendingCount > 0 && <span className="count">{pendingCount} running</span>}
-          </button>
-          <p className="hint">
-            {mode === "demo" ? `Free in demo mode (live cost ${formatCost(cost)}).` : `Estimated cost: ${formatCost(cost)}.`}{" "}
-            Ctrl/⌘ + Enter to generate.
-          </p>
+          <div className="step">
+            <div className="step-head">
+              <span className="step-num">03</span> Model
+            </div>
+            <div className="models">
+              <button className={isAuto ? "model auto active" : "model auto"} onClick={() => setChoice(AUTO)}>
+                <span className="model-name">
+                  <span className="spark" aria-hidden>
+                    ✦
+                  </span>{" "}
+                  Auto <span className="tag tag-rec">Recommended</span>
+                </span>
+                <span className="model-tag">Picks the best model for each job, and saves money on drafts.</span>
+              </button>
+              {models.map((m) => (
+                <button
+                  key={m.id}
+                  className={!isAuto && m.id === model.id ? "model active" : "model"}
+                  onClick={() => setChoice(m.id)}
+                >
+                  <span className="model-name">
+                    {m.name}
+                    {m.kind === "video" && (
+                      <span className={m.audio ? "tag tag-sound" : "tag"}>{m.audio ? "🔊 Sound" : "🔇 Silent"}</span>
+                    )}
+                  </span>
+                  <span className="model-tag">
+                    {m.tagline}
+                    {m.kind === "video" && !m.audio && <span className="sound-tag"> Sound can be added.</span>}
+                  </span>
+                  <span className="model-cost">{m.approxCost}</span>
+                </button>
+              ))}
+            </div>
+
+            {isAuto && (
+              <>
+                <div className="sub-label">Quality</div>
+                <div className="segmented">
+                  <button className={quality === "draft" ? "seg active" : "seg"} onClick={() => setQuality("draft")}>
+                    <strong>Draft</strong>
+                    <span>Cheap preview</span>
+                  </button>
+                  <button className={quality === "final" ? "seg active" : "seg"} onClick={() => setQuality("final")}>
+                    <strong>Final</strong>
+                    <span>Best quality</span>
+                  </button>
+                </div>
+                <p className="auto-pick">
+                  <span className="spark" aria-hidden>
+                    ✦
+                  </span>{" "}
+                  Auto will use <strong>{model.name}</strong>: {auto.reason}.
+                </p>
+              </>
+            )}
+          </div>
+
+          <div className="step">
+            <div className="step-head">
+              <span className="step-num">04</span> Settings
+            </div>
+            <div className="row">
+              <div>
+                <div className="sub-label">Shape</div>
+                <div className="pills">
+                  {shapes.map((ar) => (
+                    <button
+                      key={ar}
+                      className={ar === aspectRatio ? "pill active" : "pill"}
+                      onClick={() => setAspectRatio(ar)}
+                    >
+                      <span className={`ar ar-${ar.replace(":", "x")}`} aria-hidden /> {ar}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {model.durations && (
+                <div>
+                  <div className="sub-label">Length</div>
+                  <div className="pills">
+                    {model.durations.map((d) => (
+                      <button key={d} className={d === length ? "pill active" : "pill"} onClick={() => setDuration(d)}>
+                        {d}s
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {kind === "video" && (
+              <>
+                <div className="sub-label">Sound</div>
+                <div className="segmented">
+                  <button className={sound ? "seg active" : "seg"} onClick={() => setSound(true)}>
+                    <strong>🔊 With sound</strong>
+                    <span>{formatCost(costWith)}</span>
+                  </button>
+                  <button className={!sound ? "seg active" : "seg"} onClick={() => setSound(false)}>
+                    <strong>🔇 No sound</strong>
+                    <span>{formatCost(costWithout)}</span>
+                  </button>
+                </div>
+                {sound && (
+                  <p className="auto-pick">
+                    {model.audio
+                      ? `${model.name} makes its own sound, including speech.`
+                      : `${model.name} is silent, so we add matching sound effects and ambience after (not speech). For speech, use Google Veo 3.`}
+                  </p>
+                )}
+              </>
+            )}
+          </div>
+
+          <div className="generate-bar">
+            {formError && <p className="error">{formError}</p>}
+            <button className="generate" onClick={generate} disabled={mode === "locked"}>
+              <span className="generate-label">
+                {isAuto && quality === "draft" ? `Generate ${kind} draft` : `Generate ${kind}`}
+              </span>
+              <span className="generate-cost">{mode === "demo" ? "Free" : formatCost(cost)}</span>
+            </button>
+            <p className="hint">
+              {mode === "demo" ? `Free in demo mode (live cost ${formatCost(cost)}).` : `Estimated cost: ${formatCost(cost)}.`}{" "}
+              <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Enter</kbd> to generate.
+            </p>
+          </div>
         </section>
 
-        <section className="gallery-wrap" aria-label="Gallery">
+        <section className="gallery-wrap" aria-label="Gallery" id="gallery">
           <div className="gallery-head">
-            <h2>Your gallery</h2>
-            <div className="pills">
+            <h2>
+              Your gallery <span className="gallery-count">{items.length}</span>
+            </h2>
+            <div className="filters">
               {(["all", "image", "video"] as const).map((f) => (
-                <button key={f} className={filter === f ? "pill active" : "pill"} onClick={() => setFilter(f)}>
+                <button key={f} className={filter === f ? "filter active" : "filter"} onClick={() => setFilter(f)}>
                   {f === "all" ? "All" : f === "image" ? "Images" : "Videos"}
                 </button>
               ))}
@@ -535,11 +622,33 @@ export default function Studio({ mode }: { mode: AppMode }) {
 
           {loaded && shown.length === 0 && (
             <div className="empty">
-              <p>Nothing here yet.</p>
+              <div className="empty-art" aria-hidden>
+                <LogoMark size={44} />
+              </div>
+              <h3>Your first creation goes here</h3>
               <p className="muted">
                 Pick a template or write a prompt, then press Generate. Start with a cheap draft, and make a final
                 version of the ones you like.
               </p>
+              <div className="inspo">
+                {[...EXAMPLES.image, ...EXAMPLES.video].map((ex, i) => (
+                  <button
+                    key={ex}
+                    className="inspo-card"
+                    style={{ "--hue": String((i * 61 + 200) % 360) } as React.CSSProperties}
+                    onClick={() => {
+                      const k: MediaKind = i < EXAMPLES.image.length ? "image" : "video";
+                      setTemplate(null);
+                      setKind(k);
+                      setPrompt(ex);
+                      document.getElementById("create")?.scrollIntoView({ behavior: "smooth" });
+                    }}
+                  >
+                    <span className="inspo-kind">{i < EXAMPLES.image.length ? "Image" : "Video"}</span>
+                    <span className="inspo-text">{ex}</span>
+                  </button>
+                ))}
+              </div>
             </div>
           )}
 
@@ -547,12 +656,13 @@ export default function Studio({ mode }: { mode: AppMode }) {
             {shown.map((it) => (
               <button
                 key={it.id}
-                className="tile"
+                className={`tile tile-${it.aspectRatio.replace(":", "x")} tile-${it.status}`}
                 onClick={() => it.status !== "pending" && setOpen(it)}
                 title={it.prompt}
               >
                 {it.status === "pending" && (
                   <div className="tile-state">
+                    <span className="shimmer" aria-hidden />
                     <span className="spinner" aria-hidden />
                     <span>
                       {it.stage === "sound"
@@ -569,9 +679,12 @@ export default function Studio({ mode }: { mode: AppMode }) {
                 )}
                 {it.status === "done" && it.url && <Media item={it} thumb />}
                 {it.quality && <span className={`tile-quality q-${it.quality}`}>{it.quality === "draft" ? "Draft" : "Final"}</span>}
-                <span className="tile-label">
-                  {it.kind === "video" ? (it.hasAudio ? "🔊 " : "▶ ") : ""}
-                  {it.modelName}
+                <span className="tile-overlay">
+                  <span className="tile-prompt">{it.prompt}</span>
+                  <span className="tile-label">
+                    {it.kind === "video" ? (it.hasAudio ? "🔊 " : "▶ ") : ""}
+                    {it.modelName}
+                  </span>
                 </span>
               </button>
             ))}
@@ -628,7 +741,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
               {open.quality === "draft" && open.status === "done" && <FinalButton draft={open} onClick={makeFinal} />}
               {open.kind === "video" && open.status === "done" && !open.hasAudio && open.url && (
                 <div className="final-box">
-                  <button className="pill active" onClick={() => addSound(open)}>
+                  <button className="btn" onClick={() => addSound(open)}>
                     🔊 Add sound
                   </button>
                   <p className="hint">
@@ -639,12 +752,12 @@ export default function Studio({ mode }: { mode: AppMode }) {
               )}
               <div className="viewer-actions">
                 {open.url && (
-                  <button className="pill active" onClick={() => download(open)}>
+                  <button className="btn btn-light" onClick={() => download(open)}>
                     Download
                   </button>
                 )}
                 <button
-                  className="pill"
+                  className="btn"
                   onClick={() => {
                     setTemplate(null);
                     setKind(open.kind);
@@ -657,7 +770,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
                 >
                   Reuse prompt
                 </button>
-                <button className="pill danger" onClick={() => remove(open.id)}>
+                <button className="btn btn-danger" onClick={() => remove(open.id)}>
                   Delete
                 </button>
               </div>
@@ -672,12 +785,50 @@ export default function Studio({ mode }: { mode: AppMode }) {
   );
 }
 
+function LogoMark({ size = 28 }: { size?: number }) {
+  return (
+    <svg className="logomark" width={size} height={size} viewBox="0 0 32 32" aria-hidden>
+      <defs>
+        <linearGradient id="gs-g" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="#5ce1e6" />
+          <stop offset="0.5" stopColor="#8b7cff" />
+          <stop offset="1" stopColor="#ff8a5b" />
+        </linearGradient>
+      </defs>
+      <rect x="1" y="1" width="30" height="30" rx="9" fill="url(#gs-g)" />
+      <path d="M16 7.5l2.4 6.1 6.1 2.4-6.1 2.4L16 24.5l-2.4-6.1L7.5 16l6.1-2.4z" fill="#07070a" />
+    </svg>
+  );
+}
+
+function IconImage() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+      <rect x="3" y="3" width="18" height="18" rx="4" />
+      <circle cx="9" cy="9" r="2" />
+      <path d="M21 15l-5-5L5 21" />
+    </svg>
+  );
+}
+
+function IconVideo() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+      <rect x="2" y="5" width="14" height="14" rx="3" />
+      <path d="M16 10l6-3v10l-6-3z" />
+    </svg>
+  );
+}
+
 function FinalButton({ draft, onClick }: { draft: Item; onClick: (d: Item) => void }) {
   const pick = pickModel({ kind: draft.kind, prompt: draft.prompt, quality: "final", aspectRatio: draft.aspectRatio });
   const d = pick.model.durations?.find((x) => x >= (draft.duration ?? 0)) ?? pick.model.durations?.[0];
   return (
     <div className="final-box">
       <button className="generate small" onClick={() => onClick(draft)}>
+        <span className="spark" aria-hidden>
+          ✦
+        </span>{" "}
         Make final version
       </button>
       <p className="hint">
@@ -689,7 +840,11 @@ function FinalButton({ draft, onClick }: { draft: Item; onClick: (d: Item) => vo
 
 function ModeBadge({ mode }: { mode: AppMode }) {
   const text = mode === "live" ? "Live" : mode === "locked" ? "Needs password" : "Demo mode";
-  return <span className={`badge badge-${mode}`}>{text}</span>;
+  return (
+    <span className={`badge badge-${mode}`}>
+      <span className="badge-dot" aria-hidden /> {text}
+    </span>
+  );
 }
 
 function Media({ item, thumb }: { item: Item; thumb?: boolean }) {
