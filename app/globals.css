@@ -865,7 +865,7 @@ label.sub-label { display: block; }
 .chat-log { flex: 1; min-height: 160px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding-right: 4px; scrollbar-width: thin; scrollbar-color: #2a2a35 transparent; }
 @media (max-width: 1000px) { .chat-log { max-height: 50vh; } }
 .chat-msg { max-width: 92%; padding: 10px 12px; border-radius: 14px; font-size: 14px; line-height: 1.45; }
-.chat-msg p { margin: 0; }
+.chat-msg p { margin: 0; white-space: pre-line; }
 .chat-msg.ai { align-self: flex-start; background: rgba(255,255,255,0.04); border: 1px solid var(--line); border-top-left-radius: 4px; }
 .chat-msg.you { align-self: flex-end; background: rgba(139,124,255,0.18); border: 1px solid rgba(139,124,255,0.35); border-top-right-radius: 4px; }
 .chat-msg .problems { margin: 8px 0 0; }
@@ -964,3 +964,34 @@ select.text-input { appearance: auto; }
 .check-toggle input { margin-top: 4px; accent-color: var(--iris); }
 .check-log { margin-top: 10px; }
 .check-log ul { margin: 6px 0 0; padding-left: 18px; }
+
+/* ---------- Creative director ---------- */
+.director { margin: 10px 0 4px; }
+.director-ask {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px dashed rgba(139, 124, 255, 0.5);
+  background: rgba(139, 124, 255, 0.06);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  line-height: 1.45;
+}
+.director-ask:hover { background: rgba(139, 124, 255, 0.12); }
+.director-ask:disabled { opacity: 0.7; cursor: default; }
+.director-ask .tag { flex: none; }
+.director-box { padding: 12px 14px; border-radius: var(--radius-sm); border: 1px solid rgba(139, 124, 255, 0.35); background: rgba(139, 124, 255, 0.05); }
+.director-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+.director-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin: 10px 0; }
+.director-card { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); background: rgba(0, 0, 0, 0.18); }
+.director-card.picked { border-color: var(--iris); }
+.director-card p { margin: 0; }
+.director-card .pill { align-self: flex-start; margin-top: auto; }
+.director-card-head { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.director-qs { margin-top: 10px; }
+.director-qs ul { margin: 4px 0 8px; padding-left: 18px; }

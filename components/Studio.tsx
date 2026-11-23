@@ -13,6 +13,7 @@ import { progressView, type Phase } from "@/lib/progress";
 import ReferencesBox, { finishReference, loadRefs, saveRefs, type RefItem } from "./ReferencesBox";
 import BrandKit, { brandInfo, hasBrand, KIT_PICTURES, loadBrand, saveBrand, type Brand } from "./BrandKit";
 import { brandLine, colorName } from "@/lib/brand";
+import type { Direction, DirectorReply } from "@/lib/director";
 import { addSoundTo, animateShot, joinShots, lastFrame, planStory, startPicture, type Story } from "./storyRunner";
 import { lengthAdvice, LONG_LENGTHS, MAX_STORY_SECONDS, type ShotPlan } from "@/lib/storyboard";
 import { nextLength, readChat } from "@/lib/chat";
@@ -216,6 +217,12 @@ export default function Studio({ mode }: { mode: AppMode }) {
   const [productPics, setProductPics] = useState<string[]>([]);
   const [productPicked, setProductPicked] = useState<string[]>([]);
   const [productConsent, setProductConsent] = useState(false);
+  // The creative director: three directed ways to make the idea.
+  const [director, setDirector] = useState<(DirectorReply & { idea: string; kind: MediaKind }) | null>(null);
+  const [directorBusy, setDirectorBusy] = useState(false);
+  const [directorError, setDirectorError] = useState<string | null>(null);
+  const [directorAnswers, setDirectorAnswers] = useState("");
+  const [directorPicked, setDirectorPicked] = useState<number | null>(null);
   const polling = useRef(new Set<string>());
 
   const isAuto = choice === AUTO;
@@ -682,6 +689,71 @@ export default function Studio({ mode }: { mode: AppMode }) {
     setView("create");
     setComposing(false);
     runStory(item);
+  }
+
+  // ---------- Creative director ----------
+
+  async function callDirector(idea: string, k: MediaKind, answers = ""): Promise<DirectorReply> {
+    const res = await fetch("/api/director", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ idea, kind: k, answers, brand: brandOn ? brandInfo(brand) : undefined }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !Array.isArray(data.directions)) throw new Error(data.error ?? "The director is busy. Please try again.");
+    return data as DirectorReply;
+  }
+
+  /** Asks the director for three ways to make what's in the prompt box (or the idea it started from). */
+  async function askDirector(withAnswers = false) {
+    const idea = withAnswers && director ? director.idea : prompt.trim();
+    setDirectorError(null);
+    if (!idea) {
+      setDirectorError("Write your idea first, even a few words.");
+      return;
+    }
+    setDirectorBusy(true);
+    try {
+      const reply = await callDirector(idea, kind, withAnswers ? directorAnswers.trim() : "");
+      setDirector({ ...reply, idea, kind });
+      setDirectorPicked(null);
+      if (!withAnswers) setDirectorAnswers("");
+    } catch (e) {
+      setDirectorError((e as Error).message);
+    } finally {
+      setDirectorBusy(false);
+    }
+  }
+
+  /** Puts a direction into the form: its prompt, and its shape and length when they fit. */
+  function applyDirection(d: Direction, i: number) {
+    setPrompt(d.prompt);
+    setDirectorPicked(i);
+    if (shapes.includes(d.shape)) setAspectRatio(d.shape);
+    if (kind === "video" && d.seconds) {
+      if (d.seconds <= 10) {
+        setStoryLen(null);
+        const ds = model.durations ?? [];
+        if (ds.length) setDuration(ds.reduce((a, b) => (Math.abs(b - d.seconds) < Math.abs(a - d.seconds) ? b : a)));
+      } else setStoryLen(LONG_LENGTHS.reduce((a, b) => (Math.abs(b - d.seconds) < Math.abs(a - d.seconds) ? b : a)));
+    }
+  }
+
+  /** In the chat: the director watches a finished video and offers directed remakes. */
+  async function directorNotes(it: Item, thread: string) {
+    const id = say(thread, it.id, { text: "Thinking about how a director would shoot this...", state: "working" });
+    try {
+      const reply = await callDirector(basePrompt(it), it.kind);
+      patchMsg(id, { state: "done", text: `${reply.read || "Here's how I'd direct it."} Three ways I'd shoot it again (same shape and length):` });
+      const cost = fixCost(it, "remake");
+      say(thread, it.id, {
+        text: reply.directions.map((d, i) => `${i + 1}. ${d.name}: ${d.why}`).join("\n"),
+        offers: reply.directions.map((d) => ({ label: `🎬 ${d.name}`, cost, act: { type: "fix" as const, note: `Directed as "${d.name}"`, how: "remake" as const, newPrompt: d.prompt } })),
+        state: "open",
+      });
+    } catch (e) {
+      patchMsg(id, { state: "done", text: (e as Error).message });
+    }
   }
 
   // ---------- Full ad ----------
@@ -1438,6 +1510,11 @@ export default function Studio({ mode }: { mode: AppMode }) {
       reply({ text: "I'm still making this one. Ask me again once it's ready, or press ＋ New to start something else." });
       return;
     }
+    if (/^director'?s? notes?$|^(ask|call) the director$/i.test(text) && !it.ad) {
+      if (!it.url) reply({ text: "This one didn't finish. Tell me what you'd like and I'll make it again." });
+      else directorNotes(it, thread);
+      return;
+    }
     const intent = readChat(text, it.kind);
     if (intent.type === "check") {
       if (!it.url) reply({ text: "This one didn't finish, so there's nothing to check. Tell me what you'd like and I'll make it again." });
@@ -1573,6 +1650,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
       chips.push({ label: "🎙️ Change the voiceover", text: "Make the voiceover warmer and slower" });
       chips.push({ label: "🎵 Different music", text: "music: more upbeat" });
     } else if (selected.kind === "video") {
+      chips.push({ label: "🎬 Director's notes", text: "Director's notes" });
       const next = nextLength(selected.duration, LONG_LENGTHS);
       if ((selected.duration ?? 0) < MAX_STORY_SECONDS) chips.push({ label: `⏱️ Make it ${next}s`, text: `Make it ${next} seconds` });
       if (!selected.hasAudio) chips.push({ label: "🔊 Add sound", text: "Add sound" });
@@ -1662,6 +1740,75 @@ export default function Studio({ mode }: { mode: AppMode }) {
 
   // ---------- the pieces of the Create form ----------
 
+  const directorShown = director && director.kind === kind;
+  const directorPanel = (
+    <div className="director">
+      {!directorShown && (
+        <button className="director-ask" onClick={() => askDirector()} disabled={directorBusy || mode === "locked"}>
+          <span>
+            🎬 <strong>{directorBusy ? "The director is thinking..." : "Ask the creative director"}</strong>
+            <span className="muted small"> Get 3 ways to shoot your idea: camera, light, pacing, length and shape. Pick one with a click.</span>
+          </span>
+          <span className="tag">{mode === "demo" ? "Free" : "under 1 cent"}</span>
+        </button>
+      )}
+      {directorShown && (
+        <div className="director-box">
+          <div className="director-head">
+            <strong>🎬 Your creative director</strong>
+            <button className="link-btn" onClick={() => setDirector(null)}>
+              Close
+            </button>
+          </div>
+          {director.read && <p className="muted small">{director.read}</p>}
+          <div className="director-cards">
+            {director.directions.map((d, i) => (
+              <div key={d.name + i} className={directorPicked === i ? "director-card picked" : "director-card"}>
+                <div className="director-card-head">
+                  <strong>{d.name}</strong>
+                  <span className="muted small">
+                    {kind === "video" && d.seconds ? `${d.seconds}s · ` : ""}
+                    {d.shape}
+                  </span>
+                </div>
+                <p className="small">{d.why}</p>
+                <details>
+                  <summary className="muted small">See the direction</summary>
+                  <p className="small">{d.prompt}</p>
+                </details>
+                <button className={directorPicked === i ? "pill active" : "pill"} onClick={() => applyDirection(d, i)}>
+                  {directorPicked === i ? "✓ Using this" : "Use this"}
+                </button>
+              </div>
+            ))}
+          </div>
+          {directorPicked !== null && (
+            <button className="link-btn" onClick={() => { setPrompt(director.idea); setDirectorPicked(null); }}>
+              ↩ Back to my own words
+            </button>
+          )}
+          {director.questions.length > 0 && (
+            <div className="director-qs">
+              <span className="small">To make it even better, tell me:</span>
+              <ul className="small">
+                {director.questions.map((q) => (
+                  <li key={q}>{q}</li>
+                ))}
+              </ul>
+              <div className="product-link-row">
+                <input className="text-input" maxLength={600} placeholder="Your answers, in a few words" value={directorAnswers} onChange={(e) => setDirectorAnswers(e.target.value)} />
+                <button className="pill" disabled={!directorAnswers.trim() || directorBusy} onClick={() => askDirector(true)}>
+                  {directorBusy ? "Thinking..." : "Direct it again"}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+      {directorError && <p className="error small">{directorError}</p>}
+    </div>
+  );
+
   const describeBlock = (
     <>
     <div className="prompt-box">
@@ -1679,6 +1826,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
       />
       <span className="prompt-count">{prompt.length}/2000</span>
     </div>
+    {directorPanel}
     <label className="enhance-toggle">
       <input type="checkbox" checked={enhance} onChange={(e) => setEnhance(e.target.checked)} />
       <span>
