@@ -154,11 +154,33 @@ export const ADD_SOUND_MODEL: ModelInfo = {
   }),
 };
 
+/**
+ * Fixes part of an existing image from a plain instruction ("make the text say
+ * I TRIED IT"), keeping the rest. Not shown in the picker; used by "Fix this".
+ */
+export const EDIT_IMAGE_MODEL: ModelInfo = {
+  id: "fal-ai/flux-pro/kontext",
+  name: "FLUX Kontext (fix)",
+  kind: "image",
+  tagline: "Changes part of an image and keeps the rest.",
+  approxCost: "~$0.04 / image",
+  needsSource: true,
+  aspectRatios: ["1:1", "16:9", "9:16"],
+  buildInput: ({ prompt, aspectRatio, sourceUrl }) => ({
+    prompt,
+    image_url: sourceUrl,
+    aspect_ratio: aspectRatio,
+    output_format: "png",
+  }),
+};
+
+const HIDDEN = [ADD_SOUND_MODEL, EDIT_IMAGE_MODEL];
+
 export function getModel(id: string): ModelInfo | undefined {
-  return MODELS.find((m) => m.id === id) ?? (id === ADD_SOUND_MODEL.id ? ADD_SOUND_MODEL : undefined);
+  return MODELS.find((m) => m.id === id) ?? HIDDEN.find((m) => m.id === id);
 }
 
-/** Only accept result videos that fal.ai itself hosts, so the key can't be used on random URLs. */
+/** Only accept result images and videos that fal.ai itself hosts, so the key can't be used on random URLs. */
 export function isFalMediaUrl(url: string): boolean {
   try {
     const u = new URL(url);

@@ -30,12 +30,14 @@ export async function POST(req: Request) {
   if (!safety.ok) return NextResponse.json({ error: safety.reason, blocked: true }, { status: 422 });
 
   const sourceUrl = model.needsSource ? String(body.sourceUrl ?? "") : undefined;
-  if (model.needsSource && !sourceUrl) return NextResponse.json({ error: "No video to add sound to." }, { status: 400 });
+  if (model.needsSource && !sourceUrl) return NextResponse.json({ error: "Nothing to change." }, { status: 400 });
 
   const aspectRatio = (model.aspectRatios.includes(body.aspectRatio as AspectRatio)
     ? body.aspectRatio
     : model.aspectRatios[0]) as AspectRatio;
-  const duration = model.needsSource
+  const duration = model.kind === "image"
+    ? undefined
+    : model.needsSource
     ? Math.min(Math.max(Number(body.duration) || 8, 1), 30)
     : model.durations && model.durations.includes(Number(body.duration))
       ? Number(body.duration)
@@ -75,7 +77,7 @@ export async function POST(req: Request) {
   }
 
   if (sourceUrl && !isFalMediaUrl(sourceUrl)) {
-    return NextResponse.json({ error: "Sound can only be added to videos made in GenStudio." }, { status: 400 });
+    return NextResponse.json({ error: "Only results made in GenStudio can be changed." }, { status: 400 });
   }
 
   try {

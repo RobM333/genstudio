@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ADD_SOUND_MODEL, estimateCost, formatCost, getModel, MODELS, type AspectRatio, type MediaKind } from "@/lib/models";
+import { ADD_SOUND_MODEL, EDIT_IMAGE_MODEL, estimateCost, formatCost, getModel, MODELS, type AspectRatio, type MediaKind } from "@/lib/models";
 import { autoAspectRatios, pickModel, type Quality } from "@/lib/router";
 import { fillTemplate, TEMPLATES, type Template } from "@/lib/templates";
 import type { AppMode } from "@/lib/config";
@@ -34,6 +34,9 @@ type Item = {
   soundError?: string;
   enhance?: boolean; // improve the prompt before generating
   enhancedPrompt?: string; // the improved prompt the model actually used
+  sourceUrl?: string; // image being fixed
+  editPrompt?: string; // instruction sent to the fix model
+  fixNote?: string; // what the user asked to change
 };
 
 type JobSpec = {
@@ -48,6 +51,9 @@ type JobSpec = {
   templateName?: string;
   sound?: boolean;
   enhance?: boolean;
+  sourceUrl?: string;
+  editPrompt?: string;
+  fixNote?: string;
 };
 
 const AUTO = "auto";
@@ -201,7 +207,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           modelId: jobModelId,
-          prompt: item.prompt,
+          prompt: item.stage !== "sound" && item.editPrompt ? item.editPrompt : item.prompt,
           aspectRatio: item.aspectRatio,
           duration: item.duration,
           sound: item.wantSound,
@@ -243,7 +249,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
       stage: "video",
     };
     setItems((prev) => [item, ...prev]);
-    submitStep(item, spec.modelId);
+    submitStep(item, spec.modelId, spec.sourceUrl);
   }
 
   /** Adds sound to a silent video that's already in the gallery. */
@@ -283,6 +289,45 @@ export default function Studio({ mode }: { mode: AppMode }) {
       autoReason: isAuto ? auto.reason : undefined,
       templateName: template?.name,
     });
+  }
+
+  /** Fixes what the user didn't like. Images are edited in place; videos are re-made with the note added. */
+  function fixItem(it: Item, note: string): string | null {
+    const text = note.trim();
+    if (!text) return "Say what you'd like changed.";
+    const safety = checkPrompt(text);
+    if (!safety.ok) return safety.reason;
+    const prompt = `${it.prompt}. Fix: ${text}`.slice(0, 1900);
+    const common = {
+      kind: it.kind,
+      prompt,
+      aspectRatio: it.aspectRatio,
+      quality: it.quality,
+      parentId: it.id,
+      templateName: it.templateName,
+      fixNote: text,
+    };
+    if (it.kind === "image" && it.url) {
+      runJob({
+        ...common,
+        modelId: EDIT_IMAGE_MODEL.id,
+        sourceUrl: it.url,
+        editPrompt: `${text}. Keep everything else in the image exactly the same.`,
+        autoReason: "edits the image and keeps everything else",
+        enhance: false,
+      });
+    } else {
+      runJob({
+        ...common,
+        modelId: it.modelId,
+        duration: it.duration,
+        sound: it.wantSound !== false,
+        autoReason: it.autoReason,
+        enhance: it.enhance !== false,
+      });
+    }
+    setOpen(null);
+    return null;
   }
 
   /** Re-runs a draft's prompt with the best model for a final version. */
@@ -637,7 +682,8 @@ export default function Studio({ mode }: { mode: AppMode }) {
               {open.url ? <Media item={open} /> : <div className="tile-state failed">{open.error}</div>}
             </div>
             <div className="viewer-side">
-              <p className="viewer-prompt">{open.prompt}</p>
+              <p className="viewer-prompt">{open.fixNote ? open.prompt.slice(0, open.prompt.lastIndexOf(". Fix: ")) : open.prompt}</p>
+              {open.fixNote && <p className="fix-note">🔧 Fixed: {open.fixNote}</p>}
               {open.enhancedPrompt && open.enhancedPrompt !== open.prompt && (
                 <details className="enhanced-peek">
                   <summary>✨ Enhanced prompt used</summary>
@@ -692,6 +738,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
                 <dt>Made</dt>
                 <dd>{new Date(open.createdAt).toLocaleString()}</dd>
               </dl>
+              {open.status === "done" && open.url && <FixBox key={open.id} item={open} onFix={fixItem} />}
               {open.quality === "draft" && open.status === "done" && <FinalButton draft={open} onClick={makeFinal} />}
               {open.kind === "video" && open.status === "done" && !open.hasAudio && open.url && (
                 <div className="final-box">
@@ -735,6 +782,44 @@ export default function Studio({ mode }: { mode: AppMode }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function FixBox({ item, onFix }: { item: Item; onFix: (it: Item, note: string) => string | null }) {
+  const [note, setNote] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const m = getModel(item.modelId);
+  const isImage = item.kind === "image";
+  const cost = isImage
+    ? estimateCost(EDIT_IMAGE_MODEL)
+    : m
+      ? estimateCost(m, item.duration, item.wantSound !== false)
+      : 0;
+  return (
+    <div className="fix-box">
+      <label className="label" htmlFor="fix-note">
+        Something not right?
+      </label>
+      <textarea
+        id="fix-note"
+        className="prompt fix-input"
+        rows={2}
+        maxLength={500}
+        placeholder={isImage ? 'e.g. The text should say "I TRIED IT", not IT twice' : "e.g. Make the camera move slower and keep the dog in frame"}
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+      />
+      {error && <p className="error">{error}</p>}
+      <button className="pill active" onClick={() => setError(onFix(item, note))}>
+        🔧 Fix this
+      </button>
+      <p className="hint">
+        {isImage
+          ? "Changes just what you describe and keeps the rest. "
+          : "Videos can't be edited in place, so we make it again with your note. "}
+        About {formatCost(cost)}.
+      </p>
     </div>
   );
 }

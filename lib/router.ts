@@ -29,10 +29,15 @@ export function pickModel(opts: { kind: MediaKind; prompt: string; quality: Qual
   const { kind, prompt, quality, aspectRatio } = opts;
 
   if (kind === "image") {
+    const wantsText = has(prompt, TEXT_WORDS) || /["“].+["”]/.test(prompt);
     if (quality === "draft") {
+      // FLUX Schnell misspells words, so drafts with words in them use a model that can spell.
+      if (wantsText) {
+        return { model: first(["fal-ai/imagen4/preview"], aspectRatio, kind), reason: "spells words in images correctly" };
+      }
       return { model: first(["fal-ai/flux/schnell"], aspectRatio, kind), reason: "cheapest and fastest, good for trying ideas" };
     }
-    if (has(prompt, TEXT_WORDS) || /["“].+["”]/.test(prompt)) {
+    if (wantsText) {
       return { model: first(["fal-ai/imagen4/preview"], aspectRatio, kind), reason: "best at readable text in images" };
     }
     if (has(prompt, DESIGN_WORDS)) {
