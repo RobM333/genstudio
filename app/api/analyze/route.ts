@@ -1,0 +1,76 @@
+import { NextResponse } from "next/server";
+import { getMode } from "@/lib/config";
+import { isFalMediaUrl } from "@/lib/models";
+import { checkPrompt } from "@/lib/safety";
+import { analysisInstructions, IMAGE_ANALYZER, parseAnalysis, VIDEO_ANALYZER } from "@/lib/analyze";
+import { fal } from "@/lib/fal";
+
+export const dynamic = "force-dynamic";
+
+// POST starts an analysis and returns a job id; GET checks on it. Split like
+// this so slow video analysis never hits the hosting time limit.
+export async function POST(req: Request) {
+  let body: { kind?: string; url?: string; prompt?: string };
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Bad request." }, { status: 400 });
+  }
+  const kind = body.kind === "video" ? "video" : "image";
+  const url = String(body.url ?? "");
+  const prompt = String(body.prompt ?? "").trim().slice(0, 2000);
+  if (!url || !prompt) return NextResponse.json({ error: "Bad request." }, { status: 400 });
+  const safety = checkPrompt(prompt);
+  if (!safety.ok) return NextResponse.json({ error: safety.reason, blocked: true }, { status: 422 });
+
+  const mode = getMode();
+  if (mode === "demo") {
+    await new Promise((r) => setTimeout(r, 1200));
+    return NextResponse.json({
+      status: "COMPLETED",
+      demo: true,
+      analysis: {
+        problems: ["Demo mode: this is an example. The hoop is on the left, but the request puts it on the right.", "The boy faces the camera instead of the court."],
+        fix: "Move the hoop to the right side and turn the boy so he faces the court.",
+        prompt: `${prompt} Wide shot from behind the crowd, hoop on the right, the boy in the foreground facing the court.`,
+      },
+    });
+  }
+  if (mode === "locked") return NextResponse.json({ error: "Real generation is switched off." }, { status: 403 });
+  if (!isFalMediaUrl(url)) return NextResponse.json({ error: "Only results made in GenStudio can be analyzed." }, { status: 400 });
+
+  try {
+    const instructions = analysisInstructions(kind, prompt);
+    const { request_id } =
+      kind === "video"
+        ? await fal.queue.submit(VIDEO_ANALYZER, { input: { video_url: url, prompt: instructions } })
+        : await fal.queue.submit(IMAGE_ANALYZER, {
+            input: { model: "google/gemini-2.5-flash", prompt: instructions, image_urls: [url] },
+          });
+    return NextResponse.json({ status: "IN_QUEUE", requestId: request_id, kind });
+  } catch (err) {
+    console.error("analyze submit failed", err);
+    return NextResponse.json({ error: "Couldn't start the analysis. Please try again." }, { status: 502 });
+  }
+}
+
+export async function GET(req: Request) {
+  const u = new URL(req.url);
+  const kind = u.searchParams.get("kind") === "video" ? "video" : "image";
+  const requestId = u.searchParams.get("requestId") ?? "";
+  if (!/^[\w-]{8,100}$/.test(requestId)) return NextResponse.json({ error: "Bad request." }, { status: 400 });
+  if (getMode() !== "live") return NextResponse.json({ error: "Real generation is not switched on." }, { status: 403 });
+  const endpoint = kind === "video" ? VIDEO_ANALYZER : IMAGE_ANALYZER;
+  try {
+    const status = await fal.queue.status(endpoint, { requestId });
+    if (status.status !== "COMPLETED") return NextResponse.json({ status: status.status });
+    const result = await fal.queue.result(endpoint, { requestId });
+    const output = String((result.data as { output?: string })?.output ?? "");
+    const analysis = parseAnalysis(output);
+    if (!analysis) return NextResponse.json({ status: "FAILED", error: "The analysis didn't come back in a usable form. Try again." });
+    return NextResponse.json({ status: "COMPLETED", analysis });
+  } catch (err) {
+    console.error("analyze status failed", err);
+    return NextResponse.json({ status: "FAILED", error: "The analysis failed. Please try again." });
+  }
+}

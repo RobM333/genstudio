@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 const MAX_PROMPT = 2000;
 
 export async function POST(req: Request) {
-  let body: { modelId?: string; prompt?: string; aspectRatio?: string; duration?: number; sourceUrl?: string; sound?: boolean; enhance?: boolean };
+  let body: { modelId?: string; prompt?: string; aspectRatio?: string; duration?: number; sourceUrl?: string; sound?: boolean; enhance?: boolean; purpose?: string };
   try {
     body = await req.json();
   } catch {
@@ -29,8 +29,9 @@ export async function POST(req: Request) {
   const safety = checkPrompt(prompt);
   if (!safety.ok) return NextResponse.json({ error: safety.reason, blocked: true }, { status: 422 });
 
-  const sourceUrl = model.needsSource ? String(body.sourceUrl ?? "") : undefined;
-  if (model.needsSource && !sourceUrl) return NextResponse.json({ error: "Nothing to change." }, { status: 400 });
+  const usesSource = Boolean(model.needsSource || model.takesImage);
+  const sourceUrl = usesSource ? String(body.sourceUrl ?? "") : undefined;
+  if (usesSource && !sourceUrl) return NextResponse.json({ error: "Nothing to change." }, { status: 400 });
 
   const aspectRatio = (model.aspectRatios.includes(body.aspectRatio as AspectRatio)
     ? body.aspectRatio
@@ -55,11 +56,14 @@ export async function POST(req: Request) {
   // Quietly improve the prompt for this model, then check the new prompt too.
   let finalPrompt = prompt;
   let enhancedPrompt: string | undefined;
+  let enhanceNote: string | undefined;
   if (body.enhance !== false && !model.needsSource) {
-    const e = await enhancePrompt(prompt, model, { live: mode === "live", sound: body.sound !== false });
+    const purpose = body.purpose === "keyframe" ? "keyframe" : model.takesImage ? "animate" : "direct";
+    const e = await enhancePrompt(prompt, model, { live: mode === "live", sound: body.sound !== false, purpose });
     if (e.by !== "none" && checkPrompt(e.prompt).ok) {
       finalPrompt = e.prompt;
       enhancedPrompt = e.prompt;
+      enhanceNote = e.note;
     }
   }
 
@@ -73,6 +77,7 @@ export async function POST(req: Request) {
       aspectRatio,
       duration,
       enhancedPrompt,
+      enhanceNote,
     });
   }
 
@@ -84,7 +89,7 @@ export async function POST(req: Request) {
     const { request_id } = await fal.queue.submit(model.id, {
       input: model.buildInput({ prompt: finalPrompt, aspectRatio, duration, sourceUrl, sound: body.sound !== false }),
     });
-    return NextResponse.json({ status: "IN_QUEUE", requestId: request_id, aspectRatio, duration, enhancedPrompt });
+    return NextResponse.json({ status: "IN_QUEUE", requestId: request_id, aspectRatio, duration, enhancedPrompt, enhanceNote });
   } catch (err) {
     console.error("fal submit failed", err);
     return NextResponse.json({ error: friendlyError(err) }, { status: 502 });

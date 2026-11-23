@@ -682,3 +682,20 @@ kbd {
   background: var(--spectrum);
   transition: width 0.5s linear;
 }
+
+/* Picture-first video and Analyze */
+.small-notice { font-size: 13px; margin: 8px 0 0; }
+.enhance-note {
+  margin: -4px 0 12px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.problems {
+  margin: 10px 0;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.problems li { margin-bottom: 4px; }
+.fix-box .pill { margin-bottom: 8px; }
+.fix-box .label { display: block; margin-bottom: 8px; }

@@ -54,6 +54,9 @@ export function pickModel(opts: { kind: MediaKind; prompt: string; quality: Qual
   if (has(prompt, SOUND_WORDS)) {
     return { model: first(["fal-ai/veo3/fast", "fal-ai/kling-video/v2.5-turbo/pro/text-to-video"], aspectRatio, kind), reason: "the only model that adds sound and speech" };
   }
+  if (isBusyScene(prompt)) {
+    return { model: first(["fal-ai/veo3/fast", "fal-ai/kling-video/v2.5-turbo/pro/text-to-video"], aspectRatio, kind), reason: "best at following detailed scenes with several people" };
+  }
   return { model: first(["fal-ai/kling-video/v2.5-turbo/pro/text-to-video"], aspectRatio, kind), reason: "cinematic motion at a fair price" };
 }
 
@@ -61,4 +64,12 @@ export function pickModel(opts: { kind: MediaKind; prompt: string; quality: Qual
 export function autoAspectRatios(kind: MediaKind): AspectRatio[] {
   const all: AspectRatio[] = ["1:1", "16:9", "9:16"];
   return all.filter((ar) => MODELS.some((m) => m.kind === kind && m.aspectRatios.includes(ar)));
+}
+
+/** Long or story-like scenes with several people: weaker models mix up who is where. */
+export function isBusyScene(prompt: string): boolean {
+  const p = prompt.toLowerCase();
+  const words = p.split(/\s+/).filter(Boolean).length;
+  const people = (p.match(/\b(man|woman|men|women|boy|girl|kid|child|parents?|crowd|player|players|people|friends|couple|family|audience|fans)\b/g) ?? []).length;
+  return words > 45 || people >= 3;
 }
