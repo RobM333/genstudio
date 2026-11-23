@@ -26,7 +26,7 @@ Rules:
 function systemPrompt(model: ModelInfo, sound: boolean): string {
   if (model.kind === "image") {
     const extra =
-      model.id.includes("imagen") || model.id.includes("recraft")
+      model.id.includes("nano-banana") || model.id.includes("recraft")
         ? "This model is good at text and graphic design. Keep any wording exact, describe layout, typography style and colour palette."
         : "Describe the subject first, then composition and framing, lighting, lens or camera (for photos) or art style (for illustrations), colour palette and mood.";
     return `${COMMON}\nThis is for a still image. ${extra}`;

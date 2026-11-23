@@ -61,11 +61,11 @@ export const MODELS: ModelInfo[] = [
     }),
   },
   {
-    id: "fal-ai/imagen4/preview",
-    name: "Google Imagen 4",
+    id: "fal-ai/nano-banana",
+    name: "Nano Banana (Google)",
     kind: "image",
-    tagline: "Strong at text in images and clean product shots.",
-    approxCost: "~$0.05 / image",
+    tagline: "Spells words correctly, great for thumbnails, ads and posters.",
+    approxCost: "~$0.04 / image",
     aspectRatios: ["1:1", "16:9", "9:16"],
     buildInput: ({ prompt, aspectRatio }) => ({
       prompt,
@@ -118,11 +118,11 @@ export const MODELS: ModelInfo[] = [
   {
     id: "fal-ai/veo3/fast",
     audio: true,
-    silentApproxPrice: 0.25,
+    silentApproxPrice: 0.1,
     name: "Google Veo 3 Fast",
     kind: "video",
     tagline: "Top quality, with sound.",
-    approxCost: "~$0.40 / second",
+    approxCost: "~$0.15 / second",
     durations: [8],
     aspectRatios: ["16:9", "9:16"],
     buildInput: ({ prompt, aspectRatio, sound }) => ({

@@ -33,12 +33,12 @@ export function pickModel(opts: { kind: MediaKind; prompt: string; quality: Qual
     if (quality === "draft") {
       // FLUX Schnell misspells words, so drafts with words in them use a model that can spell.
       if (wantsText) {
-        return { model: first(["fal-ai/imagen4/preview"], aspectRatio, kind), reason: "spells words in images correctly" };
+        return { model: first(["fal-ai/nano-banana"], aspectRatio, kind), reason: "spells words in images correctly" };
       }
       return { model: first(["fal-ai/flux/schnell"], aspectRatio, kind), reason: "cheapest and fastest, good for trying ideas" };
     }
     if (wantsText) {
-      return { model: first(["fal-ai/imagen4/preview"], aspectRatio, kind), reason: "best at readable text in images" };
+      return { model: first(["fal-ai/nano-banana"], aspectRatio, kind), reason: "best at readable text in images" };
     }
     if (has(prompt, DESIGN_WORDS)) {
       return { model: first(["fal-ai/recraft/v3/text-to-image"], aspectRatio, kind), reason: "best for logos, illustrations and brand graphics" };
