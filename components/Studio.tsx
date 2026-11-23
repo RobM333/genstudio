@@ -901,7 +901,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
 
       <section className="home-section">
         <div className="section-head">
-          <h2>{items.length ? "Jump back in" : "Ideas to try"}</h2>
+          <h2>{items.length ? "Your Studio" : "Ideas to try"}</h2>
           {items.length > 0 && (
             <button className="link" onClick={() => go("gallery")}>
               Open gallery
