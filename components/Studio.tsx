@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { estimateCost, formatCost, getModel, MODELS, type AspectRatio, type MediaKind } from "@/lib/models";
+import { ADD_SOUND_MODEL, estimateCost, formatCost, getModel, MODELS, type AspectRatio, type MediaKind } from "@/lib/models";
 import { autoAspectRatios, pickModel, type Quality } from "@/lib/router";
 import { fillTemplate, TEMPLATES, type Template } from "@/lib/templates";
 import type { AppMode } from "@/lib/config";
@@ -24,6 +24,11 @@ type Item = {
   autoReason?: string;
   parentId?: string; // the draft this final was made from
   templateName?: string;
+  wantSound?: boolean; // video: the user asked for sound
+  hasAudio?: boolean; // video: the result has sound
+  stage?: "video" | "sound"; // which step is running
+  jobModelId?: string; // model of the step being polled
+  soundError?: string;
 };
 
 type JobSpec = {
@@ -36,6 +41,7 @@ type JobSpec = {
   autoReason?: string;
   parentId?: string;
   templateName?: string;
+  sound?: boolean;
 };
 
 const AUTO = "auto";
@@ -77,6 +83,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
   const models = useMemo(() => MODELS.filter((m) => m.kind === kind), [kind]);
   const [choice, setChoice] = useState<string>(AUTO); // "auto" or a model id
   const [quality, setQuality] = useState<Quality>("draft");
+  const [sound, setSound] = useState(true);
   const [prompt, setPrompt] = useState("");
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>("1:1");
   const [duration, setDuration] = useState<number | undefined>(undefined);
@@ -95,7 +102,9 @@ export default function Studio({ mode }: { mode: AppMode }) {
   const shapes = isAuto ? autoAspectRatios(kind) : model.aspectRatios;
   // The length to use right now (the stored one can lag a render behind a model change).
   const length = model.durations ? (model.durations.includes(duration ?? -1) ? duration : model.durations[0]) : undefined;
-  const cost = estimateCost(model, length);
+  const cost = estimateCost(model, length, kind === "video" && sound);
+  const costWith = estimateCost(model, length, true);
+  const costWithout = estimateCost(model, length, false);
 
   // Load the saved gallery once, in the browser.
   useEffect(() => {
@@ -124,31 +133,83 @@ export default function Studio({ mode }: { mode: AppMode }) {
     setOpen((cur) => (cur && cur.id === id ? { ...cur, ...patch } : cur));
   }, []);
 
-  const poll = useCallback(
-    async (item: Item) => {
-      if (!item.requestId || polling.current.has(item.id)) return;
-      polling.current.add(item.id);
-      const started = Date.now();
-      try {
-        while (Date.now() - started < 20 * 60 * 1000) {
-          await new Promise((r) => setTimeout(r, item.kind === "video" ? 5000 : 2000));
-          const res = await fetch(
-            `/api/status?modelId=${encodeURIComponent(item.modelId)}&requestId=${encodeURIComponent(item.requestId)}`,
-          );
-          const data = await res.json().catch(() => ({}));
-          if (data.status === "COMPLETED" && data.url) return update(item.id, { status: "done", url: data.url });
-          if (data.status === "FAILED" || !res.ok)
-            return update(item.id, { status: "failed", error: data.error ?? "Something went wrong." });
+  function fail(item: Item, error: string) {
+    // If only the add-sound step failed, keep the silent video instead of losing it.
+    if (item.stage === "sound" && item.url) return update(item.id, { status: "done", soundError: error });
+    update(item.id, { status: "failed", error });
+  }
+
+  async function poll(item: Item) {
+    if (!item.requestId || polling.current.has(item.id)) return;
+    polling.current.add(item.id);
+    const started = Date.now();
+    const jobModelId = item.jobModelId ?? item.modelId;
+    let doneUrl: string | null = null;
+    try {
+      while (Date.now() - started < 20 * 60 * 1000) {
+        await new Promise((r) => setTimeout(r, item.kind === "video" ? 5000 : 2000));
+        const res = await fetch(
+          `/api/status?modelId=${encodeURIComponent(jobModelId)}&requestId=${encodeURIComponent(item.requestId)}`,
+        );
+        const data = await res.json().catch(() => ({}));
+        if (data.status === "COMPLETED" && data.url) {
+          doneUrl = data.url as string;
+          break;
         }
-        update(item.id, { status: "failed", error: "This took too long. Please try again." });
-      } catch {
-        update(item.id, { status: "failed", error: "Lost connection while waiting." });
-      } finally {
-        polling.current.delete(item.id);
+        if (data.status === "FAILED" || !res.ok) return fail(item, data.error ?? "Something went wrong.");
       }
-    },
-    [update],
-  );
+      if (!doneUrl) return fail(item, "This took too long. Please try again.");
+    } catch {
+      return fail(item, "Lost connection while waiting.");
+    } finally {
+      polling.current.delete(item.id);
+    }
+    stepDone(item, doneUrl);
+  }
+
+  /** A step finished. Silent videos that asked for sound get a second "add sound" step. */
+  function stepDone(item: Item, url: string, demo?: boolean) {
+    if (item.kind === "video" && item.wantSound && !item.hasAudio && item.stage !== "sound") {
+      const next: Item = { ...item, url, demo, stage: "sound" };
+      update(item.id, { url, demo, stage: "sound" });
+      submitStep(next, ADD_SOUND_MODEL.id, url);
+      return;
+    }
+    update(item.id, {
+      status: "done",
+      // Demo mode has no real audio, so keep the same placeholder.
+      url: item.stage === "sound" && demo ? item.url : url,
+      demo,
+      hasAudio: item.hasAudio || item.stage === "sound",
+      soundError: undefined,
+    });
+  }
+
+  async function submitStep(item: Item, jobModelId: string, sourceUrl?: string) {
+    try {
+      const res = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          modelId: jobModelId,
+          prompt: item.prompt,
+          aspectRatio: item.aspectRatio,
+          duration: item.duration,
+          sound: item.wantSound,
+          sourceUrl,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return fail(item, data.error ?? "Something went wrong.");
+      const duration = item.stage === "sound" ? item.duration : (data.duration ?? item.duration);
+      const next: Item = { ...item, jobModelId, duration };
+      if (data.status === "COMPLETED") return stepDone(next, data.url, data.demo);
+      update(item.id, { requestId: data.requestId as string, jobModelId, duration });
+      poll({ ...next, requestId: data.requestId as string });
+    } catch {
+      fail(item, "Couldn't reach the server.");
+    }
+  }
 
   // Resume any jobs that were still running when the page was closed.
   useEffect(() => {
@@ -157,30 +218,30 @@ export default function Studio({ mode }: { mode: AppMode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded]);
 
-  async function runJob(spec: JobSpec) {
+  function runJob(spec: JobSpec) {
     const m = getModel(spec.modelId)!;
-    const item: Item = { ...spec, id: crypto.randomUUID(), modelName: m.name, status: "pending", createdAt: Date.now() };
+    const wantSound = spec.kind === "video" ? spec.sound !== false : undefined;
+    const item: Item = {
+      ...spec,
+      id: crypto.randomUUID(),
+      modelName: m.name,
+      status: "pending",
+      createdAt: Date.now(),
+      wantSound,
+      hasAudio: Boolean(m.audio && wantSound),
+      stage: "video",
+    };
     setItems((prev) => [item, ...prev]);
-    try {
-      const res = await fetch("/api/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          modelId: spec.modelId,
-          prompt: spec.prompt,
-          aspectRatio: spec.aspectRatio,
-          duration: spec.duration,
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) return update(item.id, { status: "failed", error: data.error ?? "Something went wrong." });
-      if (data.status === "COMPLETED")
-        return update(item.id, { status: "done", url: data.url, demo: data.demo, duration: data.duration });
-      update(item.id, { requestId: data.requestId as string, duration: data.duration });
-      poll({ ...item, requestId: data.requestId as string });
-    } catch {
-      update(item.id, { status: "failed", error: "Couldn't reach the server." });
-    }
+    submitStep(item, spec.modelId);
+  }
+
+  /** Adds sound to a silent video that's already in the gallery. */
+  function addSound(it: Item) {
+    if (!it.url) return;
+    const next: Item = { ...it, status: "pending", wantSound: true, stage: "sound", soundError: undefined };
+    update(it.id, { status: "pending", wantSound: true, stage: "sound", soundError: undefined, requestId: undefined });
+    setOpen(null);
+    submitStep(next, ADD_SOUND_MODEL.id, it.url);
   }
 
   function generate() {
@@ -196,6 +257,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
       prompt: text,
       aspectRatio,
       duration: length,
+      sound: kind === "video" ? sound : undefined,
       quality: isAuto ? quality : undefined,
       autoReason: isAuto ? auto.reason : undefined,
       templateName: template?.name,
@@ -217,6 +279,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
       quality: "final",
       autoReason: pick.reason,
       parentId: draft.id,
+      sound: draft.kind === "video" ? draft.wantSound !== false : undefined,
       templateName: draft.templateName,
     });
     setOpen(null);
@@ -363,7 +426,14 @@ export default function Studio({ mode }: { mode: AppMode }) {
                 onClick={() => setChoice(m.id)}
               >
                 <span className="model-name">{m.name}</span>
-                <span className="model-tag">{m.tagline}</span>
+                <span className="model-tag">
+                  {m.tagline}
+                  {m.kind === "video" && (
+                    <span className={m.audio ? "sound-tag on" : "sound-tag"}>
+                      {m.audio ? "🔊 Makes its own sound" : "🔇 Silent (sound can be added)"}
+                    </span>
+                  )}
+                </span>
                 <span className="model-cost">{m.approxCost}</span>
               </button>
             ))}
@@ -417,6 +487,29 @@ export default function Studio({ mode }: { mode: AppMode }) {
             )}
           </div>
 
+          {kind === "video" && (
+            <>
+              <div className="label">Sound</div>
+              <div className="segmented">
+                <button className={sound ? "seg active" : "seg"} onClick={() => setSound(true)}>
+                  <strong>🔊 With sound</strong>
+                  <span>{formatCost(costWith)}</span>
+                </button>
+                <button className={!sound ? "seg active" : "seg"} onClick={() => setSound(false)}>
+                  <strong>🔇 No sound</strong>
+                  <span>{formatCost(costWithout)}</span>
+                </button>
+              </div>
+              {sound && (
+                <p className="auto-pick">
+                  {model.audio
+                    ? `${model.name} makes its own sound, including speech.`
+                    : `${model.name} is silent, so we add matching sound effects and ambience after (not speech). For speech, use Google Veo 3.`}
+                </p>
+              )}
+            </>
+          )}
+
           {formError && <p className="error">{formError}</p>}
           <button className="generate" onClick={generate} disabled={mode === "locked"}>
             {isAuto && quality === "draft" ? `Generate ${kind} draft` : `Generate ${kind}`}
@@ -462,7 +555,9 @@ export default function Studio({ mode }: { mode: AppMode }) {
                   <div className="tile-state">
                     <span className="spinner" aria-hidden />
                     <span>
-                      Creating {it.quality === "draft" ? "draft" : it.quality === "final" ? "final" : it.kind}...
+                      {it.stage === "sound"
+                        ? "Adding sound..."
+                        : `Creating ${it.quality === "draft" ? "draft" : it.quality === "final" ? "final" : it.kind}...`}
                     </span>
                   </div>
                 )}
@@ -475,7 +570,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
                 {it.status === "done" && it.url && <Media item={it} thumb />}
                 {it.quality && <span className={`tile-quality q-${it.quality}`}>{it.quality === "draft" ? "Draft" : "Final"}</span>}
                 <span className="tile-label">
-                  {it.kind === "video" ? "▶ " : ""}
+                  {it.kind === "video" ? (it.hasAudio ? "🔊 " : "▶ ") : ""}
                   {it.modelName}
                 </span>
               </button>
@@ -510,6 +605,15 @@ export default function Studio({ mode }: { mode: AppMode }) {
                     <dd>{open.templateName}</dd>
                   </>
                 )}
+                {open.kind === "video" && (
+                  <>
+                    <dt>Sound</dt>
+                    <dd>
+                      {open.hasAudio ? "Yes" : "No"}
+                      {open.soundError && <span className="muted small"> (couldn&apos;t add: {open.soundError})</span>}
+                    </dd>
+                  </>
+                )}
                 <dt>Shape</dt>
                 <dd>{open.aspectRatio}</dd>
                 {open.duration && (
@@ -522,6 +626,17 @@ export default function Studio({ mode }: { mode: AppMode }) {
                 <dd>{new Date(open.createdAt).toLocaleString()}</dd>
               </dl>
               {open.quality === "draft" && open.status === "done" && <FinalButton draft={open} onClick={makeFinal} />}
+              {open.kind === "video" && open.status === "done" && !open.hasAudio && open.url && (
+                <div className="final-box">
+                  <button className="pill active" onClick={() => addSound(open)}>
+                    🔊 Add sound
+                  </button>
+                  <p className="hint">
+                    Adds matching sound effects and ambience. About{" "}
+                    {formatCost(estimateCost(ADD_SOUND_MODEL, open.duration))}.
+                  </p>
+                </div>
+              )}
               <div className="viewer-actions">
                 {open.url && (
                   <button className="pill active" onClick={() => download(open)}>
@@ -566,7 +681,7 @@ function FinalButton({ draft, onClick }: { draft: Item; onClick: (d: Item) => vo
         Make final version
       </button>
       <p className="hint">
-        Re-creates this with {pick.model.name} ({pick.reason}). About {formatCost(estimateCost(pick.model, d))}.
+        Re-creates this with {pick.model.name} ({pick.reason}). About {formatCost(estimateCost(pick.model, d, draft.kind === "video" && draft.wantSound !== false))}.
       </p>
     </div>
   );

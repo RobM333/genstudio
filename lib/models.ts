@@ -13,8 +13,17 @@ export type ModelInfo = {
   tagline: string;
   approxCost: string; // human readable, e.g. "~$0.003 / image"
   durations?: number[]; // seconds, video only
+  audio?: boolean; // video models: true if the model makes its own sound
+  silentApproxPrice?: number; // USD per second when its sound is switched off (if cheaper)
   aspectRatios: AspectRatio[];
-  buildInput: (opts: { prompt: string; aspectRatio: AspectRatio; duration?: number }) => Record<string, unknown>;
+  needsSource?: boolean; // works on an existing video (sourceUrl) instead of making a new one
+  buildInput: (opts: {
+    prompt: string;
+    aspectRatio: AspectRatio;
+    duration?: number;
+    sourceUrl?: string;
+    sound?: boolean;
+  }) => Record<string, unknown>;
 };
 
 const FLUX_SIZE: Record<AspectRatio, string> = {
@@ -108,23 +117,59 @@ export const MODELS: ModelInfo[] = [
   },
   {
     id: "fal-ai/veo3/fast",
+    audio: true,
+    silentApproxPrice: 0.25,
     name: "Google Veo 3 Fast",
     kind: "video",
     tagline: "Top quality, with sound.",
     approxCost: "~$0.40 / second",
     durations: [8],
     aspectRatios: ["16:9", "9:16"],
-    buildInput: ({ prompt, aspectRatio }) => ({
+    buildInput: ({ prompt, aspectRatio, sound }) => ({
       prompt,
       aspect_ratio: aspectRatio,
       duration: "8s",
-      generate_audio: true,
+      generate_audio: sound !== false,
     }),
   },
 ];
 
+/**
+ * Adds sound effects and ambience that match an existing silent video.
+ * Not shown in the model picker; used by the "Add sound" button.
+ */
+export const ADD_SOUND_MODEL: ModelInfo = {
+  id: "fal-ai/mmaudio-v2",
+  name: "MMAudio (add sound)",
+  kind: "video",
+  tagline: "Adds matching sound effects and ambience to a silent video.",
+  approxCost: "~$0.001 / second",
+  audio: true,
+  needsSource: true,
+  aspectRatios: ["16:9", "9:16", "1:1"],
+  buildInput: ({ prompt, duration, sourceUrl }) => ({
+    video_url: sourceUrl,
+    prompt,
+    duration: Math.min(Math.max(duration ?? 8, 1), 30),
+  }),
+};
+
 export function getModel(id: string): ModelInfo | undefined {
-  return MODELS.find((m) => m.id === id);
+  return MODELS.find((m) => m.id === id) ?? (id === ADD_SOUND_MODEL.id ? ADD_SOUND_MODEL : undefined);
+}
+
+/** Only accept result videos that fal.ai itself hosts, so the key can't be used on random URLs. */
+export function isFalMediaUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return (
+      u.protocol === "https:" &&
+      (u.hostname === "fal.media" || u.hostname.endsWith(".fal.media") ||
+        (u.hostname === "storage.googleapis.com" && u.pathname.startsWith("/falserverless/")))
+    );
+  } catch {
+    return false;
+  }
 }
 
 /** Pulls the first image or video URL out of a fal.ai result, whatever its shape. */
@@ -139,10 +184,17 @@ export function unitPrice(model: ModelInfo): number {
   return parseFloat(model.approxCost.match(/[\d.]+/)?.[0] ?? "0");
 }
 
-/** Rough cost of one job in USD. */
-export function estimateCost(model: ModelInfo, duration?: number): number {
+/**
+ * Rough cost of one job in USD. For videos, `sound` true includes either the
+ * model's own sound or the add-sound step for silent models.
+ */
+export function estimateCost(model: ModelInfo, duration?: number, sound = false): number {
   const unit = unitPrice(model);
-  return model.kind === "video" ? unit * (duration ?? model.durations?.[0] ?? 5) : unit;
+  if (model.kind !== "video") return unit;
+  const secs = duration ?? model.durations?.[0] ?? 5;
+  if (model.needsSource) return unit * secs;
+  if (model.audio) return (sound ? unit : (model.silentApproxPrice ?? unit)) * secs;
+  return unit * secs + (sound ? unitPrice(ADD_SOUND_MODEL) * secs : 0);
 }
 
 export function formatCost(usd: number): string {
