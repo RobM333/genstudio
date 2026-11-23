@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getMode } from "@/lib/config";
-import { getModel, type AspectRatio } from "@/lib/models";
+import { getModel, isFalMediaUrl, type AspectRatio } from "@/lib/models";
 import { makeDemoMedia } from "@/lib/demo";
 import { fal } from "@/lib/fal";
 
@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 const MAX_PROMPT = 2000;
 
 export async function POST(req: Request) {
-  let body: { modelId?: string; prompt?: string; aspectRatio?: string; duration?: number };
+  let body: { modelId?: string; prompt?: string; aspectRatio?: string; duration?: number; sourceUrl?: string; sound?: boolean };
   try {
     body = await req.json();
   } catch {
@@ -24,11 +24,17 @@ export async function POST(req: Request) {
   if (prompt.length > MAX_PROMPT)
     return NextResponse.json({ error: `Prompt is too long (max ${MAX_PROMPT} characters).` }, { status: 400 });
 
+  const sourceUrl = model.needsSource ? String(body.sourceUrl ?? "") : undefined;
+  if (model.needsSource && !sourceUrl) return NextResponse.json({ error: "No video to add sound to." }, { status: 400 });
+
   const aspectRatio = (model.aspectRatios.includes(body.aspectRatio as AspectRatio)
     ? body.aspectRatio
     : model.aspectRatios[0]) as AspectRatio;
-  const duration =
-    model.durations && model.durations.includes(Number(body.duration)) ? Number(body.duration) : model.durations?.[0];
+  const duration = model.needsSource
+    ? Math.min(Math.max(Number(body.duration) || 8, 1), 30)
+    : model.durations && model.durations.includes(Number(body.duration))
+      ? Number(body.duration)
+      : model.durations?.[0];
 
   const mode = getMode();
 
@@ -44,6 +50,10 @@ export async function POST(req: Request) {
     });
   }
 
+  if (sourceUrl && !isFalMediaUrl(sourceUrl)) {
+    return NextResponse.json({ error: "Sound can only be added to videos made in GenStudio." }, { status: 400 });
+  }
+
   if (mode === "locked") {
     return NextResponse.json(
       { error: "Real generation is switched off until an APP_PASSWORD is set. See the README." },
@@ -53,7 +63,7 @@ export async function POST(req: Request) {
 
   try {
     const { request_id } = await fal.queue.submit(model.id, {
-      input: model.buildInput({ prompt, aspectRatio, duration }),
+      input: model.buildInput({ prompt, aspectRatio, duration, sourceUrl, sound: body.sound !== false }),
     });
     return NextResponse.json({ status: "IN_QUEUE", requestId: request_id, aspectRatio, duration });
   } catch (err) {
