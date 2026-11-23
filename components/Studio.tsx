@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ADD_SOUND_MODEL, estimateCost, formatCost, getModel, MODELS, type AspectRatio, type MediaKind } from "@/lib/models";
+import { ADD_SOUND_MODEL, EDIT_IMAGE_MODEL, estimateCost, formatCost, getModel, MODELS, type AspectRatio, type MediaKind } from "@/lib/models";
 import { autoAspectRatios, pickModel, type Quality } from "@/lib/router";
 import { fillTemplate, TEMPLATES, type Template } from "@/lib/templates";
 import type { AppMode } from "@/lib/config";
@@ -9,6 +9,7 @@ import { INSPIRATION, TEMPLATE_MEDIA, type ShowcaseMedia } from "@/lib/showcase"
 import { checkPrompt } from "@/lib/safety";
 import AgreeModal, { hasAcceptedTerms } from "./AgreeModal";
 import Link from "next/link";
+import { progressView, type Phase } from "@/lib/progress";
 
 type Item = {
   id: string;
@@ -33,6 +34,14 @@ type Item = {
   stage?: "video" | "sound"; // which step is running
   jobModelId?: string; // model of the step being polled
   soundError?: string;
+  enhance?: boolean; // improve the prompt before generating
+  enhancedPrompt?: string; // the improved prompt the model actually used
+  sourceUrl?: string; // image being fixed
+  editPrompt?: string; // instruction sent to the fix model
+  fixNote?: string; // what the user asked to change
+  stepStartedAt?: number; // when the current step started (or joined the queue)
+  phase?: Phase; // waiting in line, or being made
+  queuePosition?: number;
 };
 
 type JobSpec = {
@@ -46,6 +55,10 @@ type JobSpec = {
   parentId?: string;
   templateName?: string;
   sound?: boolean;
+  enhance?: boolean;
+  sourceUrl?: string;
+  editPrompt?: string;
+  fixNote?: string;
 };
 
 const AUTO = "auto";
@@ -89,6 +102,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
   const [choice, setChoice] = useState<string>(AUTO); // "auto" or a model id
   const [quality, setQuality] = useState<Quality>("draft");
   const [sound, setSound] = useState(true);
+  const [enhance, setEnhance] = useState(true);
   const [askTerms, setAskTerms] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>("1:1");
@@ -158,6 +172,22 @@ export default function Studio({ mode }: { mode: AppMode }) {
           `/api/status?modelId=${encodeURIComponent(jobModelId)}&requestId=${encodeURIComponent(item.requestId)}`,
         );
         const data = await res.json().catch(() => ({}));
+        if (data.status === "IN_QUEUE" || data.status === "IN_PROGRESS") {
+          const phase: Phase = data.status === "IN_QUEUE" ? "queue" : "working";
+          setItems((prev) =>
+            prev.map((x) =>
+              x.id !== item.id
+                ? x
+                : {
+                    ...x,
+                    phase,
+                    queuePosition: data.queuePosition,
+                    // Start the clock when the job actually starts, not while it waits in line.
+                    stepStartedAt: x.phase === "queue" && phase === "working" ? Date.now() : (x.stepStartedAt ?? Date.now()),
+                  },
+            ),
+          );
+        }
         if (data.status === "COMPLETED" && data.url) {
           doneUrl = data.url as string;
           break;
@@ -177,7 +207,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
   function stepDone(item: Item, url: string, demo?: boolean) {
     if (item.kind === "video" && item.wantSound && !item.hasAudio && item.stage !== "sound") {
       const next: Item = { ...item, url, demo, stage: "sound" };
-      update(item.id, { url, demo, stage: "sound" });
+      update(item.id, { url, demo, stage: "sound", enhancedPrompt: item.enhancedPrompt });
       submitStep(next, ADD_SOUND_MODEL.id, url);
       return;
     }
@@ -188,6 +218,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
       demo,
       hasAudio: item.hasAudio || item.stage === "sound",
       soundError: undefined,
+      enhancedPrompt: item.enhancedPrompt,
     });
   }
 
@@ -198,19 +229,29 @@ export default function Studio({ mode }: { mode: AppMode }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           modelId: jobModelId,
-          prompt: item.prompt,
+          prompt: item.stage !== "sound" && item.editPrompt ? item.editPrompt : item.prompt,
           aspectRatio: item.aspectRatio,
           duration: item.duration,
           sound: item.wantSound,
           sourceUrl,
+          enhance: item.stage !== "sound" && item.enhance !== false,
         }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) return fail(item, data.error ?? "Something went wrong.");
       const duration = item.stage === "sound" ? item.duration : (data.duration ?? item.duration);
-      const next: Item = { ...item, jobModelId, duration };
+      const enhancedPrompt = item.stage === "sound" ? item.enhancedPrompt : (data.enhancedPrompt as string | undefined);
+      const next: Item = { ...item, jobModelId, duration, enhancedPrompt };
       if (data.status === "COMPLETED") return stepDone(next, data.url, data.demo);
-      update(item.id, { requestId: data.requestId as string, jobModelId, duration });
+      update(item.id, {
+        requestId: data.requestId as string,
+        jobModelId,
+        duration,
+        enhancedPrompt,
+        stepStartedAt: Date.now(),
+        phase: "queue",
+        queuePosition: undefined,
+      });
       poll({ ...next, requestId: data.requestId as string });
     } catch {
       fail(item, "Couldn't reach the server.");
@@ -240,7 +281,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
     setItems((prev) => [item, ...prev]);
     setSelectedId(item.id);
     setView("create");
-    submitStep(item, spec.modelId);
+    submitStep(item, spec.modelId, spec.sourceUrl);
   }
 
   /** Adds sound to a silent video that's already in the gallery. */
@@ -274,10 +315,49 @@ export default function Studio({ mode }: { mode: AppMode }) {
       aspectRatio,
       duration: length,
       sound: kind === "video" ? sound : undefined,
+      enhance,
       quality: isAuto ? quality : undefined,
       autoReason: isAuto ? auto.reason : undefined,
       templateName: template?.name,
     });
+  }
+
+  /** Fixes what the user didn't like. Images are edited in place; videos are re-made with the note added. */
+  function fixItem(it: Item, note: string): string | null {
+    const text = note.trim();
+    if (!text) return "Say what you'd like changed.";
+    const safety = checkPrompt(text);
+    if (!safety.ok) return safety.reason;
+    const prompt = `${it.prompt}. Fix: ${text}`.slice(0, 1900);
+    const common = {
+      kind: it.kind,
+      prompt,
+      aspectRatio: it.aspectRatio,
+      quality: it.quality,
+      parentId: it.id,
+      templateName: it.templateName,
+      fixNote: text,
+    };
+    if (it.kind === "image" && it.url) {
+      runJob({
+        ...common,
+        modelId: EDIT_IMAGE_MODEL.id,
+        sourceUrl: it.url,
+        editPrompt: `${text}. Keep everything else in the image exactly the same.`,
+        autoReason: "edits the image and keeps everything else",
+        enhance: false,
+      });
+    } else {
+      runJob({
+        ...common,
+        modelId: it.modelId,
+        duration: it.duration,
+        sound: it.wantSound !== false,
+        autoReason: it.autoReason,
+        enhance: it.enhance !== false,
+      });
+    }
+    return null;
   }
 
   /** Re-runs a draft's prompt with the best model for a final version. */
@@ -296,6 +376,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
       autoReason: pick.reason,
       parentId: draft.id,
       sound: draft.kind === "video" ? draft.wantSound !== false : undefined,
+      enhance: draft.enhance !== false,
       templateName: draft.templateName,
     });
   }
@@ -441,17 +522,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
       onClick={() => openItem(it)}
       title={it.prompt}
     >
-      {it.status === "pending" && (
-        <div className="tile-state">
-          <span className="shimmer" aria-hidden />
-          <span className="spinner" aria-hidden />
-          <span>
-            {it.stage === "sound"
-              ? "Adding sound..."
-              : `Creating ${it.quality === "draft" ? "draft" : it.quality === "final" ? "final" : it.kind}...`}
-          </span>
-        </div>
-      )}
+      {it.status === "pending" && <PendingTile item={it} />}
       {it.status === "failed" && (
         <div className="tile-state failed">
           <span>Failed</span>
@@ -560,6 +631,16 @@ export default function Studio({ mode }: { mode: AppMode }) {
           />
           <span className="prompt-count">{prompt.length}/2000</span>
         </div>
+        <label className="enhance-toggle">
+          <input type="checkbox" checked={enhance} onChange={(e) => setEnhance(e.target.checked)} />
+          <span>
+            <strong>✨ Enhance my prompt</strong>
+            <span className="muted small">
+              {" "}
+              Adds lighting, camera and style details so results look more professional. Untick to use your exact words.
+            </span>
+          </span>
+        </label>
         {!template && (
           <div className="examples">
             <span className="examples-label">Try:</span>
@@ -714,17 +795,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
   const stage = selected ? (
     <div className="canvas-wrap">
       <div className={`canvas canvas-${selected.aspectRatio.replace(":", "x")}`}>
-        {selected.status === "pending" && (
-          <div className="tile-state">
-            <span className="shimmer" aria-hidden />
-            <span className="spinner" aria-hidden />
-            <span>
-              {selected.stage === "sound"
-                ? "Adding sound..."
-                : `Creating your ${selected.quality === "draft" ? "draft" : selected.kind}... ${selected.kind === "video" ? "Videos take about a minute." : ""}`}
-            </span>
-          </div>
-        )}
+        {selected.status === "pending" && <PendingTile item={selected} />}
         {selected.status === "failed" && (
           <div className="tile-state failed">
             <span>Failed</span>
@@ -736,7 +807,28 @@ export default function Studio({ mode }: { mode: AppMode }) {
       {filmstrip}
 
       <div className="details">
-        <p className="viewer-prompt">{selected.prompt}</p>
+        <div className="details-text">
+          <p className="viewer-prompt">
+            {selected.fixNote ? selected.prompt.slice(0, selected.prompt.lastIndexOf(". Fix: ")) : selected.prompt}
+          </p>
+          {selected.fixNote && <p className="fix-note">🔧 Fixed: {selected.fixNote}</p>}
+          {selected.enhancedPrompt && selected.enhancedPrompt !== selected.prompt && (
+            <details className="enhanced-peek">
+              <summary>✨ Enhanced prompt used</summary>
+              <p>{selected.enhancedPrompt}</p>
+              <button
+                className="btn"
+                onClick={() => {
+                  setTemplate(null);
+                  setPrompt(selected.enhancedPrompt!);
+                  setEnhance(false);
+                }}
+              >
+                Edit this prompt
+              </button>
+            </details>
+          )}
+        </div>
         <dl className="meta">
           <dt>Model</dt>
           <dd>
@@ -775,6 +867,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
           <dt>Made</dt>
           <dd>{new Date(selected.createdAt).toLocaleString()}</dd>
         </dl>
+        {selected.status === "done" && selected.url && <FixBox key={selected.id} item={selected} onFix={fixItem} />}
         {selected.quality === "draft" && selected.status === "done" && <FinalButton draft={selected} onClick={makeFinal} />}
         {selected.kind === "video" && selected.status === "done" && !selected.hasAudio && selected.url && (
           <div className="final-box">
@@ -878,6 +971,13 @@ export default function Studio({ mode }: { mode: AppMode }) {
                 {sound ? "🔊 Sound on" : "🔇 Sound off"}
               </button>
             )}
+            <button
+              className={enhance ? "mini-toggle on" : "mini-toggle"}
+              onClick={() => setEnhance(!enhance)}
+              title="Adds lighting, camera and style details. Turn off to use your exact words."
+            >
+              {enhance ? "✨ Enhance on" : "✨ Enhance off"}
+            </button>
             <button className="link" onClick={() => go("create")}>
               More settings
             </button>
@@ -1187,6 +1287,84 @@ function IconVideo() {
     </svg>
   );
 }
+
+function typicalSeconds(it: Item): number {
+  const m = getModel(it.jobModelId ?? it.modelId);
+  const base = m?.typicalSeconds ?? (it.kind === "video" ? 120 : 10);
+  if (m?.kind === "video" && !m.needsSource && it.duration && m.durations?.[0]) return base * (it.duration / m.durations[0]);
+  return base;
+}
+
+function PendingTile({ item }: { item: Item }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 500);
+    return () => clearInterval(t);
+  }, []);
+  const silentNeedsSound = item.kind === "video" && item.wantSound && !getModel(item.modelId)?.audio;
+  const steps = silentNeedsSound ? 2 : 1;
+  const step = item.stage === "sound" && steps === 2 ? 2 : 1;
+  const what = item.quality === "draft" ? "draft" : item.quality === "final" ? "final" : item.kind;
+  const view = item.requestId
+    ? progressView({
+        phase: item.phase ?? "queue",
+        queuePosition: item.queuePosition,
+        elapsedSec: (now - (item.stepStartedAt ?? now)) / 1000,
+        typicalSec: typicalSeconds(item),
+        step,
+        steps,
+        stepLabel: item.stage === "sound" ? "Adding sound" : item.fixNote ? "Fixing" : `Creating ${what}`,
+      })
+    : { percent: 1, label: item.enhance !== false ? "Improving your prompt" : "Sending", timeLeft: "starting" };
+  return (
+    <div className="tile-state">
+      <span className="progress-label">{view.label}</span>
+      <div className="progress" role="progressbar" aria-valuenow={Math.round(view.percent)} aria-valuemin={0} aria-valuemax={100}>
+        <div className="progress-fill" style={{ width: `${view.percent}%` }} />
+      </div>
+      <span className="muted small">{view.timeLeft}</span>
+    </div>
+  );
+}
+
+function FixBox({ item, onFix }: { item: Item; onFix: (it: Item, note: string) => string | null }) {
+  const [note, setNote] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const m = getModel(item.modelId);
+  const isImage = item.kind === "image";
+  const cost = isImage
+    ? estimateCost(EDIT_IMAGE_MODEL)
+    : m
+      ? estimateCost(m, item.duration, item.wantSound !== false)
+      : 0;
+  return (
+    <div className="fix-box">
+      <label className="sub-label" htmlFor="fix-note">
+        Something not right?
+      </label>
+      <textarea
+        id="fix-note"
+        className="prompt fix-input"
+        rows={2}
+        maxLength={500}
+        placeholder={isImage ? 'e.g. The text should say "I TRIED IT", not IT twice' : "e.g. Make the camera move slower and keep the dog in frame"}
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+      />
+      {error && <p className="error">{error}</p>}
+      <button className="btn" onClick={() => setError(onFix(item, note))}>
+        🔧 Fix this
+      </button>
+      <p className="hint">
+        {isImage
+          ? "Changes just what you describe and keeps the rest. "
+          : "Videos can't be edited in place, so we make it again with your note. "}
+        About {formatCost(cost)}.
+      </p>
+    </div>
+  );
+}
+
 
 function FinalButton({ draft, onClick }: { draft: Item; onClick: (d: Item) => void }) {
   const pick = pickModel({ kind: draft.kind, prompt: draft.prompt, quality: "final", aspectRatio: draft.aspectRatio });

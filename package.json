@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "tsc --noEmit",
-    "test": "tsx tests/safety.test.ts",
+    "test": "tsx tests/safety.test.ts && tsx tests/enhance.test.ts && tsx tests/progress.test.ts",
     "prebuild": "node scripts/fetch-showcase.mjs",
     "predev": "node scripts/fetch-showcase.mjs"
   },
