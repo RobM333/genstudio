@@ -5,6 +5,7 @@ import { ADD_SOUND_MODEL, estimateCost, formatCost, getModel, MODELS, type Aspec
 import { autoAspectRatios, pickModel, type Quality } from "@/lib/router";
 import { fillTemplate, TEMPLATES, type Template } from "@/lib/templates";
 import type { AppMode } from "@/lib/config";
+import { HERO_MEDIA, INSPO_MEDIA, TEMPLATE_MEDIA, type ShowcaseMedia } from "@/lib/showcase";
 
 type Item = {
   id: string;
@@ -337,6 +338,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
       </header>
 
       <section className="hero" id="top">
+        <div className="hero-copy">
         <p className="eyebrow">AI image &amp; video studio</p>
         <h1>
           Ideas in. <em>Scroll-stoppers</em> out.
@@ -356,6 +358,18 @@ export default function Studio({ mode }: { mode: AppMode }) {
             Drafts from <strong>$0.003</strong>
           </li>
         </ul>
+        </div>
+        <div className="hero-stage" aria-hidden>
+          {[0, 1, 2].map((i) => (
+            <div key={i} className={`stage-card stage-${i}`} style={{ "--hue": String([195, 265, 20][i]) } as React.CSSProperties}>
+              <Showcase media={HERO_MEDIA[i]} />
+              <span className="stage-chip">{["Product hero", "Cinematic teaser", "Story ad"][i]}</span>
+            </div>
+          ))}
+          <div className="stage-prompt">
+            <span className="spark">✦</span> <span className="typing">a sneaker on a neon pedestal, rain outside</span>
+          </div>
+        </div>
       </section>
 
       {mode === "demo" && (
@@ -414,11 +428,14 @@ export default function Studio({ mode }: { mode: AppMode }) {
                   style={{ "--hue": String((TEMPLATES.indexOf(t) * 47 + 190) % 360) } as React.CSSProperties}
                 >
                   <span className="template-art" aria-hidden>
-                    <span className="template-emoji">{t.emoji}</span>
-                    <span className="template-ar">{t.aspectRatio}</span>
+                    <Showcase media={TEMPLATE_MEDIA[t.id]} />
+                    {!TEMPLATE_MEDIA[t.id] && <span className="template-emoji">{t.emoji}</span>}
                   </span>
-                  <span className="template-name">{t.name}</span>
-                  <span className="template-use">{t.use}</span>
+                  <span className="template-ar">{t.aspectRatio}</span>
+                  <span className="template-meta">
+                    <span className="template-name">{t.name}</span>
+                    <span className="template-use">{t.use}</span>
+                  </span>
                 </button>
               ))}
             </div>
@@ -644,6 +661,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
                       document.getElementById("create")?.scrollIntoView({ behavior: "smooth" });
                     }}
                   >
+                    <Showcase media={INSPO_MEDIA[i]} />
                     <span className="inspo-kind">{i < EXAMPLES.image.length ? "Image" : "Video"}</span>
                     <span className="inspo-text">{ex}</span>
                   </button>
@@ -782,6 +800,21 @@ export default function Studio({ mode }: { mode: AppMode }) {
         </div>
       )}
     </div>
+  );
+}
+
+/** Real example media when we have it, otherwise a moving colour field. */
+function Showcase({ media }: { media?: ShowcaseMedia }) {
+  if (media?.kind === "video")
+    return <video className="showcase" src={media.src} poster={media.poster} autoPlay muted loop playsInline />;
+  // eslint-disable-next-line @next/next/no-img-element
+  if (media) return <img className="showcase" src={media.src} alt="" loading="lazy" />;
+  return (
+    <span className="mesh">
+      <span className="blob b1" />
+      <span className="blob b2" />
+      <span className="blob b3" />
+    </span>
   );
 }
 
