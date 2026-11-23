@@ -302,7 +302,39 @@ export const MERGE_VIDEOS_MODEL: ModelInfo = {
   buildInput: () => ({}),
 };
 
-const HIDDEN = [ADD_SOUND_MODEL, EDIT_IMAGE_MODEL, REFERENCE_IMAGE_MODEL, LAST_FRAME_MODEL, MERGE_VIDEOS_MODEL, ...ANIMATE_MODELS];
+/** Full ad helpers (used through /api/tool). Prices checked on fal.ai 2026-11-23. */
+export const VOICE_MODEL: ModelInfo = {
+  id: "fal-ai/elevenlabs/tts/turbo-v2.5",
+  typicalSeconds: 8,
+  name: "Voiceover",
+  kind: "video",
+  tagline: "Reads the voiceover in a natural voice.",
+  approxCost: "~$0.05 / 1000 characters",
+  aspectRatios: ["1:1", "16:9", "9:16"],
+  buildInput: () => ({}),
+};
+export const MUSIC_MODEL: ModelInfo = {
+  id: "cassetteai/music-generator",
+  typicalSeconds: 20,
+  name: "Music",
+  kind: "video",
+  tagline: "Makes an instrumental music bed.",
+  approxCost: "~$0.02 / minute",
+  aspectRatios: ["1:1", "16:9", "9:16"],
+  buildInput: () => ({}),
+};
+export const COMPOSE_MODEL: ModelInfo = {
+  id: "fal-ai/ffmpeg-api/compose",
+  typicalSeconds: 25,
+  name: "Mix",
+  kind: "video",
+  tagline: "Mixes the video, voiceover and music into one file.",
+  approxCost: "~$0.0002 / second",
+  aspectRatios: ["1:1", "16:9", "9:16"],
+  buildInput: () => ({}),
+};
+
+const HIDDEN = [ADD_SOUND_MODEL, EDIT_IMAGE_MODEL, REFERENCE_IMAGE_MODEL, LAST_FRAME_MODEL, MERGE_VIDEOS_MODEL, VOICE_MODEL, MUSIC_MODEL, COMPOSE_MODEL, ...ANIMATE_MODELS];
 
 export function getModel(id: string): ModelInfo | undefined {
   return MODELS.find((m) => m.id === id) ?? HIDDEN.find((m) => m.id === id);
@@ -326,7 +358,7 @@ export function isFalMediaUrl(url: string): boolean {
 export function extractMediaUrl(data: unknown): string | undefined {
   const d = data as Record<string, any> | null;
   if (!d) return undefined;
-  return d.images?.[0]?.url ?? d.image?.url ?? d.video?.url ?? d.videos?.[0]?.url;
+  return d.images?.[0]?.url ?? d.image?.url ?? d.video?.url ?? d.videos?.[0]?.url ?? d.video_url ?? d.audio?.url ?? d.audio_file?.url;
 }
 
 /** Rough USD per image, or per second for video, read from approxCost. */

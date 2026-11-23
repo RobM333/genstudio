@@ -27,7 +27,7 @@ export type Story = {
 
 type Job = { status?: string; url?: string; requestId?: string; modelId?: string; error?: string };
 
-async function waitFor(modelId: string, job: Job): Promise<string> {
+export async function waitFor(modelId: string, job: Job): Promise<string> {
   if (job.status === "COMPLETED" && job.url) return job.url;
   if (!job.requestId) throw new Error(job.error ?? "Something went wrong.");
   const started = Date.now();
@@ -41,7 +41,7 @@ async function waitFor(modelId: string, job: Job): Promise<string> {
   throw new Error("This took too long. Please try again.");
 }
 
-async function post(path: string, body: unknown): Promise<Job> {
+export async function post(path: string, body: unknown): Promise<Job> {
   const res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   const data = (await res.json().catch(() => ({}))) as Job;
   if (!res.ok) throw new Error(data.error ?? "Something went wrong.");

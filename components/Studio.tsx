@@ -14,6 +14,8 @@ import ReferencesBox, { loadRefs, saveRefs, type RefItem } from "./ReferencesBox
 import { addSoundTo, animateShot, joinShots, lastFrame, planStory, startPicture, type Story } from "./storyRunner";
 import { lengthAdvice, LONG_LENGTHS, MAX_STORY_SECONDS, type ShotPlan } from "@/lib/storyboard";
 import { nextLength, readChat } from "@/lib/chat";
+import { AD_LENGTHS, AD_PRICES, AD_TONES, AD_VOICES, adCost, endCardSeconds, maxVoiceWords, SCENE_SECONDS, sceneCount, sceneRemakeCost, type AdBrief, type AdPlan } from "@/lib/adplan";
+import { AD_T2V, buildAd, changedAdJob, newAdJob, type AdJob } from "./adRunner";
 
 type Item = {
   id: string;
@@ -51,6 +53,7 @@ type Item = {
   enhanceNote?: string; // what the booster simplified, in plain words
   refs?: RefItem[]; // the user's own reference pictures used for this picture
   story?: Story; // a longer video made from several linked shots
+  ad?: AdJob; // a full ad: planned scenes, voiceover and music
 };
 
 /** Something the chat offers to do, always shown with its price first. */
@@ -59,7 +62,8 @@ type ChatAct =
   | { type: "length"; seconds: number }
   | { type: "final" }
   | { type: "sound" }
-  | { type: "video" };
+  | { type: "video" }
+  | { type: "ad"; plan: AdPlan; note: string };
 type ChatOffer = { label: string; cost: number; act: ChatAct };
 type ChatMsg = {
   id: string;
@@ -187,6 +191,15 @@ export default function Studio({ mode }: { mode: AppMode }) {
   const [chatText, setChatText] = useState("");
   const chatLog = useRef<HTMLDivElement>(null);
   const storyRuns = useRef(new Set<string>());
+  const adRuns = useRef(new Set<string>());
+  // Full ad mode: a brief, then a plan to review and edit, then Build.
+  const [adMode, setAdMode] = useState(false);
+  const [brief, setBrief] = useState<AdBrief>({ product: "", audience: "", seconds: 15, tone: "Friendly" });
+  const [adShape, setAdShape] = useState<AspectRatio>("16:9");
+  const [adPlan, setAdPlan] = useState<AdPlan | null>(null);
+  const [adBusy, setAdBusy] = useState<string | null>(null);
+  const [adError, setAdError] = useState<string | null>(null);
+  const [adAsk, setAdAsk] = useState("");
   const polling = useRef(new Set<string>());
 
   const isAuto = choice === AUTO;
@@ -395,6 +408,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
     items.filter((it) => it.status === "pending" && it.requestId && !it.story).forEach(poll);
     // Storyboards that were running when the page closed carry on from the first unfinished shot.
     items.filter((it) => it.status === "pending" && it.story).forEach(runStory);
+    items.filter((it) => it.status === "pending" && it.ad).forEach(runAd);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded]);
 
@@ -643,6 +657,154 @@ export default function Studio({ mode }: { mode: AppMode }) {
     setView("create");
     setComposing(false);
     runStory(item);
+  }
+
+  // ---------- Full ad ----------
+
+  async function planAd(request?: string) {
+    setAdError(null);
+    if (!brief.product.trim()) {
+      setAdError("Tell us what you're advertising first.");
+      return;
+    }
+    if (!hasAcceptedTerms()) {
+      setAskTerms(true);
+      return;
+    }
+    setAdBusy(request ? "Updating the plan..." : "Planning your ad...");
+    try {
+      const res = await fetch("/api/adplan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ brief: { ...brief, refKinds: refs.map((r) => r.kind) }, plan: request ? adPlan : undefined, request }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.plan) throw new Error(data.error ?? "Couldn't plan the ad. Please try again.");
+      setAdPlan(data.plan as AdPlan);
+      if (request) setAdAsk("");
+    } catch (e) {
+      setAdError((e as Error).message);
+    } finally {
+      setAdBusy(null);
+    }
+  }
+
+  function editScene(i: number, patch: Partial<AdPlan["scenes"][number]>) {
+    setAdPlan((p) => (p ? { ...p, scenes: p.scenes.map((x, j) => (j === i ? { ...x, ...patch } : x)) } : p));
+  }
+  function editPlan(patch: Partial<AdPlan>) {
+    setAdPlan((p) => (p ? { ...p, ...patch } : p));
+  }
+
+  function startAd(job: AdJob, opts: { parentId?: string; fixNote?: string; aspectRatio: AspectRatio }) {
+    const item: Item = {
+      id: crypto.randomUUID(),
+      kind: "video",
+      modelId: AD_T2V,
+      modelName: `Full ad · ${job.plan.seconds}s`,
+      prompt: job.plan.title + ". " + job.plan.concept,
+      aspectRatio: opts.aspectRatio,
+      duration: job.plan.seconds,
+      status: "pending",
+      createdAt: Date.now(),
+      parentId: opts.parentId,
+      fixNote: opts.fixNote,
+      wantSound: true,
+      hasAudio: false,
+      enhance: true,
+      autoReason: `${job.plan.scenes.length} scenes, an end card, voiceover and music`,
+      ad: job,
+    };
+    setItems((prev) => [item, ...prev]);
+    setSelectedId(item.id);
+    setView("create");
+    setComposing(false);
+    runAd(item);
+  }
+
+  function buildPlannedAd() {
+    if (!adPlan) return;
+    const useRefs = refs.map(({ url, kind, token }) => ({ url, kind, token }));
+    startAd(newAdJob({ ...brief, refKinds: refs.map((r) => r.kind) }, adPlan, useRefs), { aspectRatio: adShape });
+  }
+
+  /** Makes every missing part of an ad, then joins and mixes. Safe to call again to resume. */
+  async function runAd(start: Item) {
+    if (!start.ad || adRuns.current.has(start.id)) return;
+    adRuns.current.add(start.id);
+    const job: AdJob = JSON.parse(JSON.stringify(start.ad));
+    const save = (j: AdJob, patch: Partial<Item> = {}) => update(start.id, { ad: JSON.parse(JSON.stringify(j)), ...patch });
+    try {
+      update(start.id, { status: "pending", error: undefined, stepStartedAt: Date.now(), phase: "working" });
+      const out = await buildAd(job, start.aspectRatio, save);
+      job.step = undefined;
+      save(job, { status: "done", url: out.url, hasAudio: out.hasAudio, stage: "sound" });
+    } catch (e) {
+      job.step = undefined;
+      save(job, { status: "failed", error: (e as Error).message || "A scene failed." });
+    } finally {
+      adRuns.current.delete(start.id);
+    }
+  }
+
+  /** Price of a new version after a plan change: only changed parts are made again. */
+  function adChangeCost(old: AdJob, plan: AdPlan): number {
+    const c = changedAdJob(old, plan);
+    const withRefs = Boolean(old.refs?.length);
+    return (
+      c.scenes * (AD_PRICES.scene + (withRefs ? AD_PRICES.picture : 0)) +
+      (c.card ? AD_PRICES.picture : 0) +
+      (c.voiceChars / 1000) * AD_PRICES.voicePer1000Chars +
+      (c.music ? AD_PRICES.musicPerMinute * Math.ceil(plan.seconds / 60) : 0) +
+      plan.seconds * AD_PRICES.editPerSecond * 2
+    );
+  }
+
+  /** Works out a change to a finished ad from plain words, then offers it with its price. */
+  async function proposeAdChange(it: Item, thread: string, request: string) {
+    const job = it.ad!;
+    const id = say(thread, it.id, { text: "Working out which parts need to change...", state: "working" });
+    let plan: AdPlan | null = null;
+    try {
+      const res = await fetch("/api/adplan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ brief: job.brief, plan: job.plan, request }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.plan) plan = data.plan as AdPlan;
+    } catch {
+      // fall back below
+    }
+    if (!plan) {
+      // Without the planner, a "scene 2: ..." note is added to that scene.
+      const m = request.match(/scene\s*(\d+)/i);
+      const i = m ? Number(m[1]) - 1 : -1;
+      if (i >= 0 && i < job.plan.scenes.length)
+        plan = { ...job.plan, scenes: job.plan.scenes.map((x, j) => (j === i ? { ...x, visual: `${x.visual}. Change: ${request.replace(/scene\s*\d+\s*[:,-]?/i, "").trim()}` } : x)) };
+    }
+    patchMsg(id, { state: "done" });
+    if (!plan) {
+      say(thread, it.id, { text: `I couldn't work that out. Try naming the part, like "scene 2: make it at night", "music: calmer" or "end card: say Shop now".` });
+      return;
+    }
+    const c = changedAdJob(job, plan);
+    const parts = [
+      c.scenes ? `${c.scenes} scene${c.scenes > 1 ? "s" : ""}` : "",
+      c.card ? "the end card" : "",
+      c.voiceChars ? "the voiceover" : "",
+      c.music ? "the music" : "",
+    ].filter(Boolean);
+    if (parts.length === 0) {
+      say(thread, it.id, { text: "That wouldn't change anything in the ad. Tell me which scene, the voiceover, the music or the end card you'd like different." });
+      return;
+    }
+    const cost = adChangeCost(job, plan);
+    say(thread, it.id, {
+      text: `I'll remake ${parts.join(", ").replace(/, ([^,]*)$/, " and $1")} and keep everything else as it is. That costs ${price(cost)}.`,
+      offers: [{ label: "🔧 Make the change", cost, act: { type: "ad", plan, note: request } }],
+      state: "open",
+    });
   }
 
   /** Makes every unfinished shot in order, then joins them and adds sound. Safe to call again to resume. */
@@ -1100,6 +1262,11 @@ export default function Studio({ mode }: { mode: AppMode }) {
           say(thread, it.id, { text: "I couldn't spot any clear problems. Tell me what you'd like changed and I'll fix it." });
           return;
         }
+        if (it.ad) {
+          say(thread, it.id, { text: "Here's what I found.", problems: a.problems });
+          proposeAdChange(it, thread, `Fix these problems: ${a.problems.join(" ")}`);
+          return;
+        }
         const note = it.kind === "image" && a.fix ? a.fix : a.problems.join(" ");
         const how: FixMode = it.kind === "image" ? suggestFixMode(note) : "edit";
         say(thread, it.id, {
@@ -1132,6 +1299,12 @@ export default function Studio({ mode }: { mode: AppMode }) {
     if (intent.type === "check") {
       if (!it.url) reply({ text: "This one didn't finish, so there's nothing to check. Tell me what you'd like and I'll make it again." });
       else checkItem(it, thread);
+      return;
+    }
+    if (it.ad) {
+      const safe = checkPrompt(text);
+      if (!safe.ok) reply({ text: safe.reason ?? "I can't make that change." });
+      else proposeAdChange(it, thread, text);
       return;
     }
     if (intent.type === "length") {
@@ -1222,6 +1395,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
     else if (a.type === "final") makeFinal(it);
     else if (a.type === "sound") addSound(it);
     else if (a.type === "video") doVideo(it);
+    else if (a.type === "ad" && it.ad) startAd(changedAdJob(it.ad, a.plan).job, { parentId: it.id, fixNote: a.note, aspectRatio: it.aspectRatio });
     if (err) {
       say(msg.thread, it.id, { text: err });
       return;
@@ -1245,7 +1419,10 @@ export default function Studio({ mode }: { mode: AppMode }) {
   const chips: { label: string; text: string }[] = [];
   if (selected?.status === "done" && selected.url) {
     chips.push({ label: "🔍 Find what's wrong", text: "Find what's wrong" });
-    if (selected.kind === "video") {
+    if (selected.ad) {
+      chips.push({ label: "🎙️ Change the voiceover", text: "Make the voiceover warmer and slower" });
+      chips.push({ label: "🎵 Different music", text: "music: more upbeat" });
+    } else if (selected.kind === "video") {
       const next = nextLength(selected.duration, LONG_LENGTHS);
       if ((selected.duration ?? 0) < MAX_STORY_SECONDS) chips.push({ label: `⏱️ Make it ${next}s`, text: `Make it ${next} seconds` });
       if (!selected.hasAudio) chips.push({ label: "🔊 Add sound", text: "Add sound" });
@@ -1259,7 +1436,9 @@ export default function Studio({ mode }: { mode: AppMode }) {
         <div className="chat-msg ai">
           <p>
             Tell me what to change, like{" "}
-            {selected.kind === "video"
+            {selected.ad
+              ? "“scene 2: show it at night”, “music: calmer” or “end card: say Shop now”. I only remake the parts that change"
+              : selected.kind === "video"
               ? "“make it slower”, “the dog should be brown” or “make it 15 seconds”"
               : "“make it brighter” or “the text should say SALE”"}
             . I always tell you the estimated price before anything is made. {COST_NOTE}
@@ -1585,6 +1764,238 @@ export default function Studio({ mode }: { mode: AppMode }) {
     </details>
   );
 
+  // ---------- Full ad: the brief, then the plan to review ----------
+
+  const adBrief = (
+    <>
+      <section className="g-step">
+        <div className="g-head">
+          <span className="g-num">2</span>
+          <h2>Tell us about your ad</h2>
+        </div>
+        <label className="sub-label" htmlFor="ad-product">
+          What are you advertising?
+        </label>
+        <div className="prompt-box">
+          <textarea
+            id="ad-product"
+            className="prompt"
+            rows={3}
+            maxLength={600}
+            placeholder="e.g. Glow, a refillable glass water bottle that keeps drinks cold for 24 hours. Launching this month at $29."
+            value={brief.product}
+            onChange={(e) => setBrief({ ...brief, product: e.target.value })}
+          />
+        </div>
+        <label className="sub-label" htmlFor="ad-audience">
+          Who is it for?
+        </label>
+        <input
+          id="ad-audience"
+          className="text-input"
+          maxLength={300}
+          placeholder="e.g. busy commuters and gym-goers in their 20s and 30s"
+          value={brief.audience}
+          onChange={(e) => setBrief({ ...brief, audience: e.target.value })}
+        />
+        <ReferencesBox refs={refs} onChange={setRefs} mode={mode} />
+      </section>
+
+      <section className="g-step">
+        <div className="g-head">
+          <span className="g-num">3</span>
+          <h2>Options</h2>
+          <span className="step-opt">already set, change if you like</span>
+        </div>
+        <div className="row">
+          <div>
+            <div className="sub-label">Length</div>
+            <div className="pills">
+              {AD_LENGTHS.map((d) => (
+                <button key={d} className={brief.seconds === d ? "pill active" : "pill"} onClick={() => setBrief({ ...brief, seconds: d })}>
+                  {d}s
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <div className="sub-label">Shape</div>
+            <div className="pills">
+              {(["16:9", "9:16", "1:1"] as AspectRatio[]).map((ar) => (
+                <button key={ar} className={ar === adShape ? "pill active" : "pill"} onClick={() => setAdShape(ar)}>
+                  <span className={`ar ar-${ar.replace(":", "x")}`} aria-hidden /> {ar}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div className="sub-label">Tone</div>
+        <div className="pills">
+          {AD_TONES.map((t) => (
+            <button key={t} className={brief.tone === t ? "pill active" : "pill"} onClick={() => setBrief({ ...brief, tone: t })}>
+              {t}
+            </button>
+          ))}
+        </div>
+        <p className="muted small g-hint">
+          {sceneCount(brief.seconds)} scenes of {SCENE_SECONDS} seconds and a {endCardSeconds(brief.seconds)}-second end card with your product name. A {brief.seconds}-second ad usually costs est.{" "}
+          {formatCost(sceneCount(brief.seconds) * (AD_PRICES.scene + (refs.length ? AD_PRICES.picture : 0)) + 0.08)} to make.
+        </p>
+      </section>
+
+      <section className="g-step g-go">
+        <div className="g-head">
+          <span className="g-num">4</span>
+          <h2>Plan it</h2>
+        </div>
+        {adError && <p className="error">{adError}</p>}
+        <button className="generate" onClick={() => planAd()} disabled={!!adBusy || mode === "locked"}>
+          <span className="generate-label">{adBusy ?? "📝 Plan my ad"}</span>
+          <span className="generate-cost">{mode === "demo" ? "Free" : "under 1 cent"}</span>
+        </button>
+        <p className="hint">You get a concept and a scene-by-scene plan to review. Nothing is made until you press Build.</p>
+      </section>
+    </>
+  );
+
+  const adReview = adPlan && (
+    <div className="guided ad-review" aria-label="Your ad plan">
+      <div className="guided-head">
+        <h1>
+          {adPlan.title}
+        </h1>
+        <p className="muted ad-concept">{adPlan.concept}</p>
+        <button className="link-btn" onClick={() => setAdPlan(null)}>
+          ← Back to the brief
+        </button>
+      </div>
+
+      <section className="g-step">
+        <div className="g-head">
+          <span className="g-num">✓</span>
+          <h2>Review your plan</h2>
+          <span className="step-opt">change anything, nothing is made yet</span>
+        </div>
+        <label className="sub-label" htmlFor="ad-look">
+          Keep the same in every scene
+        </label>
+        <textarea id="ad-look" className="prompt ad-field" rows={2} maxLength={400} value={adPlan.look} onChange={(e) => editPlan({ look: e.target.value })} />
+
+        <ol className="ad-scenes">
+          {adPlan.scenes.map((sc, i) => (
+            <li key={i} className="ad-scene">
+              <div className="ad-scene-head">
+                <strong>Scene {i + 1}</strong>
+                <span className="muted small">
+                  {i * SCENE_SECONDS}–{(i + 1) * SCENE_SECONDS}s
+                </span>
+              </div>
+              <label className="ad-label">
+                What we see
+                <textarea className="prompt ad-field" rows={3} maxLength={500} value={sc.visual} onChange={(e) => editScene(i, { visual: e.target.value })} />
+              </label>
+              <div className="ad-row">
+                <label className="ad-label">
+                  Camera
+                  <input className="text-input" maxLength={120} value={sc.camera} onChange={(e) => editScene(i, { camera: e.target.value })} />
+                </label>
+                <label className="ad-label">
+                  On-screen words
+                  <input className="text-input" maxLength={60} value={sc.text} onChange={(e) => editScene(i, { text: e.target.value })} />
+                </label>
+              </div>
+              <label className="ad-label">
+                🎙️ Voiceover{" "}
+                <span className={sc.voice.split(/\s+/).filter(Boolean).length > maxVoiceWords(SCENE_SECONDS) ? "error-text" : "muted"}>
+                  ({sc.voice.split(/\s+/).filter(Boolean).length}/{maxVoiceWords(SCENE_SECONDS)} words)
+                </span>
+                <input className="text-input" maxLength={200} value={sc.voice} onChange={(e) => editScene(i, { voice: e.target.value })} />
+              </label>
+            </li>
+          ))}
+          <li className="ad-scene ad-card">
+            <div className="ad-scene-head">
+              <strong>End card</strong>
+              <span className="muted small">
+                {adPlan.scenes.length * SCENE_SECONDS}–{adPlan.seconds}s
+              </span>
+            </div>
+            <div className="ad-row">
+              <label className="ad-label">
+                Headline
+                <input className="text-input" maxLength={40} value={adPlan.endCard.headline} onChange={(e) => editPlan({ endCard: { ...adPlan.endCard, headline: e.target.value } })} />
+              </label>
+              <label className="ad-label">
+                Call to action
+                <input className="text-input" maxLength={60} value={adPlan.endCard.tagline} onChange={(e) => editPlan({ endCard: { ...adPlan.endCard, tagline: e.target.value } })} />
+              </label>
+            </div>
+            <label className="ad-label">
+              🎙️ Voiceover
+              <input className="text-input" maxLength={160} value={adPlan.endCard.voice} onChange={(e) => editPlan({ endCard: { ...adPlan.endCard, voice: e.target.value } })} />
+            </label>
+          </li>
+        </ol>
+
+        <div className="ad-row">
+          <label className="ad-label">
+            🎵 Music
+            <input className="text-input" maxLength={200} value={adPlan.music} onChange={(e) => editPlan({ music: e.target.value })} />
+          </label>
+          <label className="ad-label">
+            🎙️ Voice
+            <select className="text-input" value={adPlan.voice} onChange={(e) => editPlan({ voice: e.target.value })}>
+              {AD_VOICES.map((v) => (
+                <option key={v.id} value={v.id}>
+                  {v.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      </section>
+
+      <section className="g-step">
+        <div className="g-head">
+          <span className="g-num">✎</span>
+          <h2>Or ask for changes</h2>
+        </div>
+        <div className="chat-input">
+          <textarea
+            rows={2}
+            maxLength={600}
+            aria-label="Ask for changes to the plan"
+            placeholder='e.g. "Make scene 1 funnier" or "Set it at the beach at sunset"'
+            value={adAsk}
+            onChange={(e) => setAdAsk(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey && adAsk.trim()) {
+                e.preventDefault();
+                planAd(adAsk.trim());
+              }
+            }}
+          />
+          <button className="chat-send" disabled={!adAsk.trim() || !!adBusy} onClick={() => planAd(adAsk.trim())} aria-label="Update the plan">
+            ↑
+          </button>
+        </div>
+        {adBusy && <p className="hint">{adBusy}</p>}
+        {adError && <p className="error">{adError}</p>}
+      </section>
+
+      <section className="g-step g-go">
+        <button className="generate" onClick={buildPlannedAd} disabled={mode === "locked" || !!adBusy}>
+          <span className="generate-label">🎬 Build my {adPlan.seconds}-second ad</span>
+          <span className="generate-cost">{mode === "demo" ? "Free" : `est. ${formatCost(adCost(adPlan, refs.length > 0))}`}</span>
+        </button>
+        <p className="hint">
+          Makes every scene{refs.length ? " with your product" : ""}, the end card, the voiceover and the music, and gives you one finished video. Takes about{" "}
+          {Math.round(3 + adPlan.scenes.length * 1.6)} minutes. {mode === "demo" ? `Free in demo mode (live estimate ${formatCost(adCost(adPlan, refs.length > 0))}).` : ""} {COST_NOTE}
+        </p>
+      </section>
+    </div>
+  );
+
   // ---------- Create, step by step in the middle of the page ----------
 
   const guided = (
@@ -1604,11 +2015,44 @@ export default function Studio({ mode }: { mode: AppMode }) {
       <section className="g-step">
         <div className="g-head">
           <span className="g-num">1</span>
-          <h2>Image or video?</h2>
+          <h2>What are you making?</h2>
         </div>
-        {kindTabs}
+        <div className="tabs tabs-3" role="tablist">
+          {(["image", "video"] as MediaKind[]).map((k) => (
+            <button
+              key={k}
+              role="tab"
+              aria-selected={!adMode && kind === k}
+              className={!adMode && kind === k ? "tab active" : "tab"}
+              onClick={() => {
+                setAdMode(false);
+                switchKind(k);
+              }}
+            >
+              <span className="tab-icon" aria-hidden>
+                {k === "image" ? <IconImage /> : <IconVideo />}
+              </span>
+              {k === "image" ? "Image" : "Video clip"}
+            </button>
+          ))}
+          <button role="tab" aria-selected={adMode} className={adMode ? "tab active" : "tab"} onClick={() => setAdMode(true)}>
+            <span className="tab-icon" aria-hidden>
+              🎬
+            </span>
+            Full ad <span className="tag tag-rec">New</span>
+          </button>
+        </div>
+        {adMode && (
+          <p className="muted small g-hint">
+            A finished ad with several scenes, a voiceover and music. You see the whole plan and can change it before anything is made.
+          </p>
+        )}
       </section>
 
+      {adMode ? (
+        adBrief
+      ) : (
+      <>
       <section className="g-step">
         <div className="g-head">
           <span className="g-num">2</span>
@@ -1652,6 +2096,8 @@ export default function Studio({ mode }: { mode: AppMode }) {
         </div>
         {generateBar}
       </section>
+      </>
+      )}
     </div>
   );
 
@@ -1763,6 +2209,10 @@ export default function Studio({ mode }: { mode: AppMode }) {
         {selected.story && selected.status !== "done" && (
           <StoryPanel item={selected} running={storyRuns.current.has(selected.id)} onResume={runStory} />
         )}
+        {selected.ad && selected.status !== "done" && (
+          <StoryPanel item={selected} running={adRuns.current.has(selected.id)} onResume={runAd} />
+        )}
+        {selected.ad && <AdSummary job={selected.ad} />}
         <div className="viewer-actions">
           {selected.url && (
             <button className="btn btn-light" onClick={() => download(selected)}>
@@ -1904,7 +2354,11 @@ export default function Studio({ mode }: { mode: AppMode }) {
 
   const createView =
     composing || !selected ? (
-      guided
+      adMode && adReview ? (
+        adReview
+      ) : (
+        guided
+      )
     ) : (
       <div className="workspace">
         <div className="workspace-main">{stage}</div>
@@ -2198,6 +2652,30 @@ function PendingTile({ item }: { item: Item }) {
     const t = setInterval(() => setNow(Date.now()), 500);
     return () => clearInterval(t);
   }, []);
+  if (item.ad) {
+    const job = item.ad;
+    const n = job.clips.length;
+    const steps = n + 4;
+    const finished =
+      job.clips.filter((c) => c.url).length + (job.cardClip ? 1 : 0) + (job.joinedUrl ? 1 : 0) + (job.musicUrl ? 1 : 0);
+    const view = progressView({
+      phase: "working",
+      elapsedSec: (now - (item.stepStartedAt ?? now)) / 1000,
+      typicalSec: 90,
+      step: Math.min(steps, finished + 1),
+      steps,
+      stepLabel: job.step ?? "Making your ad",
+    });
+    return (
+      <div className="tile-state">
+        <span className="progress-label">{view.label}</span>
+        <div className="progress" role="progressbar" aria-valuenow={Math.round(view.percent)} aria-valuemin={0} aria-valuemax={100}>
+          <div className="progress-fill" style={{ width: `${view.percent}%` }} />
+        </div>
+        <span className="muted small">{view.timeLeft}</span>
+      </div>
+    );
+  }
   if (item.story) {
     const n = item.story.shots.length;
     const done = item.story.shots.filter((x) => x.status === "done").length;
@@ -2396,6 +2874,27 @@ function sceneWarning(prompt: string): string | null {
     return "This sounds like several moments. A 5 to 10 second clip can show about one, so we'll focus on the main moment, or pick a longer length to fit them all.";
   }
   return null;
+}
+
+/** The ad's plan under the video, so people can say "scene 2: ..." in the chat. */
+function AdSummary({ job }: { job: AdJob }) {
+  return (
+    <details className="enhanced-peek ad-summary">
+      <summary>🎬 The plan this ad was made from</summary>
+      <ol>
+        {job.plan.scenes.map((s, i) => (
+          <li key={i}>
+            <strong>Scene {i + 1}.</strong> {s.visual} <span className="muted">🎙️ {s.voice}</span>
+          </li>
+        ))}
+        <li>
+          <strong>End card.</strong> {job.plan.endCard.headline}
+          {job.plan.endCard.tagline ? `, ${job.plan.endCard.tagline}` : ""} <span className="muted">🎙️ {job.plan.endCard.voice}</span>
+        </li>
+      </ol>
+      <p className="muted small">Music: {job.plan.music}</p>
+    </details>
+  );
 }
 
 function StoryPanel({ item, running, onResume }: { item: Item; running: boolean; onResume: (it: Item) => void }) {
