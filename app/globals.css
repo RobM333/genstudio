@@ -880,3 +880,12 @@ label.sub-label { display: block; }
   color: #0a0a0f; background: var(--spectrum); cursor: pointer;
 }
 .chat-send:disabled { opacity: 0.35; cursor: default; }
+
+/* Finished videos play once; replay button on top when they end */
+.replay {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 2;
+  padding: 12px 22px; border-radius: 999px; border: 1px solid var(--line-strong); cursor: pointer;
+  background: rgba(10,10,15,0.75); color: var(--text); font: inherit; font-weight: 600; font-size: 15px;
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+}
+.replay:hover { background: rgba(10,10,15,0.9); border-color: var(--text); }

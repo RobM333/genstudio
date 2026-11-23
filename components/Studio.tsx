@@ -2311,21 +2311,43 @@ function ModeBadge({ mode }: { mode: AppMode }) {
 function Media({ item, thumb }: { item: Item; thumb?: boolean }) {
   const isPlaceholder = item.url?.startsWith("data:image");
   if (item.kind === "video" && !isPlaceholder) {
+    if (!thumb) return <PlayOnce key={item.url} src={item.url!} />;
     return (
       <video
         src={item.url}
-        autoPlay={!thumb}
-        muted={thumb}
-        loop
+        muted
         playsInline
-        controls={!thumb}
-        onMouseEnter={thumb ? (e) => e.currentTarget.play().catch(() => {}) : undefined}
-        onMouseLeave={thumb ? (e) => e.currentTarget.pause() : undefined}
+        onMouseEnter={(e) => e.currentTarget.play().catch(() => {})}
+        onMouseLeave={(e) => e.currentTarget.pause()}
       />
     );
   }
   // eslint-disable-next-line @next/next/no-img-element
   return <img src={item.url} alt={item.prompt} />;
+}
+
+/** Finished videos play once and stop, with a replay button. */
+function PlayOnce({ src }: { src: string }) {
+  const ref = useRef<HTMLVideoElement>(null);
+  const [ended, setEnded] = useState(false);
+  return (
+    <>
+      <video ref={ref} src={src} autoPlay playsInline controls onEnded={() => setEnded(true)} onPlay={() => setEnded(false)} />
+      {ended && (
+        <button
+          className="replay"
+          onClick={() => {
+            const v = ref.current;
+            if (!v) return;
+            v.currentTime = 0;
+            v.play().catch(() => {});
+          }}
+        >
+          ↻ Replay
+        </button>
+      )}
+    </>
+  );
 }
 
 async function download(item: Item) {
