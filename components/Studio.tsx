@@ -5,7 +5,7 @@ import { ADD_SOUND_MODEL, estimateCost, formatCost, getModel, MODELS, type Aspec
 import { autoAspectRatios, pickModel, type Quality } from "@/lib/router";
 import { fillTemplate, TEMPLATES, type Template } from "@/lib/templates";
 import type { AppMode } from "@/lib/config";
-import { HERO_MEDIA, INSPO_MEDIA, TEMPLATE_MEDIA, type ShowcaseMedia } from "@/lib/showcase";
+import { HERO_MEDIA, INSPIRATION, TEMPLATE_MEDIA, type ShowcaseMedia } from "@/lib/showcase";
 import { checkPrompt } from "@/lib/safety";
 import AgreeModal, { hasAcceptedTerms } from "./AgreeModal";
 import Link from "next/link";
@@ -661,22 +661,22 @@ export default function Studio({ mode }: { mode: AppMode }) {
                 version of the ones you like.
               </p>
               <div className="inspo">
-                {[...EXAMPLES.image, ...EXAMPLES.video].map((ex, i) => (
+                {INSPIRATION.map((ex, i) => (
                   <button
-                    key={ex}
+                    key={ex.prompt}
                     className="inspo-card"
                     style={{ "--hue": String((i * 61 + 200) % 360) } as React.CSSProperties}
                     onClick={() => {
-                      const k: MediaKind = i < EXAMPLES.image.length ? "image" : "video";
                       setTemplate(null);
-                      setKind(k);
-                      setPrompt(ex);
+                      setKind(ex.kind);
+                      setPrompt(ex.prompt);
                       document.getElementById("create")?.scrollIntoView({ behavior: "smooth" });
                     }}
                   >
-                    <Showcase media={INSPO_MEDIA[i]} />
-                    <span className="inspo-kind">{i < EXAMPLES.image.length ? "Image" : "Video"}</span>
-                    <span className="inspo-text">{ex}</span>
+                    <Showcase media={ex.media} />
+                    <span className="inspo-kind">{ex.kind === "image" ? "Image" : "Video"}</span>
+                    <span className="inspo-text">{ex.prompt}</span>
+                    <span className="inspo-cta">Use this prompt →</span>
                   </button>
                 ))}
               </div>
@@ -836,10 +836,24 @@ export default function Studio({ mode }: { mode: AppMode }) {
 
 /** Real example media when we have it, otherwise a moving colour field. */
 function Showcase({ media }: { media?: ShowcaseMedia }) {
-  if (media?.kind === "video")
-    return <video className="showcase" src={media.src} poster={media.poster} autoPlay muted loop playsInline />;
-  // eslint-disable-next-line @next/next/no-img-element
-  if (media) return <img className="showcase" src={media.src} alt="" loading="lazy" />;
+  const [failed, setFailed] = useState(false);
+  if (media && !failed) {
+    if (media.kind === "video")
+      return (
+        <video
+          className="showcase"
+          src={media.src}
+          autoPlay
+          muted
+          loop
+          playsInline
+          preload="metadata"
+          onError={() => setFailed(true)}
+        />
+      );
+    // eslint-disable-next-line @next/next/no-img-element
+    return <img className="showcase" src={media.src} alt="" loading="lazy" onError={() => setFailed(true)} />;
+  }
   return (
     <span className="mesh">
       <span className="blob b1" />

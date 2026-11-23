@@ -31,5 +31,5 @@ function safeEqual(a: string, b: string): boolean {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|showcase/).*)"],
 };

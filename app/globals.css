@@ -103,7 +103,7 @@ kbd {
 .hero { padding: 44px 0 36px; display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 40px; align-items: center; }
 @media (max-width: 1100px) { .hero { grid-template-columns: 1fr; } .hero-stage { display: none; } }
 @media (max-width: 640px) { .hero { padding: 32px 0 24px; } }
-.hero-stage { position: relative; height: 380px; perspective: 1200px; }
+.hero-stage { position: relative; height: 400px; perspective: 1200px; }
 .stage-card {
   --hue: 260;
   position: absolute; overflow: hidden; border-radius: 20px; border: 1px solid rgba(255,255,255,0.14); background: #0e0e13;
@@ -111,16 +111,16 @@ kbd {
   animation: float 9s ease-in-out infinite;
 }
 .stage-card::after { content: ""; position: absolute; inset: 0; background: linear-gradient(to top, rgba(5,5,8,0.7), transparent 45%); }
-.stage-0 { left: 0; top: 40px; width: 42%; aspect-ratio: 1; transform: rotate(-6deg); animation-delay: -2s; }
+.stage-0 { left: 0; top: 60px; width: 40%; aspect-ratio: 1; transform: rotate(-6deg); animation-delay: -2s; }
 .stage-1 { left: 26%; top: 0; width: 48%; aspect-ratio: 16 / 10; z-index: 2; transform: rotate(2deg); }
-.stage-2 { right: 0; top: 120px; width: 30%; aspect-ratio: 9 / 16; z-index: 1; transform: rotate(7deg); animation-delay: -5s; }
+.stage-2 { right: 2%; top: 70px; width: 25%; aspect-ratio: 9 / 16; z-index: 1; transform: rotate(7deg); animation-delay: -5s; }
 @keyframes float { 50% { translate: 0 -10px; } }
 .stage-chip {
   position: absolute; left: 10px; bottom: 10px; z-index: 1; font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 999px;
   background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.14); backdrop-filter: blur(8px);
 }
 .stage-prompt {
-  position: absolute; left: 12%; right: 8%; bottom: 6px; z-index: 3; display: flex; align-items: center; gap: 10px;
+  position: absolute; left: 10%; right: 14%; bottom: 0; z-index: 3; display: flex; align-items: center; gap: 10px;
   padding: 12px 16px; border-radius: 16px; font-size: 13.5px; color: var(--text);
   background: rgba(20,20,27,0.72); border: 1px solid rgba(255,255,255,0.14); backdrop-filter: blur(18px) saturate(140%);
   box-shadow: 0 20px 50px -20px rgba(0,0,0,0.9);
@@ -368,7 +368,7 @@ kbd {
 .empty-art { display: inline-flex; padding: 14px; border-radius: 20px; background: rgba(255,255,255,0.04); border: 1px solid var(--line); margin-bottom: 16px; }
 .empty h3 { margin: 0 0 6px; font-size: 22px; letter-spacing: -0.03em; }
 .empty p { margin: 0 auto; max-width: 460px; }
-.inspo { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 14px; margin-top: 30px; text-align: left; }
+.inspo { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 14px; margin-top: 30px; text-align: left; }
 .inspo-card {
   --hue: 260;
   position: relative; display: flex; flex-direction: column; justify-content: flex-end; gap: 8px; aspect-ratio: 4 / 5;
@@ -385,6 +385,9 @@ kbd {
   border: 1px solid rgba(255,255,255,0.14); backdrop-filter: blur(6px);
 }
 .inspo-text { font-size: 13.5px; line-height: 1.35; color: #fff; font-weight: 500; }
+.inspo-cta { font-size: 12px; font-weight: 600; color: var(--cyan); opacity: 0; transform: translateY(4px); transition: all .2s; }
+.inspo-card:hover .inspo-cta, .inspo-card:focus-visible .inspo-cta { opacity: 1; transform: none; }
+@media (hover: none) { .inspo-cta { opacity: 1; transform: none; } }
 
 .muted { color: var(--muted); }
 .small { font-size: 12px; }
