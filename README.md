@@ -9,6 +9,9 @@ Built for creators and marketers.
 
 - **Prompt to image** with 4 models: FLUX Schnell (cheap drafts), FLUX 1.1 Pro Ultra, Google Imagen 4, Recraft V3.
 - **Prompt to video** with 3 models: Hailuo 02, Kling 2.5 Turbo Pro, Google Veo 3 Fast.
+- **Auto model picking**: choose "Auto" and GenStudio picks the right model for the job (for example Imagen 4 when the prompt has text, Recraft for logos, Veo 3 when a video needs sound) and says why.
+- **Draft, then final**: Auto drafts with the cheapest model. Open a draft you like and press **Make final version** to re-create it with the best model. The app shows the rough cost first.
+- **Ad templates**: 8 starting points for creators and marketers (product hero shot, story ad with headline, YouTube thumbnail, sale banner, product reveal video, brand teaser, UGC-style testimonial and more). Fill in a couple of blanks and go.
 - Pick the shape (square, wide, tall) and the video length. Each model shows a rough price.
 - **Gallery** of everything you made, saved in your browser, with download, reuse prompt, and delete.
 - **Demo mode**: with no AI key, the app makes free placeholder results so you can try everything.
@@ -60,6 +63,7 @@ cp .env.example .env.local   # optional: add FAL_KEY and APP_PASSWORD
 npm run dev                  # http://localhost:3000
 ```
 
+- `lib/router.ts` holds the Auto rules; `lib/templates.ts` holds the ad templates.
 - `lib/models.ts` is the model catalogue. Update model ids and prices here when fal.ai changes them.
 - `app/api/generate` submits jobs to the fal.ai queue; `app/api/status` is polled until the result is ready, so long video jobs never hit Netlify's ~10 second function limit.
 - `netlify.toml` holds the build settings; Netlify's Next.js runtime is added automatically.
