@@ -469,6 +469,16 @@ export default function Studio({ mode }: { mode: AppMode }) {
               if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) generate();
             }}
           />
+          <label className="enhance-toggle">
+            <input type="checkbox" checked={enhance} onChange={(e) => setEnhance(e.target.checked)} />
+            <span>
+              <strong>✨ Enhance my prompt</strong>
+              <span className="muted small">
+                {" "}
+                Adds lighting, camera and style details so results look more professional. Untick to use your exact words.
+              </span>
+            </span>
+          </label>
           {!template && (
             <div className="examples">
               {EXAMPLES[kind].map((ex) => (
@@ -577,16 +587,6 @@ export default function Studio({ mode }: { mode: AppMode }) {
             </>
           )}
 
-          <label className="enhance-toggle">
-            <input type="checkbox" checked={enhance} onChange={(e) => setEnhance(e.target.checked)} />
-            <span>
-              <strong>✨ Enhance my prompt</strong>
-              <span className="muted small">
-                {" "}
-                We add lighting, camera and style details for the chosen model. You can see the result on each item.
-              </span>
-            </span>
-          </label>
 
           {formError && <p className="error">{formError}</p>}
           <button className="generate" onClick={generate} disabled={mode === "locked"}>
