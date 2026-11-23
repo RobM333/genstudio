@@ -23,23 +23,34 @@ Accounts, payments, and a shared cloud gallery come later.
 | `FAL_KEY` but no `APP_PASSWORD` | Needs password | Real generation stays off, so strangers can't spend your credit. |
 | `FAL_KEY` and `APP_PASSWORD` | Live | Real AI results. Visitors must type the password first. |
 
-## Putting it online (Vercel)
+## Putting it online (Netlify)
 
-1. Go to https://vercel.com, sign in with GitHub, click **Add New → Project**, and pick the `genstudio` repository.
-2. Leave every setting as it is and click **Deploy**. In about a minute you get a web address. It runs in demo mode.
+1. Go to https://app.netlify.com and sign in (the same account you already use is fine).
+2. Click **Add new project → Import an existing project → GitHub**, allow Netlify to see your repositories if it asks, and pick `genstudio`.
+3. Leave every setting as it is (the `netlify.toml` file in this repo fills them in) and click **Deploy**.
+4. After a minute or two you get a web address ending in `.netlify.app`. It runs in demo mode.
+
+Every time a change is merged into `main`, Netlify updates the site by itself.
 
 ## Switching on real AI (later)
 
 Your fal.ai key is like a credit card number. **Never paste it into chat, code, or GitHub.**
-It goes only into Vercel's secret settings:
+It goes only into Netlify's secret settings:
 
 1. Create an account at https://fal.ai, add some credit, and create an API key (Dashboard → Keys).
-2. In Vercel, open the project → **Settings → Environment Variables**.
-3. Add `FAL_KEY` with your key as the value.
+2. In Netlify, open the `genstudio` project → **Project configuration → Environment variables** → **Add a variable**.
+3. Add `FAL_KEY` with your key as the value. If Netlify asks, tick **Contains secret values**.
 4. Add `APP_PASSWORD` with a password of your choice.
-5. Go to **Deployments**, click the three dots on the newest one, and choose **Redeploy**.
+5. Go to **Deploys**, click **Trigger deploy → Deploy project**, and wait for it to finish.
 
-The badge in the top right of the app turns green and says **Live**.
+The badge in the top right of the app turns green and says **Live**. Your browser will ask for a
+username and password: type anything as the username and your `APP_PASSWORD` as the password.
+
+### Why long videos still work on Netlify's free plan
+
+Netlify stops any server request that runs longer than about 10 seconds, and a video can take a few
+minutes. So the app never waits for the video in one request: it hands the job to fal.ai (under a second),
+and the page then checks back every few seconds until the video is ready. Each check is a quick request.
 
 ## For developers
 
@@ -50,5 +61,6 @@ npm run dev                  # http://localhost:3000
 ```
 
 - `lib/models.ts` is the model catalogue. Update model ids and prices here when fal.ai changes them.
-- `app/api/generate` submits jobs to the fal.ai queue; `app/api/status` is polled until the result is ready, so long video jobs don't hit server time limits.
+- `app/api/generate` submits jobs to the fal.ai queue; `app/api/status` is polled until the result is ready, so long video jobs never hit Netlify's ~10 second function limit.
+- `netlify.toml` holds the build settings; Netlify's Next.js runtime is added automatically.
 - `proxy.ts` is the password gate. The fal.ai key is only ever used on the server.
