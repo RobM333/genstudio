@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ADD_SOUND_MODEL, EDIT_IMAGE_MODEL, estimateCost, formatCost, getModel, MODELS, type AspectRatio, type MediaKind } from "@/lib/models";
+import { ADD_SOUND_MODEL, animateModelFor, EDIT_IMAGE_MODEL, estimateCost, KEYFRAME_MODEL_ID, formatCost, getModel, MODELS, type AspectRatio, type MediaKind } from "@/lib/models";
 import { autoAspectRatios, pickModel, type Quality } from "@/lib/router";
 import { fillTemplate, TEMPLATES, type Template } from "@/lib/templates";
 import type { AppMode } from "@/lib/config";
@@ -42,7 +42,12 @@ type Item = {
   stepStartedAt?: number; // when the current step started (or joined the queue)
   phase?: Phase; // waiting in line, or being made
   queuePosition?: number;
+  purpose?: "keyframe" | "animate" | "refix"; // picture-first video steps, or a remade fix
+  keyframeFor?: KeyframePlan; // this picture is the first frame of a planned video
+  enhanceNote?: string; // what the booster simplified, in plain words
 };
+
+type KeyframePlan = { videoModelId: string; duration?: number; sound: boolean; quality?: Quality; autoReason?: string };
 
 type JobSpec = {
   kind: MediaKind;
@@ -59,6 +64,8 @@ type JobSpec = {
   sourceUrl?: string;
   editPrompt?: string;
   fixNote?: string;
+  purpose?: "keyframe" | "animate" | "refix";
+  keyframeFor?: KeyframePlan;
 };
 
 const AUTO = "auto";
@@ -103,6 +110,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
   const [quality, setQuality] = useState<Quality>("draft");
   const [sound, setSound] = useState(true);
   const [enhance, setEnhance] = useState(true);
+  const [pictureFirst, setPictureFirst] = useState(true);
   const [askTerms, setAskTerms] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>("1:1");
@@ -126,6 +134,8 @@ export default function Studio({ mode }: { mode: AppMode }) {
   const cost = estimateCost(model, length, kind === "video" && sound);
   const costWith = estimateCost(model, length, true);
   const costWithout = estimateCost(model, length, false);
+  const keyframeCost = estimateCost(getModel(KEYFRAME_MODEL_ID)!);
+  const nowCost = kind === "video" && pictureFirst ? keyframeCost : cost;
 
   // Load the saved gallery once, in the browser.
   useEffect(() => {
@@ -207,7 +217,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
   function stepDone(item: Item, url: string, demo?: boolean) {
     if (item.kind === "video" && item.wantSound && !item.hasAudio && item.stage !== "sound") {
       const next: Item = { ...item, url, demo, stage: "sound" };
-      update(item.id, { url, demo, stage: "sound", enhancedPrompt: item.enhancedPrompt });
+      update(item.id, { url, demo, stage: "sound", enhancedPrompt: item.enhancedPrompt, enhanceNote: item.enhanceNote });
       submitStep(next, ADD_SOUND_MODEL.id, url);
       return;
     }
@@ -219,6 +229,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
       hasAudio: item.hasAudio || item.stage === "sound",
       soundError: undefined,
       enhancedPrompt: item.enhancedPrompt,
+      enhanceNote: item.enhanceNote,
     });
   }
 
@@ -235,19 +246,22 @@ export default function Studio({ mode }: { mode: AppMode }) {
           sound: item.wantSound,
           sourceUrl,
           enhance: item.stage !== "sound" && item.enhance !== false,
+          purpose: item.stage !== "sound" ? item.purpose : undefined,
         }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) return fail(item, data.error ?? "Something went wrong.");
       const duration = item.stage === "sound" ? item.duration : (data.duration ?? item.duration);
       const enhancedPrompt = item.stage === "sound" ? item.enhancedPrompt : (data.enhancedPrompt as string | undefined);
-      const next: Item = { ...item, jobModelId, duration, enhancedPrompt };
+      const enhanceNote = item.stage === "sound" ? item.enhanceNote : (data.enhanceNote as string | undefined);
+      const next: Item = { ...item, jobModelId, duration, enhancedPrompt, enhanceNote };
       if (data.status === "COMPLETED") return stepDone(next, data.url, data.demo);
       update(item.id, {
         requestId: data.requestId as string,
         jobModelId,
         duration,
         enhancedPrompt,
+        enhanceNote,
         stepStartedAt: Date.now(),
         phase: "queue",
         queuePosition: undefined,
@@ -308,6 +322,27 @@ export default function Studio({ mode }: { mode: AppMode }) {
       setAskTerms(true);
       return;
     }
+    if (kind === "video" && pictureFirst) {
+      // Picture first: make a cheap still to check the layout, then animate it.
+      runJob({
+        kind: "image",
+        modelId: KEYFRAME_MODEL_ID,
+        prompt: text,
+        aspectRatio,
+        enhance,
+        purpose: "keyframe",
+        autoReason: "first frame of your video, check it before paying for video",
+        templateName: template?.name,
+        keyframeFor: {
+          videoModelId: model.id,
+          duration: length,
+          sound,
+          quality: isAuto ? quality : undefined,
+          autoReason: isAuto ? auto.reason : undefined,
+        },
+      });
+      return;
+    }
     runJob({
       kind,
       modelId: model.id,
@@ -323,12 +358,14 @@ export default function Studio({ mode }: { mode: AppMode }) {
   }
 
   /** Fixes what the user didn't like. Images are edited in place; videos are re-made with the note added. */
-  function fixItem(it: Item, note: string): string | null {
+  function fixItem(it: Item, note: string, newPrompt?: string, how: FixMode = "edit"): string | null {
     const text = note.trim();
     if (!text) return "Say what you'd like changed.";
     const safety = checkPrompt(text);
     if (!safety.ok) return safety.reason;
-    const prompt = `${it.prompt}. Fix: ${text}`.slice(0, 1900);
+    if (newPrompt && !checkPrompt(newPrompt).ok) return "The suggested prompt can't be used. Edit the note instead.";
+    // Videos are remade, so a full improved prompt (from Find what's wrong) beats a tacked-on note.
+    const prompt = (it.kind === "video" && newPrompt ? newPrompt : `${basePrompt(it)}. Fix: ${text}`).slice(0, 1900);
     const common = {
       kind: it.kind,
       prompt,
@@ -337,8 +374,19 @@ export default function Studio({ mode }: { mode: AppMode }) {
       parentId: it.id,
       templateName: it.templateName,
       fixNote: text,
+      keyframeFor: it.keyframeFor,
     };
-    if (it.kind === "image" && it.url) {
+    if (it.kind === "image" && how === "remake") {
+      // Camera, angle or layout changes can't be done by editing: make a fresh picture
+      // from the original idea plus the correction, with the layout spelled out.
+      runJob({
+        ...common,
+        modelId: KEYFRAME_MODEL_ID,
+        autoReason: "remade with your fix, follows layout and camera directions closely",
+        enhance: true,
+        purpose: "refix",
+      });
+    } else if (it.kind === "image" && it.url) {
       runJob({
         ...common,
         modelId: EDIT_IMAGE_MODEL.id,
@@ -355,13 +403,58 @@ export default function Studio({ mode }: { mode: AppMode }) {
         sound: it.wantSound !== false,
         autoReason: it.autoReason,
         enhance: it.enhance !== false,
+        sourceUrl: it.purpose === "animate" ? it.sourceUrl : undefined,
+        purpose: it.purpose === "animate" ? "animate" : undefined,
       });
     }
     return null;
   }
 
+  /** Brings an approved first-frame picture to life. */
+  function animate(pic: Item) {
+    const plan = pic.keyframeFor;
+    if (!plan || !pic.url) return;
+    const m = animateModelFor(plan.videoModelId);
+    runJob({
+      kind: "video",
+      modelId: m.id,
+      prompt: basePrompt(pic),
+      aspectRatio: m.aspectRatios.includes(pic.aspectRatio) ? pic.aspectRatio : m.aspectRatios[0],
+      duration: fitDuration(m.durations, plan.duration),
+      sound: plan.sound,
+      quality: plan.quality,
+      autoReason: plan.autoReason ?? "animates your approved picture",
+      parentId: pic.id,
+      templateName: pic.templateName,
+      enhance: pic.enhance !== false,
+      sourceUrl: pic.url,
+      purpose: "animate",
+    });
+  }
+
   /** Re-runs a draft's prompt with the best model for a final version. */
   function makeFinal(draft: Item) {
+    if (draft.purpose === "animate" && draft.sourceUrl) {
+      // Keep the approved first frame; only the video model gets better.
+      const pick = pickModel({ kind: "video", prompt: draft.prompt, quality: "final", aspectRatio: draft.aspectRatio });
+      const m = animateModelFor(pick.model.id);
+      runJob({
+        kind: "video",
+        modelId: m.id,
+        prompt: basePrompt(draft),
+        aspectRatio: m.aspectRatios.includes(draft.aspectRatio) ? draft.aspectRatio : m.aspectRatios[0],
+        duration: fitDuration(m.durations, draft.duration),
+        quality: "final",
+        autoReason: pick.reason,
+        parentId: draft.id,
+        sound: draft.wantSound !== false,
+        templateName: draft.templateName,
+        enhance: draft.enhance !== false,
+        sourceUrl: draft.sourceUrl,
+        purpose: "animate",
+      });
+      return;
+    }
     const pick = pickModel({ kind: draft.kind, prompt: draft.prompt, quality: "final", aspectRatio: draft.aspectRatio });
     const d = pick.model.durations
       ? (pick.model.durations.find((x) => x >= (draft.duration ?? 0)) ?? pick.model.durations[0])
@@ -486,9 +579,13 @@ export default function Studio({ mode }: { mode: AppMode }) {
   const generateButton = (
     <button className="generate" onClick={generate} disabled={mode === "locked"}>
       <span className="generate-label">
-        {isAuto && quality === "draft" ? `Generate ${kind} draft` : `Generate ${kind}`}
+        {kind === "video" && pictureFirst
+          ? "Make the first frame"
+          : isAuto && quality === "draft"
+            ? `Generate ${kind} draft`
+            : `Generate ${kind}`}
       </span>
-      <span className="generate-cost">{mode === "demo" ? "Free" : formatCost(cost)}</span>
+      <span className="generate-cost">{mode === "demo" ? "Free" : formatCost(nowCost)}</span>
     </button>
   );
 
@@ -742,6 +839,28 @@ export default function Studio({ mode }: { mode: AppMode }) {
 
         {kind === "video" && (
           <>
+            <div className="sub-label">How to start</div>
+            <div className="segmented">
+              <button className={pictureFirst ? "seg active" : "seg"} onClick={() => setPictureFirst(true)}>
+                <strong>🖼️ Picture first</strong>
+                <span>recommended</span>
+              </button>
+              <button className={!pictureFirst ? "seg active" : "seg"} onClick={() => setPictureFirst(false)}>
+                <strong>🎬 Straight to video</strong>
+                <span>{formatCost(cost)}</span>
+              </button>
+            </div>
+            <p className="auto-pick">
+              {pictureFirst
+                ? `We make the first frame as a picture (${formatCost(keyframeCost)}) so you can check who is where and fix it cheaply. Then one click animates it (${formatCost(estimateCost(animateModelFor(model.id), length, sound))}).`
+                : "Goes straight to video. Faster, but if the layout comes out wrong you pay for the whole video again."}
+            </p>
+            {sceneWarning(prompt) && <p className="notice warn small-notice">⚠️ {sceneWarning(prompt)}</p>}
+          </>
+        )}
+
+        {kind === "video" && (
+          <>
             <div className="sub-label">Sound</div>
             <div className="segmented">
               <button className={sound ? "seg active" : "seg"} onClick={() => setSound(true)}>
@@ -768,7 +887,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
         {formError && <p className="error">{formError}</p>}
         {generateButton}
         <p className="hint">
-          {mode === "demo" ? `Free in demo mode (live cost ${formatCost(cost)}).` : `Estimated cost: ${formatCost(cost)}.`}{" "}
+          {mode === "demo" ? `Free in demo mode (live cost ${formatCost(nowCost)}).` : `Estimated cost: ${formatCost(nowCost)}.`}{" "}
           <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Enter</kbd> to generate.
         </p>
       </div>
@@ -809,7 +928,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
       <div className="details">
         <div className="details-text">
           <p className="viewer-prompt">
-            {selected.fixNote ? selected.prompt.slice(0, selected.prompt.lastIndexOf(". Fix: ")) : selected.prompt}
+            {basePrompt(selected)}
           </p>
           {selected.fixNote && <p className="fix-note">🔧 Fixed: {selected.fixNote}</p>}
           {selected.enhancedPrompt && selected.enhancedPrompt !== selected.prompt && (
@@ -867,6 +986,8 @@ export default function Studio({ mode }: { mode: AppMode }) {
           <dt>Made</dt>
           <dd>{new Date(selected.createdAt).toLocaleString()}</dd>
         </dl>
+        {selected.enhanceNote && <p className="enhance-note">💡 {selected.enhanceNote}</p>}
+        {selected.status === "done" && selected.url && selected.keyframeFor && <AnimateBox pic={selected} onAnimate={animate} />}
         {selected.status === "done" && selected.url && <FixBox key={selected.id} item={selected} onFix={fixItem} />}
         {selected.quality === "draft" && selected.status === "done" && <FinalButton draft={selected} onClick={makeFinal} />}
         {selected.kind === "video" && selected.status === "done" && !selected.hasAudio && selected.url && (
@@ -966,6 +1087,15 @@ export default function Studio({ mode }: { mode: AppMode }) {
                 </option>
               ))}
             </select>
+            {kind === "video" && (
+              <button
+                className={pictureFirst ? "mini-toggle on" : "mini-toggle"}
+                onClick={() => setPictureFirst(!pictureFirst)}
+                title="Make the first frame as a picture first, so you can check the layout before paying for video."
+              >
+                {pictureFirst ? "🖼️ Picture first" : "🎬 Straight to video"}
+              </button>
+            )}
             {kind === "video" && (
               <button className={sound ? "mini-toggle on" : "mini-toggle"} onClick={() => setSound(!sound)}>
                 {sound ? "🔊 Sound on" : "🔇 Sound off"}
@@ -1327,44 +1457,150 @@ function PendingTile({ item }: { item: Item }) {
   );
 }
 
-function FixBox({ item, onFix }: { item: Item; onFix: (it: Item, note: string) => string | null }) {
-  const [note, setNote] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const m = getModel(item.modelId);
-  const isImage = item.kind === "image";
-  const cost = isImage
-    ? estimateCost(EDIT_IMAGE_MODEL)
-    : m
-      ? estimateCost(m, item.duration, item.wantSound !== false)
-      : 0;
+function AnimateBox({ pic, onAnimate }: { pic: Item; onAnimate: (p: Item) => void }) {
+  const plan = pic.keyframeFor!;
+  const m = animateModelFor(plan.videoModelId);
+  const d = fitDuration(m.durations, plan.duration);
   return (
-    <div className="fix-box">
-      <label className="sub-label" htmlFor="fix-note">
-        Something not right?
-      </label>
-      <textarea
-        id="fix-note"
-        className="prompt fix-input"
-        rows={2}
-        maxLength={500}
-        placeholder={isImage ? 'e.g. The text should say "I TRIED IT", not IT twice' : "e.g. Make the camera move slower and keep the dog in frame"}
-        value={note}
-        onChange={(e) => setNote(e.target.value)}
-      />
-      {error && <p className="error">{error}</p>}
-      <button className="btn" onClick={() => setError(onFix(item, note))}>
-        🔧 Fix this
+    <div className="final-box">
+      <button className="generate small" onClick={() => onAnimate(pic)}>
+        🎬 Looks right, animate it
       </button>
       <p className="hint">
-        {isImage
-          ? "Changes just what you describe and keeps the rest. "
-          : "Videos can't be edited in place, so we make it again with your note. "}
-        About {formatCost(cost)}.
+        Turns this picture into a {d}s video with {m.name.replace(" (animate)", "")}
+        {plan.sound ? ", with sound" : ""}. About {formatCost(estimateCost(m, d, plan.sound))}. If something is off, fix the
+        picture first below. It&apos;s much cheaper than fixing the video.
       </p>
     </div>
   );
 }
 
+type Analysis = { problems: string[]; fix: string; prompt: string };
+
+type FixMode = "edit" | "remake";
+
+/** Camera, angle and layout changes need a fresh picture; small changes can be edited in place. */
+function suggestFixMode(note: string): FixMode {
+  return /\b(angle|camera|view|viewpoint|perspective|shot from|from the (side|back|front|top|left|right|other)|side of|behind|overhead|facing|faces|face (the|away|towards?)|turn(ed)? around|looking at|layout|position|where|wide shot|close.?up|zoom|realistic|wouldn'?t|couldn'?t|can'?t see|other side|opposite|rearrange|move (the|him|her|them)|swap)\b/i.test(
+    note,
+  )
+    ? "remake"
+    : "edit";
+}
+
+function FixBox({
+  item,
+  onFix,
+}: {
+  item: Item;
+  onFix: (it: Item, note: string, newPrompt?: string, how?: FixMode) => string | null;
+}) {
+  const [note, setNote] = useState("");
+  const [picked, setPicked] = useState<FixMode | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [analysis, setAnalysis] = useState<Analysis | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
+  const m = getModel(item.modelId);
+  const isImage = item.kind === "image";
+  const how: FixMode = picked ?? suggestFixMode(note);
+  const cost = isImage
+    ? how === "remake"
+      ? estimateCost(getModel(KEYFRAME_MODEL_ID)!)
+      : estimateCost(EDIT_IMAGE_MODEL)
+    : m
+      ? estimateCost(m, item.duration, item.wantSound !== false)
+      : 0;
+  const analyzeCost = isImage ? 0.01 : 0.01 * Math.ceil((item.duration ?? 5) / 5);
+
+  async function analyze() {
+    setError(null);
+    setAnalyzing(true);
+    try {
+      const res = await fetch("/api/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind: item.kind, url: item.url, prompt: basePrompt(item) }),
+      });
+      let data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? "Couldn't analyze this.");
+      const started = Date.now();
+      while (data.status !== "COMPLETED") {
+        if (data.status === "FAILED") throw new Error(data.error ?? "The analysis failed.");
+        if (Date.now() - started > 3 * 60 * 1000) throw new Error("The analysis took too long. Try again.");
+        await new Promise((r) => setTimeout(r, 2000));
+        const r = await fetch(`/api/analyze?kind=${item.kind}&requestId=${encodeURIComponent(data.requestId)}`);
+        const next = await r.json().catch(() => ({}));
+        data = { ...next, requestId: data.requestId };
+      }
+      const a = data.analysis as Analysis;
+      setAnalysis(a);
+      if (a.problems.length === 0) setError("No clear problems found. Describe what you'd like changed.");
+      else setNote(isImage && a.fix ? a.fix : a.problems.join(" "));
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setAnalyzing(false);
+    }
+  }
+
+  return (
+    <div className="fix-box">
+      <label className="label" htmlFor="fix-note">
+        Something not right?
+      </label>
+      <button className="pill" onClick={analyze} disabled={analyzing}>
+        {analyzing ? "Looking closely..." : `🔍 Find what's wrong (${formatCost(analyzeCost)})`}
+      </button>
+      {analysis && analysis.problems.length > 0 && (
+        <ul className="problems">
+          {analysis.problems.map((p) => (
+            <li key={p}>{p}</li>
+          ))}
+        </ul>
+      )}
+      <textarea
+        id="fix-note"
+        className="prompt fix-input"
+        rows={3}
+        maxLength={500}
+        placeholder={isImage ? 'e.g. The text should say "I TRIED IT", not IT twice' : "e.g. The hoop should be on the right and the boy should face the court"}
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+      />
+      {isImage && (
+        <div className="segmented fix-mode">
+          <button className={how === "edit" ? "seg active" : "seg"} onClick={() => setPicked("edit")}>
+            <strong>✏️ Change one part</strong>
+            <span>keeps the rest</span>
+          </button>
+          <button className={how === "remake" ? "seg active" : "seg"} onClick={() => setPicked("remake")}>
+            <strong>🔄 Remake with fix</strong>
+            <span>new angle or layout</span>
+          </button>
+        </div>
+      )}
+      {error && <p className="error">{error}</p>}
+      <button
+        className="pill active"
+        onClick={() =>
+          setError(onFix(item, note, !isImage && analysis?.prompt ? analysis.prompt : undefined, isImage ? how : "edit"))
+        }
+      >
+        🔧 Fix this
+      </button>
+      <p className="hint">
+        {isImage
+          ? how === "remake"
+            ? "Makes a fresh picture from your original idea plus your fix, so the camera angle and who stands where can change. "
+            : "Changes just what you describe and keeps everything else, including the camera angle. "
+          : item.purpose === "animate"
+            ? "Makes the video again from the same picture, with your note. "
+            : "Videos can't be edited in place, so we make it again with your note. "}
+        About {formatCost(cost)}.
+      </p>
+    </div>
+  );
+}
 
 function FinalButton({ draft, onClick }: { draft: Item; onClick: (d: Item) => void }) {
   const pick = pickModel({ kind: draft.kind, prompt: draft.prompt, quality: "final", aspectRatio: draft.aspectRatio });
@@ -1434,4 +1670,29 @@ async function download(item: Item) {
   a.download = name;
   a.click();
   if (revoke) setTimeout(() => URL.revokeObjectURL(href), 5000);
+}
+
+/** The user's own words, without any "Fix:" notes added later. */
+function basePrompt(it: Item): string {
+  const i = it.prompt.indexOf(". Fix: ");
+  return i === -1 ? it.prompt : it.prompt.slice(0, i);
+}
+
+/** The shortest length a model offers that is at least the wanted length. */
+function fitDuration(options: number[] | undefined, wanted?: number): number | undefined {
+  if (!options) return undefined;
+  return options.find((x) => x >= (wanted ?? 0)) ?? options[options.length - 1];
+}
+
+/** A friendly warning when a video prompt describes more than one short clip can show. */
+function sceneWarning(prompt: string): string | null {
+  const p = prompt.trim();
+  if (!p) return null;
+  const words = p.split(/\s+/).length;
+  const sentences = p.split(/[.!?]+\s/).filter((x) => x.trim().length > 3).length;
+  const storyWords = (p.toLowerCase().match(/\b(then|after that|afterwards|later|meanwhile|while|as the|as he|as she|and you see|suddenly|finally)\b/g) ?? []).length;
+  if (words > 35 || sentences >= 3 || storyWords >= 2 || (sentences >= 2 && storyWords >= 1)) {
+    return "This sounds like several moments. A 5 to 10 second clip can show about one, so we'll focus on the main moment. Picture first lets you check the layout before paying for video.";
+  }
+  return null;
 }

@@ -18,6 +18,7 @@ export type ModelInfo = {
   aspectRatios: AspectRatio[];
   needsSource?: boolean; // works on an existing video (sourceUrl) instead of making a new one
   typicalSeconds?: number; // rough time a job takes once it starts, for the progress bar
+  takesImage?: boolean; // animates a starting picture (sourceUrl) into a video
   buildInput: (opts: {
     prompt: string;
     aspectRatio: AspectRatio;
@@ -184,7 +185,77 @@ export const EDIT_IMAGE_MODEL: ModelInfo = {
   }),
 };
 
-const HIDDEN = [ADD_SOUND_MODEL, EDIT_IMAGE_MODEL];
+/**
+ * "Animate a picture" versions of the video models. Used by the picture-first
+ * flow: the user approves a still first, then it is brought to life, so the
+ * layout (who stands where, which way they face) is already right.
+ */
+export const ANIMATE_MODELS: ModelInfo[] = [
+  {
+    id: "fal-ai/minimax/hailuo-02/standard/image-to-video",
+    typicalSeconds: 180,
+    name: "Hailuo 02 (animate)",
+    kind: "video",
+    tagline: "Animates your picture for a low price.",
+    approxCost: "~$0.045 / second",
+    durations: [6, 10],
+    aspectRatios: ["16:9", "9:16", "1:1"],
+    takesImage: true,
+    buildInput: ({ prompt, duration, sourceUrl }) => ({
+      prompt,
+      image_url: sourceUrl,
+      duration: String(duration ?? 6),
+      prompt_optimizer: true,
+    }),
+  },
+  {
+    id: "fal-ai/kling-video/v2.5-turbo/pro/image-to-video",
+    typicalSeconds: 100,
+    name: "Kling 2.5 Turbo Pro (animate)",
+    kind: "video",
+    tagline: "Cinematic motion from your picture.",
+    approxCost: "~$0.07 / second",
+    durations: [5, 10],
+    aspectRatios: ["16:9", "9:16", "1:1"],
+    takesImage: true,
+    buildInput: ({ prompt, duration, sourceUrl }) => ({
+      prompt,
+      image_url: sourceUrl,
+      duration: String(duration ?? 5),
+    }),
+  },
+  {
+    id: "fal-ai/veo3/fast/image-to-video",
+    typicalSeconds: 75,
+    audio: true,
+    silentApproxPrice: 0.1,
+    name: "Google Veo 3 Fast (animate)",
+    kind: "video",
+    tagline: "Top quality from your picture, with sound.",
+    approxCost: "~$0.15 / second",
+    durations: [8],
+    aspectRatios: ["16:9", "9:16"],
+    takesImage: true,
+    buildInput: ({ prompt, aspectRatio, sound, sourceUrl }) => ({
+      prompt,
+      image_url: sourceUrl,
+      aspect_ratio: aspectRatio,
+      duration: "8s",
+      generate_audio: sound !== false,
+    }),
+  },
+];
+
+/** The "animate a picture" model that matches a text-to-video model. */
+export function animateModelFor(videoModelId: string): ModelInfo {
+  const key = videoModelId.includes("veo3") ? "veo3" : videoModelId.includes("kling") ? "kling" : "hailuo";
+  return ANIMATE_MODELS.find((m) => m.id.includes(key))!;
+}
+
+/** Makes the starting picture for picture-first videos: follows layout and directions closely. */
+export const KEYFRAME_MODEL_ID = "fal-ai/nano-banana";
+
+const HIDDEN = [ADD_SOUND_MODEL, EDIT_IMAGE_MODEL, ...ANIMATE_MODELS];
 
 export function getModel(id: string): ModelInfo | undefined {
   return MODELS.find((m) => m.id === id) ?? HIDDEN.find((m) => m.id === id);

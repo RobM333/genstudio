@@ -29,6 +29,17 @@ export async function GET(req: Request) {
     return NextResponse.json({ status: "COMPLETED", url: mediaUrl });
   } catch (err) {
     console.error("fal status failed", err);
-    return NextResponse.json({ status: "FAILED", error: "The job failed. Please try again." });
+    return NextResponse.json({ status: "FAILED", error: jobError(err) });
   }
+}
+
+/** Turns fal's error into a plain reason the user can act on. Failed jobs are not charged. */
+function jobError(err: unknown): string {
+  const e = err as { status?: number; body?: { detail?: unknown } };
+  const detail = typeof e?.body?.detail === "string" ? e.body.detail : JSON.stringify(e?.body?.detail ?? "");
+  if (/content checker|content policy|flagged|sensitive|nsfw|safety/i.test(detail)) {
+    return "The AI service's content checker refused this. Real people's names (like celebrities) are the most common cause: describe the person instead, e.g. \"a legendary basketball player\". You weren't charged.";
+  }
+  if (e?.status === 422) return "The AI service couldn't use these settings or this prompt. Try a simpler prompt or another model. You weren't charged.";
+  return "The job failed on the AI service. Please try again. You weren't charged.";
 }
