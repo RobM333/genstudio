@@ -8,11 +8,12 @@
 
 import type { ModelInfo } from "./models";
 
-const TIMEOUT_MS = 6000;
+const TIMEOUT_MS = 8000;
+export const DEFAULT_AVOID = "blur, distortion, morphing, changing faces or clothes, extra limbs, people passing through objects, smoke or dust clouds, text, logos";
 const MAX_LEN = 1500;
 
 export type Purpose = "direct" | "keyframe" | "animate" | "refix";
-export type Enhanced = { prompt: string; by: "ai" | "rules" | "none"; note?: string };
+export type Enhanced = { prompt: string; by: "ai" | "rules" | "none"; note?: string; avoid?: string };
 
 const COMMON = `You rewrite short prompts for an AI image and video generator used by creators and marketers.
 Rules:
@@ -24,11 +25,14 @@ Rules:
 - Never add any other words, slogans or captions to the image. If the user asked for no text, say "no text".
 - If the user names a real, famous person, describe them generically instead (for example "a tall basketball player"), and say so in the note. Never hint at who they are: no "legendary", no famous numbers, signature moves or team.
 - For sports, uniforms or products, invent plain team colours and a made-up name or none. Never use real teams, clubs, leagues, jersey numbers tied to famous players, or brand logos.
-- Write one paragraph, about 60 to 110 words, in plain English.`;
+- For pictures, write one paragraph of about 60 to 110 words. For videos, follow the length given below. Plain English.`;
 
 const PLAIN_REPLY = "Reply with the prompt only. No title, no explanation, no quotes around the whole thing.";
 const JSON_REPLY = `Reply with JSON only, like {"prompt": "...", "note": "..."}.
 "note" is one short, friendly sentence to the user ONLY if you had to simplify or change their idea (for example "Your idea has three moments; a short clip can show one, so we focused on the dunk."). Otherwise "note" is "".`;
+const VIDEO_JSON_REPLY = `Reply with JSON only, like {"prompt": "...", "avoid": "...", "note": "..."}.
+"avoid" is a short comma-separated list of things that must not appear (for example "smoke, dust cloud, morphing, changing jersey number, extra people, text, logos, blur").
+"note" is one short, friendly sentence to the user ONLY if you had to simplify or change their idea. Otherwise "note" is "".`;
 
 // AI generators often get the *layout* wrong: who is where, which way they face,
 // where the camera is, where the light comes from. So for any scene (a product
@@ -52,32 +56,51 @@ const MOTION_PLAN = `Plan the movement too:
 - Say the order: who moves first, then who. Doors open before anyone goes through them.
 - Nothing passes through anything else: people don't walk through doors, walls, cars, furniture or each other, and they keep the same size, clothes and look the whole time.`;
 
-// Story-like prompts confuse video models: they mix up who is where and what happens when.
+// Video models do best with a beat-by-beat timeline that starts at the beginning
+// of the action (the run-up) and ends after it (the landing), plus locks that
+// stop things changing mid-clip.
+function timelineRules(seconds: number): string {
+  return `Write the action as a TIMELINE for a ${seconds}-second clip, with times, like "0-2s: ..., 2-3s: ..., 3-${seconds}s: ...":
+- Beat 1 is the very start of the action (for example the run-up, the walk in, the car pulling up), never the climax.
+- The last beat ends after the action has finished (for example landing on both feet, the door closing, the reaction).
+- One clear action per beat, in order, sized to fit the time. If the idea has more than fits in ${seconds} seconds, keep the most important part, start it from its beginning, and say so in the note.
+- Camera: say the shot type and one camera move for the whole clip (for example "static wide shot" or "slow push-in"), unless a beat needs a change.
+- Physical realism: things obey gravity and real materials (glass breaks into sharp shards that fall and bounce, water splashes and drips, cloth moves with the body); no smoke, dust clouds or explosions unless asked.
+- Consistency locks: write one line starting "Keep consistent:" listing what must not change during the clip (same people, faces, outfit, colours, numbers, product shape and label, number of people, setting).`;
+}
+
+/** How each video model likes to be prompted (from their own prompting guides). */
+function modelTips(model: ModelInfo): string {
+  if (model.id.includes("kling"))
+    return "Kling: write clear 'subject + movement + camera' sentences in the timeline, plain and concrete, 80 to 140 words. Put the unwanted things only in \"avoid\".";
+  if (model.id.includes("hailuo") || model.id.includes("minimax"))
+    return "Hailuo: describe motion plainly and add one or two camera commands in square brackets where they happen, like [Push in], [Pan left], [Tracking shot], [Static shot]. 70 to 130 words.";
+  if (model.id.includes("veo"))
+    return "Veo: start with shot type, lens and lighting in one sentence, then the timeline, then the 'Keep consistent:' line. Rich, cinematic, 100 to 170 words.";
+  return "80 to 140 words.";
+}
+
 const SHOT_RULES = `${LAYOUT_PLAN}
-Video models get confused by stories. Make it ONE clear shot:
-${MOTION_PLAN}
-- Describe what happens in order, using only what fits in 5 to 10 seconds: one main action.
-- If the user describes several moments or a story, keep only the single most important moment and mention this in the note.`;
+${MOTION_PLAN}`;
 
 const STILL_RULES = `${LAYOUT_PLAN}
 Describe one frozen moment.`;
 
-function systemPrompt(model: ModelInfo, sound: boolean, purpose: Purpose): string {
+function systemPrompt(model: ModelInfo, sound: boolean, purpose: Purpose, seconds = 5): string {
   if (purpose === "refix") {
     return `${COMMON}
 The user's message has their ORIGINAL description, then "Fix:" and a CORRECTION they wrote after seeing a result they didn't like. Write a new prompt for a fresh ${model.kind === "video" ? "video" : "picture"}:
 - Apply the correction fully, even if it changes the camera angle or the layout.
 - Keep everything else from the original: the same people, products and objects, their ages and roles (someone watching stays someone watching), the mood, the brand-free look and the setting.
 - If the correction says something isn't realistic, work out what would really be seen from that camera position and describe that.
-${model.kind === "video" ? SHOT_RULES : STILL_RULES}
-${model.kind === "video" ? "Also describe the camera movement and the one main action." : "Describe one frozen moment. Do not describe sound or motion over time."}
-${JSON_REPLY}`;
+${model.kind === "video" ? `${SHOT_RULES}\n${timelineRules(seconds)}\n${modelTips(model)}` : STILL_RULES}
+${model.kind === "video" ? VIDEO_JSON_REPLY : `Describe one frozen moment. Do not describe sound or motion over time.\n${JSON_REPLY}`}`;
   }
   if (purpose === "keyframe") {
     return `${COMMON}
 This still image is the FIRST FRAME of a short video, so get the layout exactly right before anything moves.
 ${STILL_RULES}
-Describe the frozen moment just before the main action starts, with lighting, lens and style. Do not describe sound or motion over time.
+Describe the OPENING moment of the action, at 0 seconds: the very start (for example the player at the free-throw line before the run-up, the car still driving up, the person outside the door). Never the climax or the middle of the action. Everyone and everything that will appear later must already be in the frame, in their starting places. Include lighting, lens and style. Do not describe sound or motion over time.
 ${JSON_REPLY}`;
   }
   if (purpose === "animate") {
@@ -86,10 +109,11 @@ ${JSON_REPLY}`;
         ? "End with one short sentence describing the sound (ambience, effects, music mood, any spoken line in quotes)."
         : "Do not describe sound.";
     return `${COMMON}
-The first frame of this video is already given as a picture, and the layout is already right. Describe only what moves: the one main action in order, how people move, and the camera movement. Keep everyone where they start and facing the way they face. Do not re-describe the whole scene. You cannot see the picture, so never mention colours, clothes, looks or objects the user did not mention. Keep every step the user asked for (for example landing back on the floor).
+The first frame of this video is already given as a picture, and the layout is already right: it is 0s of your timeline. Describe only what moves, starting from that frame. Keep everyone where they start and facing the way they face. Do not re-describe the whole scene. You cannot see the picture, so never mention colours, clothes, looks or objects the user did not mention; in "Keep consistent:" say "same people, outfits, colours and numbers as the first frame". Keep every step the user asked for (for example landing back on the floor).
 ${MOTION_PLAN}
- Keep it short, about 40 to 70 words. ${soundLine}
-${JSON_REPLY}`;
+${timelineRules(seconds)}
+${modelTips(model)} ${soundLine}
+${VIDEO_JSON_REPLY}`;
   }
   if (model.kind === "image") {
     const extra =
@@ -103,10 +127,11 @@ ${JSON_REPLY}`;
       ? "This model also makes sound. End with a short sentence describing the sound: ambience, sound effects, music mood, and any spoken line in quotes if the user wants speech."
       : "Do not describe sound.";
   return `${COMMON}
-This is for a short video clip (5 to 10 seconds, one shot).
+This is for a short video clip (${seconds} seconds, one continuous shot).
 ${SHOT_RULES}
-Also describe the camera movement (for example slow push-in, orbit, tracking shot, handheld), lighting and mood, and the visual style. ${soundLine}
-${JSON_REPLY}`;
+${timelineRules(seconds)}
+Also give the lighting, mood and visual style. ${modelTips(model)} ${soundLine}
+${VIDEO_JSON_REPLY}`;
 }
 
 function refNote(kinds: string[]): string {
@@ -147,16 +172,17 @@ function clean(text: string): string {
 }
 
 /** Reads {"prompt","note"} JSON, tolerating code fences or plain text. */
-export function parseReply(raw: string): { prompt: string; note?: string } {
+export function parseReply(raw: string): { prompt: string; note?: string; avoid?: string } {
   const t = raw.trim();
   const start = t.indexOf("{");
   const end = t.lastIndexOf("}");
   if (start !== -1 && end > start) {
     try {
-      const j = JSON.parse(t.slice(start, end + 1)) as { prompt?: unknown; note?: unknown };
+      const j = JSON.parse(t.slice(start, end + 1)) as { prompt?: unknown; note?: unknown; avoid?: unknown };
       if (typeof j.prompt === "string" && j.prompt.trim()) {
         const note = typeof j.note === "string" && j.note.trim() ? j.note.trim().slice(0, 300) : undefined;
-        return { prompt: clean(j.prompt), note };
+        const avoid = typeof j.avoid === "string" && j.avoid.trim() ? j.avoid.trim().slice(0, 300) : undefined;
+        return { prompt: clean(j.prompt), note, avoid };
       }
     } catch {
       // not JSON: fall through and use the text as the prompt
@@ -172,12 +198,13 @@ async function enhanceWithAI(
   sound: boolean,
   purpose: Purpose,
   refKinds: string[] = [],
-): Promise<{ prompt: string; note?: string }> {
+  seconds = 5,
+): Promise<{ prompt: string; note?: string; avoid?: string }> {
   const { fal } = await import("./fal");
   const call = fal.run("fal-ai/any-llm", {
     input: {
       model: process.env.ENHANCER_MODEL || "google/gemini-2.5-flash",
-      system_prompt: systemPrompt(model, sound, purpose) + refNote(refKinds),
+      system_prompt: systemPrompt(model, sound, purpose, seconds) + refNote(refKinds),
       prompt: `User's description:\n${prompt}`,
     },
   });
@@ -199,18 +226,22 @@ async function enhanceWithAI(
 export async function enhancePrompt(
   prompt: string,
   model: ModelInfo,
-  opts: { live: boolean; sound?: boolean; purpose?: Purpose; refKinds?: string[] },
+  opts: { live: boolean; sound?: boolean; purpose?: Purpose; refKinds?: string[]; seconds?: number },
 ): Promise<Enhanced> {
   if (model.needsSource) return { prompt, by: "none" };
   const sound = opts.sound !== false;
   const purpose = opts.purpose ?? "direct";
   if (opts.live) {
     try {
-      const r = await enhanceWithAI(prompt, model, sound, purpose, opts.refKinds ?? []);
-      return { prompt: r.prompt, note: r.note, by: "ai" };
+      const r = await enhanceWithAI(prompt, model, sound, purpose, opts.refKinds ?? [], opts.seconds ?? 5);
+      return { prompt: r.prompt, note: r.note, avoid: r.avoid, by: "ai" };
     } catch (err) {
       console.warn("prompt enhancer fell back to rules:", (err as Error)?.message);
     }
   }
-  return { prompt: enhanceWithRules(prompt, model, sound), by: "rules" };
+  return {
+    prompt: enhanceWithRules(prompt, model, sound),
+    avoid: model.kind === "video" ? DEFAULT_AVOID : undefined,
+    by: "rules",
+  };
 }

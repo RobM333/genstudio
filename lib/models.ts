@@ -26,6 +26,7 @@ export type ModelInfo = {
     sourceUrl?: string;
     sound?: boolean;
     refUrls?: string[]; // the user's own reference pictures (product, logo, person)
+    avoid?: string; // things that must not appear (sent as a negative prompt where the model supports it)
   }) => Record<string, unknown>;
 };
 
@@ -118,10 +119,11 @@ export const MODELS: ModelInfo[] = [
     approxCost: "~$0.07 / second",
     durations: [5, 10],
     aspectRatios: ["16:9", "9:16", "1:1"],
-    buildInput: ({ prompt, aspectRatio, duration }) => ({
+    buildInput: ({ prompt, aspectRatio, duration, avoid }) => ({
       prompt,
       duration: String(duration ?? 5),
       aspect_ratio: aspectRatio,
+      ...(avoid ? { negative_prompt: avoid } : {}),
     }),
   },
   {
@@ -219,10 +221,11 @@ export const ANIMATE_MODELS: ModelInfo[] = [
     durations: [5, 10],
     aspectRatios: ["16:9", "9:16", "1:1"],
     takesImage: true,
-    buildInput: ({ prompt, duration, sourceUrl }) => ({
+    buildInput: ({ prompt, duration, sourceUrl, avoid }) => ({
       prompt,
       image_url: sourceUrl,
       duration: String(duration ?? 5),
+      ...(avoid ? { negative_prompt: avoid } : {}),
     }),
   },
   {
@@ -277,7 +280,29 @@ export const REFERENCE_IMAGE_MODEL: ModelInfo = {
   }),
 };
 
-const HIDDEN = [ADD_SOUND_MODEL, EDIT_IMAGE_MODEL, REFERENCE_IMAGE_MODEL, ...ANIMATE_MODELS];
+/** Storyboard helpers on fal (used through /api/tool, not the picker). */
+export const LAST_FRAME_MODEL: ModelInfo = {
+  id: "fal-ai/ffmpeg-api/extract-frame",
+  typicalSeconds: 8,
+  name: "Last frame",
+  kind: "image",
+  tagline: "Takes the last frame of a video so the next shot can continue from it.",
+  approxCost: "~$0.001",
+  aspectRatios: ["1:1", "16:9", "9:16"],
+  buildInput: ({ sourceUrl }) => ({ video_url: sourceUrl, frame_type: "last" }),
+};
+export const MERGE_VIDEOS_MODEL: ModelInfo = {
+  id: "fal-ai/ffmpeg-api/merge-videos",
+  typicalSeconds: 20,
+  name: "Join shots",
+  kind: "video",
+  tagline: "Joins the shots of a storyboard into one video.",
+  approxCost: "~$0.001",
+  aspectRatios: ["1:1", "16:9", "9:16"],
+  buildInput: () => ({}),
+};
+
+const HIDDEN = [ADD_SOUND_MODEL, EDIT_IMAGE_MODEL, REFERENCE_IMAGE_MODEL, LAST_FRAME_MODEL, MERGE_VIDEOS_MODEL, ...ANIMATE_MODELS];
 
 export function getModel(id: string): ModelInfo | undefined {
   return MODELS.find((m) => m.id === id) ?? HIDDEN.find((m) => m.id === id);

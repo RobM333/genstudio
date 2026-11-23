@@ -74,14 +74,16 @@ export async function POST(req: Request) {
   let finalPrompt = prompt;
   let enhancedPrompt: string | undefined;
   let enhanceNote: string | undefined;
+  let avoid: string | undefined;
   if (body.enhance !== false && !model.needsSource) {
     const purpose =
       body.purpose === "refix" ? "refix" : body.purpose === "keyframe" ? "keyframe" : model.takesImage ? "animate" : "direct";
-    const e = await enhancePrompt(prompt, model, { live: mode === "live", sound: body.sound !== false, purpose, refKinds });
+    const e = await enhancePrompt(prompt, model, { live: mode === "live", sound: body.sound !== false, purpose, refKinds, seconds: duration });
     if (e.by !== "none" && checkPrompt(e.prompt).ok && (!refKinds.includes("person") || checkWithPersonPhoto(e.prompt).ok)) {
       finalPrompt = e.prompt;
       enhancedPrompt = e.prompt;
       enhanceNote = e.note;
+      avoid = e.avoid && checkPrompt(e.avoid).ok ? e.avoid : undefined;
     }
   }
 
@@ -110,7 +112,7 @@ export async function POST(req: Request) {
 
   try {
     const { request_id } = await fal.queue.submit(model.id, {
-      input: model.buildInput({ prompt: finalPrompt, aspectRatio, duration, sourceUrl, sound: body.sound !== false, refUrls }),
+      input: model.buildInput({ prompt: finalPrompt, aspectRatio, duration, sourceUrl, sound: body.sound !== false, refUrls, avoid }),
     });
     return NextResponse.json({ status: "IN_QUEUE", requestId: request_id, modelId: model.id, aspectRatio, duration, enhancedPrompt, enhanceNote });
   } catch (err) {

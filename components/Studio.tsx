@@ -11,6 +11,8 @@ import AgreeModal, { hasAcceptedTerms } from "./AgreeModal";
 import Link from "next/link";
 import { progressView, type Phase } from "@/lib/progress";
 import ReferencesBox, { loadRefs, saveRefs, type RefItem } from "./ReferencesBox";
+import { addSoundTo, animateShot, joinShots, lastFrame, planStory, startPicture, type Story } from "./storyRunner";
+import { lengthAdvice, LONG_LENGTHS, MAX_STORY_SECONDS, type ShotPlan } from "@/lib/storyboard";
 
 type Item = {
   id: string;
@@ -47,9 +49,35 @@ type Item = {
   keyframeFor?: KeyframePlan; // this picture is the first frame of a planned video
   enhanceNote?: string; // what the booster simplified, in plain words
   refs?: RefItem[]; // the user's own reference pictures used for this picture
+  story?: Story; // a longer video made from several linked shots
 };
 
-type KeyframePlan = { videoModelId: string; duration?: number; sound: boolean; quality?: Quality; autoReason?: string };
+type KeyframePlan = {
+  videoModelId: string;
+  duration?: number;
+  sound: boolean;
+  quality?: Quality;
+  autoReason?: string;
+};
+
+/**
+ * Longer videos and videos from your references are made as linked shots behind
+ * the scenes. Shots use a silent model; one soundtrack is added at the end.
+ */
+function storyModels(videoModelId: string) {
+  const key = videoModelId.includes("hailuo") || videoModelId.includes("minimax") ? "hailuo" : "kling";
+  const shot = animateModelFor(key);
+  const first = MODELS.find((m) => m.kind === "video" && m.id.includes(key) && !m.takesImage) ?? shot;
+  return { shot, first, seconds: shot.durations?.[0] ?? 5 };
+}
+function storyCost(videoModelId: string, shots: number, sound: boolean, withRefs = false): number {
+  const { shot, seconds } = storyModels(videoModelId);
+  return (
+    shots * estimateCost(shot, seconds, false) +
+    (sound ? estimateCost(ADD_SOUND_MODEL, shots * seconds, true) : 0) +
+    (withRefs ? estimateCost(REFERENCE_IMAGE_MODEL) : 0)
+  );
+}
 
 type JobSpec = {
   kind: MediaKind;
@@ -113,7 +141,8 @@ export default function Studio({ mode }: { mode: AppMode }) {
   const [quality, setQuality] = useState<Quality>("draft");
   const [sound, setSound] = useState(true);
   const [enhance, setEnhance] = useState(true);
-  const [pictureFirst, setPictureFirst] = useState(true);
+  // Picture-first is no longer shown: people found the extra picture step confusing.
+  const pictureFirst = false;
   const [askTerms, setAskTerms] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>("1:1");
@@ -127,6 +156,10 @@ export default function Studio({ mode }: { mode: AppMode }) {
   const [view, setView] = useState<View>("home");
   const [formError, setFormError] = useState<string | null>(null);
   const [refs, setRefs] = useState<RefItem[]>([]);
+  const [plan, setPlan] = useState<ShotPlan | null>(null);
+  const [planFor, setPlanFor] = useState<string>("");
+  const [storyLen, setStoryLen] = useState<number | null>(null); // null = one clip
+  const storyRuns = useRef(new Set<string>());
   const polling = useRef(new Set<string>());
 
   const isAuto = choice === AUTO;
@@ -139,7 +172,40 @@ export default function Studio({ mode }: { mode: AppMode }) {
   const costWith = estimateCost(model, length, true);
   const costWithout = estimateCost(model, length, false);
   const keyframeCost = estimateCost(getModel(KEYFRAME_MODEL_ID)!);
-  const nowCost = refs.length > 0 || (kind === "video" && pictureFirst) ? keyframeCost : cost;
+  const { seconds: shotSeconds } = storyModels(model.id);
+  const storyShots = storyLen !== null ? Math.max(2, Math.round(storyLen / shotSeconds)) : 0;
+  const storyOn = kind === "video" && storyLen !== null;
+  const nowCost =
+    kind === "video" && storyOn
+      ? storyCost(model.id, storyShots, sound, refs.length > 0)
+      : kind === "video" && refs.length > 0
+        ? storyCost(model.id, 1, sound, true)
+        : refs.length > 0
+          ? keyframeCost
+          : cost;
+
+  // Length advisor: once the user pauses typing a video idea, plan it into shots (about $0.001).
+  useEffect(() => {
+    if (kind !== "video") return;
+    const text = prompt.trim();
+    const key = `${text}|${storyLen ?? ""}|${shotSeconds}`;
+    if (text.split(/\s+/).length < 8 || key === planFor) return;
+    const t = setTimeout(async () => {
+      try {
+        const res = await fetch("/api/plan", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt: text, targetSeconds: storyLen ?? undefined, shotSeconds }),
+        });
+        const data = await res.json().catch(() => ({}));
+        setPlanFor(key);
+        setPlan(res.ok && data.plan ? (data.plan as ShotPlan) : null);
+      } catch {
+        // advice is optional
+      }
+    }, 1500);
+    return () => clearTimeout(t);
+  }, [kind, prompt, storyLen, shotSeconds, planFor]);
 
   // Load the saved gallery once, in the browser.
   useEffect(() => {
@@ -284,7 +350,9 @@ export default function Studio({ mode }: { mode: AppMode }) {
   // Resume any jobs that were still running when the page was closed.
   useEffect(() => {
     if (!loaded) return;
-    items.filter((it) => it.status === "pending" && it.requestId).forEach(poll);
+    items.filter((it) => it.status === "pending" && it.requestId && !it.story).forEach(poll);
+    // Storyboards that were running when the page closed carry on from the first unfinished shot.
+    items.filter((it) => it.status === "pending" && it.story).forEach(runStory);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded]);
 
@@ -332,6 +400,12 @@ export default function Studio({ mode }: { mode: AppMode }) {
       return;
     }
     const useRefs = refs.length > 0 ? refs : undefined;
+    if (kind === "video" && (storyOn || useRefs)) {
+      // Longer videos (and videos from your own pictures) are made as linked shots behind the scenes.
+      const shots = storyOn && plan && plan.shots.length === storyShots ? plan.shots.map((x) => x.prompt) : storyOn ? [] : [text];
+      startStory(text, shots, storyOn ? storyShots : 1, { refs: useRefs, templateName: template?.name });
+      return;
+    }
     if (kind === "video" && (pictureFirst || useRefs)) {
       // Picture first: make a cheap still to check the layout, then animate it.
       // With reference pictures this is always the way, so your product is right before any video.
@@ -401,6 +475,18 @@ export default function Studio({ mode }: { mode: AppMode }) {
       fixNote: text,
       keyframeFor: it.keyframeFor,
     };
+    if (it.story) {
+      // Longer videos are re-planned and remade with the fix, behind the scenes.
+      startStory(prompt, it.story.shots.length > 1 ? [] : [prompt], Math.max(1, it.story.shots.length || it.story.wantShots || 1), {
+        refs: it.story.refs as RefItem[] | undefined,
+        parentId: it.id,
+        fixNote: text,
+        videoModelId: it.story.firstModelId,
+        sound: it.story.sound,
+        aspectRatio: it.aspectRatio,
+      });
+      return null;
+    }
     if (it.kind === "image" && how === "remake") {
       // Camera, angle or layout changes can't be done by editing: make a fresh picture
       // from the original idea plus the correction, with the layout spelled out.
@@ -456,6 +542,132 @@ export default function Studio({ mode }: { mode: AppMode }) {
       sourceUrl: pic.url,
       purpose: "animate",
     });
+  }
+
+  /** Starts a video made of linked shots; everything happens behind the scenes. */
+  function startStory(
+    text: string,
+    shotPrompts: string[],
+    wantShots: number,
+    opts: {
+      refs?: RefItem[];
+      templateName?: string;
+      parentId?: string;
+      fixNote?: string;
+      videoModelId?: string;
+      sound?: boolean;
+      aspectRatio?: AspectRatio;
+    } = {},
+  ) {
+    const { shot, first, seconds } = storyModels(opts.videoModelId ?? model.id);
+    const wantSoundNow = opts.sound ?? sound;
+    const shape = opts.aspectRatio ?? aspectRatio;
+    const story: Story = {
+      shots: shotPrompts.map((prompt) => ({ prompt, status: "waiting" })),
+      shotModelId: shot.id,
+      firstModelId: first.id,
+      shotSeconds: seconds,
+      wantShots,
+      refs: opts.refs?.map(({ url, kind, token }) => ({ url, kind, token })),
+      sound: wantSoundNow,
+      soundPrompt: text,
+    };
+    const ar = shot.aspectRatios.includes(shape) ? shape : shot.aspectRatios[0];
+    const item: Item = {
+      id: crypto.randomUUID(),
+      kind: "video",
+      modelId: shot.id,
+      modelName: wantShots > 1 ? `${first.name} · ${wantShots * seconds}s` : first.name,
+      prompt: text,
+      aspectRatio: ar,
+      duration: wantShots * seconds,
+      status: "pending",
+      createdAt: Date.now(),
+      templateName: opts.templateName,
+      parentId: opts.parentId,
+      fixNote: opts.fixNote,
+      wantSound: wantSoundNow,
+      hasAudio: false,
+      enhance,
+      autoReason:
+        wantShots > 1
+          ? `${wantShots * seconds}s video made as ${wantShots} linked shots, so every moment fits`
+          : "uses your own pictures",
+      story,
+    };
+    setItems((prev) => [item, ...prev]);
+    setSelectedId(item.id);
+    setView("create");
+    runStory(item);
+  }
+
+  /** Makes every unfinished shot in order, then joins them and adds sound. Safe to call again to resume. */
+  async function runStory(start: Item) {
+    if (!start.story || storyRuns.current.has(start.id)) return;
+    storyRuns.current.add(start.id);
+    let story: Story = { ...start.story, interrupted: false, shots: start.story.shots.map((x) => ({ ...x })) };
+    const save = (patch: Partial<Item> = {}) => update(start.id, { story: { ...story, shots: story.shots.map((x) => ({ ...x })) }, ...patch });
+    try {
+      update(start.id, { status: "pending", error: undefined, stepStartedAt: Date.now(), phase: "working" });
+      if (story.shots.length === 0) {
+        story.step = "Planning the shots";
+        save({ jobModelId: "fal-ai/any-llm" });
+        const prompts = await planStory(start.prompt, story.shotSeconds, (story.wantShots ?? 2) * story.shotSeconds);
+        story.shots = prompts.map((prompt) => ({ prompt, status: "waiting" as const }));
+        save();
+      }
+      if (story.refs?.length && !story.startUrl) {
+        story.step = "Placing your product";
+        save({ stepStartedAt: Date.now(), jobModelId: "fal-ai/nano-banana/edit" });
+        story.startUrl = await startPicture(story, start.prompt, start.aspectRatio);
+        save();
+      }
+      const n = story.shots.length;
+      for (let i = 0; i < n; i++) {
+        const shot = story.shots[i];
+        if (shot.url && (shot.lastFrame || i === n - 1)) continue;
+        story.step = `Shot ${i + 1} of ${n}`;
+        shot.status = "working";
+        shot.error = undefined;
+        save({ stepStartedAt: Date.now(), jobModelId: story.shotModelId });
+        try {
+          shot.url = await animateShot(story, i, start.aspectRatio);
+          // The next shot continues from this one's last frame.
+          if (i < n - 1) shot.lastFrame = await lastFrame(shot.url);
+          shot.status = "done";
+        } catch (e) {
+          shot.status = "failed";
+          shot.error = (e as Error).message;
+          save();
+          throw e;
+        }
+        save();
+      }
+      story.step = "Joining the shots";
+      story.joinedUrl = undefined;
+      save({ stepStartedAt: Date.now(), jobModelId: "fal-ai/ffmpeg-api/merge-videos" });
+      const joined = await joinShots(story.shots.map((x) => x.url!));
+      story.joinedUrl = joined;
+      let finalUrl = joined;
+      let hasAudio = false;
+      if (story.sound) {
+        story.step = "Adding sound";
+        save({ stepStartedAt: Date.now(), jobModelId: ADD_SOUND_MODEL.id });
+        try {
+          finalUrl = await addSoundTo(joined, story.soundPrompt, n * story.shotSeconds, start.aspectRatio);
+          hasAudio = true;
+        } catch {
+          // Keep the silent video; the user can add sound again from the viewer.
+        }
+      }
+      story.step = undefined;
+      save({ status: "done", url: finalUrl, hasAudio, stage: hasAudio ? "sound" : "video" });
+    } catch (e) {
+      story.step = undefined;
+      save({ status: "failed", error: (e as Error).message || "A shot failed." });
+    } finally {
+      storyRuns.current.delete(start.id);
+    }
   }
 
   /** Re-runs a draft's prompt with the best model for a final version. */
@@ -621,9 +833,9 @@ export default function Studio({ mode }: { mode: AppMode }) {
   const generateButton = (
     <button className="generate" onClick={generate} disabled={mode === "locked"}>
       <span className="generate-label">
-        {kind === "video" && (pictureFirst || refs.length > 0)
-          ? "Make the first frame"
-          : refs.length > 0
+        {storyOn
+          ? `Generate ${storyShots * shotSeconds}s video`
+          : refs.length > 0 && kind === "image"
             ? "Generate with your references"
             : isAuto && quality === "draft"
             ? `Generate ${kind} draft`
@@ -873,10 +1085,28 @@ export default function Studio({ mode }: { mode: AppMode }) {
               <div className="sub-label">Length</div>
               <div className="pills">
                 {model.durations.map((d) => (
-                  <button key={d} className={d === length ? "pill active" : "pill"} onClick={() => setDuration(d)}>
+                  <button
+                    key={d}
+                    className={d === length && storyLen === null ? "pill active" : "pill"}
+                    onClick={() => {
+                      setDuration(d);
+                      setStoryLen(null);
+                    }}
+                  >
                     {d}s
                   </button>
                 ))}
+                {kind === "video" &&
+                  LONG_LENGTHS.map((d) => (
+                    <button
+                      key={d}
+                      className={storyLen === d ? "pill active" : "pill"}
+                      title="Made from several linked shots"
+                      onClick={() => setStoryLen(d)}
+                    >
+                      {d}s
+                    </button>
+                  ))}
               </div>
             </div>
           )}
@@ -884,23 +1114,34 @@ export default function Studio({ mode }: { mode: AppMode }) {
 
         {kind === "video" && (
           <>
-            <div className="sub-label">How to start</div>
-            <div className="segmented">
-              <button className={pictureFirst ? "seg active" : "seg"} onClick={() => setPictureFirst(true)}>
-                <strong>🖼️ Picture first</strong>
-                <span>recommended</span>
-              </button>
-              <button className={!pictureFirst ? "seg active" : "seg"} onClick={() => setPictureFirst(false)}>
-                <strong>🎬 Straight to video</strong>
-                <span>{formatCost(cost)}</span>
-              </button>
-            </div>
-            <p className="auto-pick">
-              {pictureFirst
-                ? `We make the first frame as a picture (${formatCost(keyframeCost)}) so you can check who is where and fix it cheaply. Then one click animates it (${formatCost(estimateCost(animateModelFor(model.id), length, sound))}).`
-                : "Goes straight to video. Faster, but if the layout comes out wrong you pay for the whole video again."}
-            </p>
-            {sceneWarning(prompt) && <p className="notice warn small-notice">⚠️ {sceneWarning(prompt)}</p>}
+            {storyOn ? (
+              <div className="story-advice on">
+                <strong>
+                  🎞️ {storyShots * shotSeconds}-second video · {formatCost(nowCost)}
+                </strong>
+                <span className="muted small">
+                  We plan your idea moment by moment and make it as {storyShots} linked shots, each continuing from the last
+                  frame of the one before{sound ? ", then add one soundtrack" : ""}. You get one finished video.
+                </span>
+                <button className="link-btn" onClick={() => setStoryLen(null)}>
+                  Use one short clip instead
+                </button>
+              </div>
+            ) : (
+              lengthAdvice(plan, length) && (
+                <div className="story-advice">
+                  <span>⏱️ {lengthAdvice(plan, length)?.replace(/ We recommend \d+ linked shots\./, "")}</span>
+                  <button
+                    className="pill active"
+                    onClick={() => setStoryLen(Math.min(MAX_STORY_SECONDS, plan!.neededSeconds))}
+                  >
+                    Make it {Math.min(MAX_STORY_SECONDS, plan!.neededSeconds)}s ·{" "}
+                    {formatCost(storyCost(model.id, Math.round(Math.min(MAX_STORY_SECONDS, plan!.neededSeconds) / shotSeconds), sound, refs.length > 0))}
+                  </button>
+                </div>
+              )
+            )}
+            {!storyOn && sceneWarning(prompt) && <p className="notice warn small-notice">⚠️ {sceneWarning(prompt)}</p>}
           </>
         )}
 
@@ -1033,6 +1274,9 @@ export default function Studio({ mode }: { mode: AppMode }) {
         </dl>
         {selected.enhanceNote && <p className="enhance-note">💡 {selected.enhanceNote}</p>}
         {selected.status === "done" && selected.url && selected.keyframeFor && <AnimateBox pic={selected} onAnimate={animate} />}
+        {selected.story && selected.status !== "done" && (
+          <StoryPanel item={selected} running={storyRuns.current.has(selected.id)} onResume={runStory} />
+        )}
         {selected.status === "done" && selected.url && <FixBox key={selected.id} item={selected} onFix={fixItem} />}
         {selected.quality === "draft" && selected.status === "done" && <FinalButton draft={selected} onClick={makeFinal} />}
         {selected.kind === "video" && selected.status === "done" && !selected.hasAudio && selected.url && (
@@ -1132,15 +1376,6 @@ export default function Studio({ mode }: { mode: AppMode }) {
                 </option>
               ))}
             </select>
-            {kind === "video" && (
-              <button
-                className={pictureFirst ? "mini-toggle on" : "mini-toggle"}
-                onClick={() => setPictureFirst(!pictureFirst)}
-                title="Make the first frame as a picture first, so you can check the layout before paying for video."
-              >
-                {pictureFirst ? "🖼️ Picture first" : "🎬 Straight to video"}
-              </button>
-            )}
             {kind === "video" && (
               <button className={sound ? "mini-toggle on" : "mini-toggle"} onClick={() => setSound(!sound)}>
                 {sound ? "🔊 Sound on" : "🔇 Sound off"}
@@ -1464,6 +1699,7 @@ function IconVideo() {
 }
 
 function typicalSeconds(it: Item): number {
+  if (it.story) return (getModel(it.jobModelId ?? it.modelId)?.typicalSeconds ?? 100) + 10;
   const m = getModel(it.jobModelId ?? it.modelId);
   const base = m?.typicalSeconds ?? (it.kind === "video" ? 120 : 10);
   if (m?.kind === "video" && !m.needsSource && it.duration && m.durations?.[0]) return base * (it.duration / m.durations[0]);
@@ -1476,6 +1712,29 @@ function PendingTile({ item }: { item: Item }) {
     const t = setInterval(() => setNow(Date.now()), 500);
     return () => clearInterval(t);
   }, []);
+  if (item.story) {
+    const n = item.story.shots.length;
+    const done = item.story.shots.filter((x) => x.status === "done").length;
+    const steps = n + 1 + (item.story.sound ? 1 : 0);
+    const finished = done + (item.story.joinedUrl ? 1 : 0);
+    const view = progressView({
+      phase: "working",
+      elapsedSec: (now - (item.stepStartedAt ?? now)) / 1000,
+      typicalSec: typicalSeconds(item),
+      step: Math.min(steps, finished + 1),
+      steps,
+      stepLabel: item.story.step ?? "Making your shots",
+    });
+    return (
+      <div className="tile-state">
+        <span className="progress-label">{view.label}</span>
+        <div className="progress" role="progressbar" aria-valuenow={Math.round(view.percent)} aria-valuemin={0} aria-valuemax={100}>
+          <div className="progress-fill" style={{ width: `${view.percent}%` }} />
+        </div>
+        <span className="muted small">{view.timeLeft}</span>
+      </div>
+    );
+  }
   const silentNeedsSound = item.kind === "video" && item.wantSound && !getModel(item.modelId)?.audio;
   const steps = silentNeedsSound ? 2 : 1;
   const step = item.stage === "sound" && steps === 2 ? 2 : 1;
@@ -1739,5 +1998,26 @@ function sceneWarning(prompt: string): string | null {
   if (words > 35 || sentences >= 3 || storyWords >= 2 || (sentences >= 2 && storyWords >= 1)) {
     return "This sounds like several moments. A 5 to 10 second clip can show about one, so we'll focus on the main moment. Picture first lets you check the layout before paying for video.";
   }
+  return null;
+}
+
+function StoryPanel({ item, running, onResume }: { item: Item; running: boolean; onResume: (it: Item) => void }) {
+  if (item.status === "failed")
+    return (
+      <div className="final-box">
+        <button className="generate small" onClick={() => onResume(item)}>
+          Try again
+        </button>
+        <p className="hint">Carries on from where it stopped. Parts that already finished aren&apos;t paid for again.</p>
+      </div>
+    );
+  if (item.status === "pending" && !running)
+    return (
+      <div className="final-box">
+        <button className="generate small" onClick={() => onResume(item)}>
+          Continue making this video
+        </button>
+      </div>
+    );
   return null;
 }
