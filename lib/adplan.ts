@@ -23,7 +23,32 @@ export type AdPlan = {
 
 import { brandLine, type BrandInfo } from "./brand";
 
-export type AdBrief = { product: string; audience: string; seconds: number; tone: string; refKinds?: string[]; brand?: BrandInfo };
+export type AdBrief = { product: string; audience: string; seconds: number; tone: string; refKinds?: string[]; brand?: BrandInfo; language?: string };
+
+/** Voiceover languages: the voice model speaks the language its lines are written in. */
+export const AD_LANGUAGES = [
+  "English", "Spanish", "French", "German", "Italian", "Portuguese", "Dutch", "Polish", "Swedish", "Danish", "Norwegian", "Finnish",
+  "Greek", "Czech", "Romanian", "Hungarian", "Ukrainian", "Russian", "Turkish", "Arabic", "Hindi", "Tamil", "Indonesian", "Malay",
+  "Filipino", "Vietnamese", "Japanese", "Korean", "Chinese",
+] as const;
+const BROWSER_LANG: Record<string, string> = {
+  en: "English", es: "Spanish", fr: "French", de: "German", it: "Italian", pt: "Portuguese", nl: "Dutch", pl: "Polish", sv: "Swedish", da: "Danish",
+  no: "Norwegian", nb: "Norwegian", nn: "Norwegian", fi: "Finnish", el: "Greek", cs: "Czech", ro: "Romanian", hu: "Hungarian", uk: "Ukrainian",
+  ru: "Russian", tr: "Turkish", ar: "Arabic", hi: "Hindi", ta: "Tamil", id: "Indonesian", ms: "Malay", fil: "Filipino", tl: "Filipino",
+  vi: "Vietnamese", ja: "Japanese", ko: "Korean", zh: "Chinese",
+};
+/** The voiceover language to start with: the browser's language when we support it. */
+export function languageFromLocale(locale?: string): string {
+  return BROWSER_LANG[String(locale ?? "").toLowerCase().split("-")[0]] ?? "English";
+}
+export function adLanguage(l: unknown): string {
+  return (AD_LANGUAGES as readonly string[]).includes(String(l)) ? String(l) : "English";
+}
+/** Languages written without spaces: their lines are limited by characters instead of words. */
+const NO_SPACES = ["Japanese", "Chinese"];
+export function maxVoiceChars(seconds: number, language?: string): number | null {
+  return language && NO_SPACES.includes(language) ? Math.max(8, Math.floor(seconds * 5)) : null;
+}
 
 export const AD_LENGTHS = [15, 30, 60] as const;
 export const AD_TONES = ["Friendly", "Premium", "Energetic", "Funny", "Calm"] as const;
@@ -59,7 +84,8 @@ export function adPlanInstructions(brief: AdBrief): string {
     : "The user did not upload a product picture, so describe the product's look once, clearly, in the look line, and keep it identical in every scene.";
   const brand = brandLine(brief.brand);
   return `You are an award-winning ad creative director. Plan a ${brief.seconds}-second video ad.
-Tone: ${brief.tone}. ${refs}${brand ? `\nThe brand kit: ${brand}. Use the brand colours in the look line (setting, props, light) and on the end card, follow the brand style, and use the brand name on the end card.` : ""}
+Tone: ${brief.tone}. ${refs}
+Language: write every "voice" line, every "text", and the end card "headline", "tagline" and "voice" in ${adLanguage(brief.language)}, natural for native speakers (keep a brand or product name as it is). Write everything else ("visual", "camera", "look", "music", "title", "concept") in English.${brand ? `\nThe brand kit: ${brand}. Use the brand colours in the look line (setting, props, light) and on the end card, follow the brand style, and use the brand name on the end card.` : ""}
 Write exactly ${n} scenes of ${SCENE_SECONDS} seconds each, then an end card of ${card} seconds.
 Rules:
 - Open with a hook in scene 1 (a striking moment, a problem the audience feels, or a surprising visual). Show the product in use, the benefit, then the payoff. The end card has the product name and a short call to action.
@@ -67,10 +93,10 @@ Rules:
 - "camera": shot type and one move, for example "close-up, slow push-in" or "wide shot, gentle pan right".
 - "look": one line listing what must stay the same in every scene: the product's shape, colour and label, each person's age, hair and outfit, the colour palette, the setting and the light. This is repeated into every scene so they match.
 - "text": up to 5 words of on-screen copy for that moment (shown in the plan; the words are rendered on the end card).
-- "voice": the voiceover for that scene, at most ${maxVoiceWords(SCENE_SECONDS)} words, natural and spoken, matching the ${brief.tone.toLowerCase()} tone. Together the lines tell one short story.
+- "voice": the voiceover for that scene, at most ${maxVoiceChars(SCENE_SECONDS, brief.language) ? `${maxVoiceChars(SCENE_SECONDS, brief.language)} characters` : `${maxVoiceWords(SCENE_SECONDS)} words`}, natural and spoken, matching the ${brief.tone.toLowerCase()} tone. Together the lines tell one short story.
 - "music": genre, mood and tempo for an instrumental background bed, no vocals.
 - "voice" (top level): pick one of ${AD_VOICES.map((v) => `${v.id} (${v.label})`).join(", ")}.
-- "endCard": "headline" is the product name or a 2 to 4 word promise, "tagline" is a call to action up to 6 words, "voice" says it in at most ${maxVoiceWords(card)} words.
+- "endCard": "headline" is the product name or a 2 to 4 word promise, "tagline" is a call to action up to 6 words, "voice" says it in at most ${maxVoiceChars(card, brief.language) ? `${maxVoiceChars(card, brief.language)} characters` : `${maxVoiceWords(card)} words`}.
 Reply with JSON only, in this shape: ${JSON_SHAPE}`;
 }
 
@@ -81,6 +107,11 @@ You are now editing an existing plan. Apply the user's change request, keep ever
 
 const clip = (v: unknown, max: number) => (typeof v === "string" ? v.replace(/\s+/g, " ").trim().slice(0, max) : "");
 const wordsMax = (s: string, n: number) => s.split(" ").slice(0, n).join(" ");
+/** Shortens a voice line to fit its seconds, by words or, for Japanese and Chinese, by characters. */
+const fitLine = (s: string, seconds: number, language?: string) => {
+  const chars = maxVoiceChars(seconds, language);
+  return chars ? s.slice(0, chars) : wordsMax(s, maxVoiceWords(seconds));
+};
 
 /** Reads the planner's JSON reply and fits it to the length; null if it is unusable. */
 export function parseAdPlan(raw: string, brief: AdBrief): AdPlan | null {
@@ -97,7 +128,7 @@ export function parseAdPlan(raw: string, brief: AdBrief): AdPlan | null {
           visual: clip(o.visual, 500),
           camera: clip(o.camera, 120),
           text: wordsMax(clip(o.text, 60), 6),
-          voice: wordsMax(clip(o.voice, 200), maxVoiceWords(SCENE_SECONDS)),
+          voice: fitLine(clip(o.voice, 200), SCENE_SECONDS, brief.language),
         };
       })
       .filter((s) => s.visual.length > 8)
@@ -115,7 +146,7 @@ export function parseAdPlan(raw: string, brief: AdBrief): AdPlan | null {
       endCard: {
         headline: clip(ec.headline, 40) || "Try it today",
         tagline: clip(ec.tagline, 60),
-        voice: wordsMax(clip(ec.voice, 160), maxVoiceWords(endCardSeconds(brief.seconds))),
+        voice: fitLine(clip(ec.voice, 160), endCardSeconds(brief.seconds), brief.language),
       },
       seconds: brief.seconds,
     };

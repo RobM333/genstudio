@@ -17,7 +17,7 @@ import type { Direction, DirectorReply } from "@/lib/director";
 import { addSoundTo, animateShot, joinShots, lastFrame, planStory, startPicture, type Story } from "./storyRunner";
 import { lengthAdvice, LONG_LENGTHS, MAX_STORY_SECONDS, type ShotPlan } from "@/lib/storyboard";
 import { nextLength, readChat } from "@/lib/chat";
-import { AD_LENGTHS, AD_PRICES, AD_TONES, AD_VOICES, adCost, checkCost, endCardSeconds, maxRedos, maxVoiceWords, redoCap, SCENE_SECONDS, sceneCount, sceneRemakeCost, type AdBrief, type AdPlan } from "@/lib/adplan";
+import { AD_LANGUAGES, AD_LENGTHS, AD_PRICES, AD_TONES, AD_VOICES, adCost, languageFromLocale, maxVoiceChars, checkCost, endCardSeconds, maxRedos, maxVoiceWords, redoCap, SCENE_SECONDS, sceneCount, sceneRemakeCost, type AdBrief, type AdPlan } from "@/lib/adplan";
 import { AD_T2V, buildAd, changedAdJob, newAdJob, type AdJob } from "./adRunner";
 
 type Item = {
@@ -278,6 +278,8 @@ export default function Studio({ mode }: { mode: AppMode }) {
     setItems(loadItems());
     setRefs(loadRefs());
     setBrand(loadBrand());
+    // Voiceovers start in the browser's language (changeable in the ad's options).
+    setBrief((b) => (b.language ? b : { ...b, language: languageFromLocale(navigator.language) }));
     try {
       const raw = localStorage.getItem(CHAT_KEY);
       const list = raw ? (JSON.parse(raw) as ChatMsg[]) : [];
@@ -1184,7 +1186,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
     setAdError(null);
     if (it.ad) {
       setAdMode(true);
-      setBrief({ product: it.ad.brief.product, audience: it.ad.brief.audience, seconds: it.ad.brief.seconds, tone: it.ad.brief.tone });
+      setBrief({ product: it.ad.brief.product, audience: it.ad.brief.audience, seconds: it.ad.brief.seconds, tone: it.ad.brief.tone, language: it.ad.brief.language ?? "English" });
       setAdCheck(it.ad.check?.on ?? true);
       setAdShape(it.aspectRatio);
       setAdPlan(JSON.parse(JSON.stringify(it.ad.plan)) as AdPlan);
@@ -2190,6 +2192,16 @@ export default function Studio({ mode }: { mode: AppMode }) {
             </div>
           </div>
         </div>
+        <label className="sub-label" htmlFor="ad-language">
+          Voiceover language
+        </label>
+        <select id="ad-language" className="text-input ad-language" value={brief.language ?? "English"} onChange={(e) => setBrief({ ...brief, language: e.target.value })}>
+          {AD_LANGUAGES.map((l) => (
+            <option key={l} value={l}>
+              {l}
+            </option>
+          ))}
+        </select>
         <div className="sub-label">Tone</div>
         <div className="pills">
           {AD_TONES.map((t) => (
@@ -2267,9 +2279,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
               </div>
               <label className="ad-label">
                 🎙️ Voiceover{" "}
-                <span className={sc.voice.split(/\s+/).filter(Boolean).length > maxVoiceWords(SCENE_SECONDS) ? "error-text" : "muted"}>
-                  ({sc.voice.split(/\s+/).filter(Boolean).length}/{maxVoiceWords(SCENE_SECONDS)} words)
-                </span>
+                <VoiceCount line={sc.voice} seconds={SCENE_SECONDS} language={brief.language} />
                 <input className="text-input" maxLength={200} value={sc.voice} onChange={(e) => editScene(i, { voice: e.target.value })} />
               </label>
             </li>
@@ -2845,6 +2855,12 @@ export default function Studio({ mode }: { mode: AppMode }) {
             Brand kit
             {hasBrand(brand) && <span className="brand-dot" style={{ background: brand.colors?.[0] ?? "var(--accent)" }} aria-hidden />}
           </button>
+          <Link href="/pricing" className="nav-item">
+            <span className="nav-icon" aria-hidden>
+              ◇
+            </span>
+            Pricing
+          </Link>
           <span className="nav-item soon">
             <span className="nav-icon" aria-hidden>
               <IconFolder />
@@ -3250,6 +3266,18 @@ function sceneWarning(prompt: string): string | null {
     return "This sounds like several moments. A 5 to 10 second clip can show about one, so we'll focus on the main moment, or pick a longer length to fit them all.";
   }
   return null;
+}
+
+/** How long a voice line is against what fits its seconds (characters for Japanese and Chinese). */
+function VoiceCount({ line, seconds, language }: { line: string; seconds: number; language?: string }) {
+  const chars = maxVoiceChars(seconds, language);
+  const n = chars ? line.length : line.split(/\s+/).filter(Boolean).length;
+  const max = chars ?? maxVoiceWords(seconds);
+  return (
+    <span className={n > max ? "error-text" : "muted"}>
+      ({n}/{max} {chars ? "characters" : "words"})
+    </span>
+  );
 }
 
 /** The ad's plan under the video, so people can say "scene 2: ..." in the chat. */

@@ -47,3 +47,24 @@ console.log("quality check tests passed");
   }
   console.log("safe fetch tests passed");
 })();
+
+import { adPlanInstructions, languageFromLocale, parseAdPlan } from "../lib/adplan";
+assert.equal(languageFromLocale("es-MX"), "Spanish");
+assert.equal(languageFromLocale("xx"), "English");
+assert.equal(languageFromLocale(undefined), "English");
+assert.match(adPlanInstructions({ product: "x", audience: "", seconds: 15, tone: "Calm", language: "Spanish" }), /in Spanish/);
+assert.match(adPlanInstructions({ product: "x", audience: "", seconds: 15, tone: "Calm", language: "Klingon" }), /in English/);
+const ja = parseAdPlan(
+  JSON.stringify({ scenes: [0, 1].map(() => ({ visual: "A fan on a desk in soft light", camera: "close-up", text: "", voice: "あ".repeat(80) })), endCard: { headline: "Breeze", voice: "い".repeat(80) } }),
+  { product: "x", audience: "", seconds: 15, tone: "Calm", language: "Japanese" },
+);
+assert.equal(ja?.scenes[0].voice.length, 25);
+assert.equal(ja?.endCard.voice.length, 25);
+console.log("language tests passed");
+
+import { creditExamples, creditsFor, LOWEST_CREDIT_PRICE } from "../lib/pricing";
+// No job may cost us more than about half of what its credits earn on the cheapest plan.
+for (const r of creditExamples()) assert.ok(r.usd <= r.credits * LOWEST_CREDIT_PRICE * 0.5, r.what);
+assert.equal(creditsFor(0.003), 1);
+assert.equal(creditsFor(0.04), 4);
+console.log("pricing tests passed");
