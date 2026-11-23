@@ -1,0 +1,11 @@
+node_modules
+.next
+out
+.vercel
+.netlify
+*.tsbuildinfo
+next-env.d.ts
+.DS_Store
+# Secrets never go in git
+.env
+.env*.local
