@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ADD_SOUND_MODEL, animateModelFor, EDIT_IMAGE_MODEL, estimateCost, KEYFRAME_MODEL_ID, REFERENCE_IMAGE_MODEL, formatCost, getModel, MODELS, type AspectRatio, type MediaKind } from "@/lib/models";
+import { ADD_SOUND_MODEL, animateModelFor, EDIT_IMAGE_MODEL, estimateCost, KEYFRAME_MODEL_ID, REFERENCE_IMAGE_MODEL, formatCost, COST_NOTE, getModel, MODELS, type AspectRatio, type MediaKind } from "@/lib/models";
 import { autoAspectRatios, pickModel, type Quality } from "@/lib/router";
 import { fillTemplate, TEMPLATES, type Template } from "@/lib/templates";
 import type { AppMode } from "@/lib/config";
@@ -891,11 +891,9 @@ export default function Studio({ mode }: { mode: AppMode }) {
           ? `Generate ${storyShots * shotSeconds}s video`
           : refs.length > 0 && kind === "image"
             ? "Generate with your references"
-            : isAuto && quality === "draft"
-            ? `Generate ${kind} draft`
             : `Generate ${kind}`}
       </span>
-      <span className="generate-cost">{mode === "demo" ? "Free" : formatCost(nowCost)}</span>
+      <span className="generate-cost">{mode === "demo" ? "Free" : `est. ${formatCost(nowCost)}`}</span>
     </button>
   );
 
@@ -937,7 +935,6 @@ export default function Studio({ mode }: { mode: AppMode }) {
         </div>
       )}
       {it.status === "done" && it.url && <Media item={it} thumb />}
-      {it.quality && <span className={`tile-quality q-${it.quality}`}>{it.quality === "draft" ? "Draft" : "Final"}</span>}
       <span className="tile-overlay">
         <span className="tile-prompt">{it.prompt}</span>
         <span className="tile-label">
@@ -1173,10 +1170,10 @@ export default function Studio({ mode }: { mode: AppMode }) {
       return;
     }
     if (intent.type === "final") {
-      if (it.quality !== "draft") reply({ text: "This is already made at full quality. Tell me what you'd like changed." });
+      if (it.quality !== "draft") reply({ text: "This is already made with our best model. Tell me what you'd like changed." });
       else {
         const cost = finalCost(it);
-        reply({ text: `I'll make it again with the best model, from the same idea. That costs ${price(cost)}.`, offers: [{ label: "✦ Make final version", cost, act: { type: "final" } }], state: "open" });
+        reply({ text: `I'll make it again with our best model, from the same idea. That costs ${price(cost)}.`, offers: [{ label: "✦ Make it higher quality", cost, act: { type: "final" } }], state: "open" });
       }
       return;
     }
@@ -1253,7 +1250,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
       if ((selected.duration ?? 0) < MAX_STORY_SECONDS) chips.push({ label: `⏱️ Make it ${next}s`, text: `Make it ${next} seconds` });
       if (!selected.hasAudio) chips.push({ label: "🔊 Add sound", text: "Add sound" });
     } else chips.push({ label: "🎬 Turn into a video", text: "Turn it into a video" });
-    if (selected.quality === "draft") chips.push({ label: "✦ Final version", text: "Make the final version" });
+    if (selected.quality === "draft") chips.push({ label: "✦ Higher quality", text: "Make it higher quality" });
   }
 
   const chatPanel = selected && (
@@ -1265,7 +1262,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
             {selected.kind === "video"
               ? "“make it slower”, “the dog should be brown” or “make it 15 seconds”"
               : "“make it brighter” or “the text should say SALE”"}
-            . I always tell you the price before anything is made.
+            . I always tell you the estimated price before anything is made. {COST_NOTE}
           </p>
         </div>
         {threadMsgs.map((m) => (
@@ -1285,7 +1282,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
               <div className="chat-offers">
                 {m.offers.map((o, i) => (
                   <button key={o.label} className={i === 0 ? "pill active" : "pill"} onClick={() => acceptOffer(m, o)} disabled={mode === "locked"}>
-                    {o.label} · {mode === "demo" ? "Free" : formatCost(o.cost)}
+                    {o.label} · {mode === "demo" ? "Free" : `est. ${formatCost(o.cost)}`}
                   </button>
                 ))}
                 <button className="link-btn" onClick={() => patchMsg(m.id, { state: "cancelled" })}>
@@ -1424,7 +1421,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
           </span>{" "}
           Auto <span className="tag tag-rec">Recommended</span>
         </span>
-        <span className="model-tag">Picks the best model for each job, and saves money on drafts.</span>
+        <span className="model-tag">Picks the best model for each job at a fair price.</span>
       </button>
       {models.map((m) => (
         <button
@@ -1442,24 +1439,15 @@ export default function Studio({ mode }: { mode: AppMode }) {
             {m.tagline}
             {m.kind === "video" && !m.audio && <span className="sound-tag"> Sound can be added.</span>}
           </span>
-          <span className="model-cost">{m.approxCost}</span>
+          <span className="model-cost">
+            est. {formatCost(estimateCost(m, m.durations?.[0], false))} {m.kind === "video" ? `per ${m.durations?.[0]}s clip` : "per image"}
+          </span>
         </button>
       ))}
     </div>
 
     {isAuto && (
       <>
-        <div className="sub-label">Quality</div>
-        <div className="segmented">
-          <button className={quality === "draft" ? "seg active" : "seg"} onClick={() => setQuality("draft")}>
-            <strong>Draft</strong>
-            <span>Cheap preview</span>
-          </button>
-          <button className={quality === "final" ? "seg active" : "seg"} onClick={() => setQuality("final")}>
-            <strong>Final</strong>
-            <span>Best quality</span>
-          </button>
-        </div>
         <p className="auto-pick">
           <span className="spark" aria-hidden>
             ✦
@@ -1521,7 +1509,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
         {storyOn ? (
           <div className="story-advice on">
             <strong>
-              🎞️ {storyShots * shotSeconds}-second video · {formatCost(nowCost)}
+              🎞️ {storyShots * shotSeconds}-second video · est. {formatCost(nowCost)}
             </strong>
             <span className="muted small">
               We plan your idea moment by moment and make it as {storyShots} linked shots, each continuing from the last
@@ -1540,7 +1528,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
                 onClick={() => setStoryLen(Math.min(MAX_STORY_SECONDS, plan!.neededSeconds))}
               >
                 Make it {Math.min(MAX_STORY_SECONDS, plan!.neededSeconds)}s ·{" "}
-                {formatCost(storyCost(model.id, Math.round(Math.min(MAX_STORY_SECONDS, plan!.neededSeconds) / shotSeconds), sound, refs.length > 0))}
+                est. {formatCost(storyCost(model.id, Math.round(Math.min(MAX_STORY_SECONDS, plan!.neededSeconds) / shotSeconds), sound, refs.length > 0))}
               </button>
             </div>
           )
@@ -1555,11 +1543,11 @@ export default function Studio({ mode }: { mode: AppMode }) {
         <div className="segmented">
           <button className={sound ? "seg active" : "seg"} onClick={() => setSound(true)}>
             <strong>🔊 With sound</strong>
-            <span>{formatCost(costWith)}</span>
+            <span>est. {formatCost(costWith)}</span>
           </button>
           <button className={!sound ? "seg active" : "seg"} onClick={() => setSound(false)}>
             <strong>🔇 No sound</strong>
-            <span>{formatCost(costWithout)}</span>
+            <span>est. {formatCost(costWithout)}</span>
           </button>
         </div>
         {sound && (
@@ -1579,7 +1567,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
       {formError && <p className="error">{formError}</p>}
       {generateButton}
       <p className="hint">
-        {mode === "demo" ? `Free in demo mode (live cost ${formatCost(nowCost)}).` : `Estimated cost: ${formatCost(nowCost)}.`}{" "}
+        {mode === "demo" ? `Free in demo mode (live estimate ${formatCost(nowCost)}).` : `Estimated cost: ${formatCost(nowCost)}.`} {COST_NOTE}{" "}
         <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Enter</kbd> to generate.
       </p>
     </div>
@@ -1589,7 +1577,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
     <details className="model-more">
       <summary>
         <span className="sub-label-inline">Model</span>
-        <strong>{isAuto ? `✦ Auto · ${quality === "draft" ? "Draft" : "Final"}` : model.name}</strong>
+        <strong>{isAuto ? "✦ Auto" : model.name}</strong>
         <span className="muted small">{isAuto ? ` uses ${model.name}` : ""}</span>
         <span className="model-more-cta">Change</span>
       </summary>
@@ -1744,12 +1732,6 @@ export default function Studio({ mode }: { mode: AppMode }) {
             {selected.modelName}
             {selected.autoReason && <span className="muted small"> (Auto: {selected.autoReason})</span>}
           </dd>
-          {selected.quality && (
-            <>
-              <dt>Quality</dt>
-              <dd>{selected.quality === "draft" ? "Draft" : "Final"}</dd>
-            </>
-          )}
           {selected.templateName && (
             <>
               <dt>Template</dt>
@@ -1839,7 +1821,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
             <select
               className="mini-select"
               aria-label="Model"
-              value={isAuto ? `auto:${quality}` : choice}
+              value={isAuto ? "auto:draft" : choice}
               onChange={(e) => {
                 const v = e.target.value;
                 if (v.startsWith("auto:")) {
@@ -1848,8 +1830,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
                 } else setChoice(v);
               }}
             >
-              <option value="auto:draft">✦ Auto · Draft</option>
-              <option value="auto:final">✦ Auto · Final</option>
+              <option value="auto:draft">✦ Auto</option>
               {models.map((m) => (
                 <option key={m.id} value={m.id}>
                   {m.name}
@@ -2243,7 +2224,7 @@ function PendingTile({ item }: { item: Item }) {
   const silentNeedsSound = item.kind === "video" && item.wantSound && !getModel(item.modelId)?.audio;
   const steps = silentNeedsSound ? 2 : 1;
   const step = item.stage === "sound" && steps === 2 ? 2 : 1;
-  const what = item.quality === "draft" ? "draft" : item.quality === "final" ? "final" : item.kind;
+  const what = item.kind;
   const view = item.requestId
     ? progressView({
         phase: item.phase ?? "queue",

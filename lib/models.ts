@@ -347,6 +347,23 @@ export function estimateCost(model: ModelInfo, duration?: number, sound = false)
   return unit * secs + (sound ? unitPrice(ADD_SOUND_MODEL) * secs : 0);
 }
 
-export function formatCost(usd: number): string {
-  return usd < 0.01 ? "under 1 cent" : "~$" + usd.toFixed(2);
+/**
+ * Prices are always shown as an estimated range, never one exact figure: what
+ * the AI services bill can differ a little from our estimate (prompt helpers,
+ * exact length, queue retries).
+ */
+export function costRange(usd: number): [number, number] {
+  const low = Math.max(0.01, Math.floor(usd * 0.9 * 100) / 100);
+  let high = Math.ceil(usd * 1.15 * 100) / 100;
+  if (high <= low) high = low + 0.01;
+  return [low, high];
 }
+
+export function formatCost(usd: number): string {
+  if (usd < 0.01) return "under 1 cent";
+  const [low, high] = costRange(usd);
+  return `$${low.toFixed(2)}–$${high.toFixed(2)}`;
+}
+
+/** One line to show near prices. */
+export const COST_NOTE = "Prices are estimates. The final cost may vary slightly.";

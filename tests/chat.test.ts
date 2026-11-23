@@ -20,3 +20,9 @@ assert.equal(nextLength(5, [15, 20, 30]), 15);
 assert.equal(nextLength(15, [15, 20, 30]), 20);
 assert.equal(nextLength(30, [15, 20, 30]), 30);
 console.log("chat tests passed");
+
+import { formatCost } from "../lib/models";
+assert.equal(formatCost(0.36), "$0.32–$0.42");
+assert.equal(formatCost(0.004), "under 1 cent");
+assert.match(formatCost(0.04), /^\$0\.03–\$0\.05$/);
+console.log("price range tests passed");

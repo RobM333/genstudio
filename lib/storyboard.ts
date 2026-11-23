@@ -17,6 +17,7 @@ Shot 1 starts at the very beginning of the story (for example the run-up before 
 Rules for each shot prompt:
 - Describe only what moves in that shot, in order, as it continues straight on from the previous shot's last frame.
 - Keep the same people, clothes, places and objects in every shot; never introduce new looks.
+- Anything that broke, spilled or changed in an earlier shot stays that way in every later shot; say so in each later shot (for example "the backboard frame is still empty, glass shards on the floor").
 - Each person keeps their own path and exit; nothing passes through anything else; nobody vanishes.
 - No real people, brands, teams or logos.
 - 20 to 50 words each.

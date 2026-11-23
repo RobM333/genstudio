@@ -9,7 +9,7 @@
 import type { ModelInfo } from "./models";
 
 const TIMEOUT_MS = 8000;
-export const DEFAULT_AVOID = "blur, distortion, morphing, changing faces or clothes, extra limbs, people passing through objects, smoke or dust clouds, text, logos";
+export const DEFAULT_AVOID = "blur, distortion, morphing, changing faces or clothes, extra limbs, people passing through objects, smoke or dust clouds, broken things repairing themselves, glass reassembling, text, logos";
 const MAX_LEN = 1500;
 
 export type Purpose = "direct" | "keyframe" | "animate" | "refix";
@@ -66,7 +66,8 @@ function timelineRules(seconds: number): string {
 - One clear action per beat, in order, sized to fit the time. If the idea has more than fits in ${seconds} seconds, keep the most important part, start it from its beginning, and say so in the note.
 - Camera: say the shot type and one camera move for the whole clip (for example "static wide shot" or "slow push-in"), unless a beat needs a change.
 - Physical realism: things obey gravity and real materials (glass breaks into sharp shards that fall and bounce, water splashes and drips, cloth moves with the body); no smoke, dust clouds or explosions unless asked.
-- Consistency locks: write one line starting "Keep consistent:" listing what must not change during the clip (same people, faces, outfit, colours, numbers, product shape and label, number of people, setting).`;
+- Consistency locks: write one line starting "Keep consistent:" listing what must not change during the clip (same people, faces, outfit, colours, numbers, product shape and label, number of people, setting).
+- State persistence: once something breaks, spills, tears, gets wet, lights up or changes, it STAYS that way until the end of the clip. Say it in the beat where it happens and again in the "Keep consistent:" line (for example "the backboard stays shattered with an empty frame after 3s"). Broken things never repair themselves.`;
 }
 
 /** How each video model likes to be prompted (from their own prompting guides). */
