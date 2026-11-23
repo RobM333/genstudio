@@ -13,6 +13,7 @@ import { progressView, type Phase } from "@/lib/progress";
 import ReferencesBox, { loadRefs, saveRefs, type RefItem } from "./ReferencesBox";
 import { addSoundTo, animateShot, joinShots, lastFrame, planStory, startPicture, type Story } from "./storyRunner";
 import { lengthAdvice, LONG_LENGTHS, MAX_STORY_SECONDS, type ShotPlan } from "@/lib/storyboard";
+import { nextLength, readChat } from "@/lib/chat";
 
 type Item = {
   id: string;
@@ -51,6 +52,27 @@ type Item = {
   refs?: RefItem[]; // the user's own reference pictures used for this picture
   story?: Story; // a longer video made from several linked shots
 };
+
+/** Something the chat offers to do, always shown with its price first. */
+type ChatAct =
+  | { type: "fix"; note: string; how: FixMode; newPrompt?: string }
+  | { type: "length"; seconds: number }
+  | { type: "final" }
+  | { type: "sound" }
+  | { type: "video" };
+type ChatOffer = { label: string; cost: number; act: ChatAct };
+type ChatMsg = {
+  id: string;
+  thread: string; // the first version this conversation is about
+  itemId: string; // the version that was showing when this was said
+  from: "you" | "ai";
+  text: string;
+  problems?: string[];
+  offers?: ChatOffer[];
+  state?: "open" | "done" | "cancelled" | "working";
+  at: number;
+};
+const CHAT_KEY = "genstudio.chat.v1";
 
 type KeyframePlan = {
   videoModelId: string;
@@ -159,7 +181,11 @@ export default function Studio({ mode }: { mode: AppMode }) {
   const [plan, setPlan] = useState<ShotPlan | null>(null);
   const [planFor, setPlanFor] = useState<string>("");
   const [storyLen, setStoryLen] = useState<number | null>(null); // null = one clip
-  const [showTemplates, setShowTemplates] = useState(false);
+  // Create starts as a guided form in the middle; once something is made, the result takes the middle.
+  const [composing, setComposing] = useState(true);
+  const [chat, setChat] = useState<ChatMsg[]>([]);
+  const [chatText, setChatText] = useState("");
+  const chatLog = useRef<HTMLDivElement>(null);
   const storyRuns = useRef(new Set<string>());
   const polling = useRef(new Set<string>());
 
@@ -212,8 +238,23 @@ export default function Studio({ mode }: { mode: AppMode }) {
   useEffect(() => {
     setItems(loadItems());
     setRefs(loadRefs());
+    try {
+      const raw = localStorage.getItem(CHAT_KEY);
+      const list = raw ? (JSON.parse(raw) as ChatMsg[]) : [];
+      if (Array.isArray(list)) setChat(list.map((m) => (m.state === "working" ? { ...m, state: "done" } : m)));
+    } catch {
+      // no saved chat
+    }
     setLoaded(true);
   }, []);
+  useEffect(() => {
+    if (!loaded) return;
+    try {
+      localStorage.setItem(CHAT_KEY, JSON.stringify(chat.slice(-300)));
+    } catch {
+      // storage full: the chat just won't be remembered
+    }
+  }, [chat, loaded]);
   useEffect(() => {
     if (loaded) saveRefs(refs);
   }, [refs, loaded]);
@@ -373,6 +414,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
     setItems((prev) => [item, ...prev]);
     setSelectedId(item.id);
     setView("create");
+    setComposing(false);
     submitStep(item, spec.modelId, spec.sourceUrl);
   }
 
@@ -599,6 +641,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
     setItems((prev) => [item, ...prev]);
     setSelectedId(item.id);
     setView("create");
+    setComposing(false);
     runStory(item);
   }
 
@@ -766,11 +809,21 @@ export default function Studio({ mode }: { mode: AppMode }) {
 
   function openItem(it: Item) {
     setSelectedId(it.id);
+    setComposing(false);
     go("create");
+  }
+
+  function newCreation() {
+    setTemplate(null);
+    setPrompt("");
+    setComposing(true);
+    go("create");
+    setTimeout(() => document.getElementById("prompt")?.focus(), 50);
   }
 
   function startTemplate(t: Template) {
     chooseTemplate(t);
+    setComposing(true);
     go("create");
   }
 
@@ -919,266 +972,716 @@ export default function Studio({ mode }: { mode: AppMode }) {
     </div>
   );
 
-  // ---------- the full settings panel (Create workspace) ----------
+  // ---------- chat about the selected result ----------
 
-  const composer = (
-    <section className="panel" aria-label="Create">
-      {kindTabs}
+  /** The first version of a picture or video; every fix and remake hangs off it. */
+  function rootOf(id: string): string {
+    let cur = items.find((x) => x.id === id);
+    const seen = new Set<string>();
+    while (cur?.parentId && !seen.has(cur.id)) {
+      seen.add(cur.id);
+      const parent = items.find((x) => x.id === cur!.parentId);
+      if (!parent) break;
+      cur = parent;
+    }
+    return cur?.id ?? id;
+  }
 
-      <div className="step">
-        <label className="step-head" htmlFor="prompt">
-          <span className="step-num">01</span> {template ? "Your prompt (edit freely)" : `Describe your ${kind}`}
-        </label>
-        <div className="prompt-box">
-          <textarea
-            id="prompt"
-            className="prompt"
-            rows={template ? 4 : 5}
-            maxLength={2000}
-            placeholder={EXAMPLES[kind][0]}
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) generate();
-            }}
-          />
-          <span className="prompt-count">{prompt.length}/2000</span>
+  const price = (c: number) => (mode === "demo" ? `nothing in demo mode (about ${formatCost(c)} live)` : `about ${formatCost(c)}`);
+
+  function say(thread: string, itemId: string, msg: Partial<ChatMsg> & { text: string }): string {
+    const id = crypto.randomUUID();
+    setChat((prev) => [...prev, { id, thread, itemId, from: "ai", at: Date.now(), ...msg }]);
+    return id;
+  }
+  function patchMsg(id: string, patch: Partial<ChatMsg>) {
+    setChat((prev) => prev.map((m) => (m.id === id ? { ...m, ...patch } : m)));
+  }
+
+  function fixCost(it: Item, how: FixMode): number {
+    if (it.story)
+      return storyCost(it.story.firstModelId, Math.max(1, it.story.shots.length || it.story.wantShots || 1), it.story.sound, !!it.story.refs?.length);
+    if (it.kind === "image")
+      return how === "remake"
+        ? estimateCost(it.refs?.length ? REFERENCE_IMAGE_MODEL : getModel(KEYFRAME_MODEL_ID)!)
+        : estimateCost(EDIT_IMAGE_MODEL);
+    const m = getModel(it.modelId);
+    return m ? estimateCost(m, it.duration, it.wantSound !== false) : 0;
+  }
+
+  function finalCost(draft: Item): number {
+    if (draft.refs?.length) return estimateCost(REFERENCE_IMAGE_MODEL);
+    const pick = pickModel({ kind: draft.kind, prompt: draft.prompt, quality: "final", aspectRatio: draft.aspectRatio });
+    const m = draft.purpose === "animate" ? animateModelFor(pick.model.id) : pick.model;
+    return estimateCost(m, fitDuration(m.durations, draft.duration), draft.kind === "video" && draft.wantSound !== false);
+  }
+
+  /** How a video gets to a new length: one clip if a model can do it, otherwise linked shots. */
+  function lengthPlan(it: Item, seconds: number) {
+    const base = it.story ? it.story.firstModelId : it.modelId;
+    const m = getModel(base);
+    const maxSingle = m?.durations ? Math.max(...m.durations) : 0;
+    const single = !it.story && !!m && seconds <= maxSingle;
+    const { seconds: shotLen } = storyModels(base);
+    const shots = Math.max(2, Math.round(seconds / shotLen));
+    const total = single ? fitDuration(m!.durations, seconds)! : shots * shotLen;
+    const snd = it.wantSound !== false;
+    const cost = single ? estimateCost(m!, total, snd) : storyCost(base, shots, snd, !!it.story?.refs?.length);
+    return { base, single, shots, total, cost };
+  }
+
+  function doLength(it: Item, seconds: number) {
+    const p = lengthPlan(it, seconds);
+    const note = `Made it ${p.total}s`;
+    if (p.single) {
+      runJob({
+        kind: "video",
+        modelId: it.modelId,
+        prompt: basePrompt(it),
+        aspectRatio: it.aspectRatio,
+        duration: p.total,
+        sound: it.wantSound !== false,
+        quality: it.quality,
+        autoReason: it.autoReason,
+        parentId: it.id,
+        templateName: it.templateName,
+        enhance: it.enhance !== false,
+        sourceUrl: it.purpose === "animate" ? it.sourceUrl : undefined,
+        purpose: it.purpose === "animate" ? "animate" : undefined,
+        fixNote: note,
+      });
+    } else {
+      startStory(basePrompt(it), [], p.shots, {
+        refs: it.story?.refs as RefItem[] | undefined,
+        parentId: it.id,
+        fixNote: note,
+        videoModelId: p.base,
+        sound: it.wantSound !== false,
+        aspectRatio: it.aspectRatio,
+        templateName: it.templateName,
+      });
+    }
+  }
+
+  function videoFromPicture(pic: Item) {
+    const pick = pickModel({ kind: "video", prompt: basePrompt(pic), quality: "draft", aspectRatio: pic.aspectRatio });
+    const m = animateModelFor(pick.model.id);
+    const d = m.durations?.[0];
+    return { m, d, cost: estimateCost(m, d, true) };
+  }
+
+  function doVideo(pic: Item) {
+    if (!pic.url) return;
+    const { m, d } = videoFromPicture(pic);
+    runJob({
+      kind: "video",
+      modelId: m.id,
+      prompt: basePrompt(pic),
+      aspectRatio: m.aspectRatios.includes(pic.aspectRatio) ? pic.aspectRatio : m.aspectRatios[0],
+      duration: d,
+      sound: true,
+      quality: "draft",
+      autoReason: "brings your picture to life",
+      parentId: pic.id,
+      templateName: pic.templateName,
+      enhance: pic.enhance !== false,
+      sourceUrl: pic.url,
+      purpose: "animate",
+    });
+  }
+
+  function checkItem(it: Item, thread: string) {
+    const cost = it.kind === "image" ? 0.01 : 0.01 * Math.ceil((it.duration ?? 5) / 5);
+    const id = say(thread, it.id, {
+      text: `Looking closely at every part${it.kind === "video" ? ", right to the last frame" : ""}. This costs ${price(cost)}.`,
+      state: "working",
+    });
+    analyzeItem(it)
+      .then((a) => {
+        patchMsg(id, { state: "done" });
+        if (a.problems.length === 0) {
+          say(thread, it.id, { text: "I couldn't spot any clear problems. Tell me what you'd like changed and I'll fix it." });
+          return;
+        }
+        const note = it.kind === "image" && a.fix ? a.fix : a.problems.join(" ");
+        const how: FixMode = it.kind === "image" ? suggestFixMode(note) : "edit";
+        say(thread, it.id, {
+          text: "Here's what I found. Want me to fix it?",
+          problems: a.problems,
+          offers: [{ label: "🔧 Fix these", cost: fixCost(it, how), act: { type: "fix", note, how, newPrompt: it.kind === "video" ? a.prompt : undefined } }],
+          state: "open",
+        });
+      })
+      .catch((e) => {
+        patchMsg(id, { state: "done" });
+        say(thread, it.id, { text: (e as Error).message || "The check didn't work. Please try again." });
+      });
+  }
+
+  /** Reads a chat message, then offers the matching action with its price. Nothing is spent until it's accepted. */
+  function sendChat(raw: string) {
+    const text = raw.trim();
+    const it = selected;
+    if (!text || !it) return;
+    const thread = rootOf(it.id);
+    setChat((prev) => [...prev, { id: crypto.randomUUID(), thread, itemId: it.id, from: "you", text, at: Date.now() }]);
+    setChatText("");
+    const reply = (msg: Partial<ChatMsg> & { text: string }) => say(thread, it.id, msg);
+    if (it.status === "pending") {
+      reply({ text: "I'm still making this one. Ask me again once it's ready, or press ＋ New to start something else." });
+      return;
+    }
+    const intent = readChat(text, it.kind);
+    if (intent.type === "check") {
+      if (!it.url) reply({ text: "This one didn't finish, so there's nothing to check. Tell me what you'd like and I'll make it again." });
+      else checkItem(it, thread);
+      return;
+    }
+    if (intent.type === "length") {
+      const want = intent.seconds ?? nextLength(it.duration, LONG_LENGTHS);
+      const seconds = Math.min(MAX_STORY_SECONDS, Math.max(4, want));
+      const p = lengthPlan(it, seconds);
+      reply({
+        text: `${want > MAX_STORY_SECONDS ? `The longest we make is ${MAX_STORY_SECONDS} seconds. ` : ""}I can make it ${p.total} seconds from the same idea${
+          p.single ? "" : ", planned moment by moment so the whole action fits"
+        }. That costs ${price(p.cost)}.`,
+        offers: [{ label: `Make it ${p.total}s`, cost: p.cost, act: { type: "length", seconds } }],
+        state: "open",
+      });
+      return;
+    }
+    if (intent.type === "sound") {
+      if (it.hasAudio) reply({ text: "This video already has sound. Tell me what you'd like to change about it." });
+      else if (!it.url) reply({ text: "This one didn't finish, so there's nothing to add sound to yet." });
+      else {
+        const cost = estimateCost(ADD_SOUND_MODEL, it.duration);
+        reply({ text: `I'll add matching sound effects and ambience (not speech). That costs ${price(cost)}.`, offers: [{ label: "🔊 Add sound", cost, act: { type: "sound" } }], state: "open" });
+      }
+      return;
+    }
+    if (intent.type === "video") {
+      if (!it.url) {
+        reply({ text: "This picture didn't finish, so I can't turn it into a video yet." });
+        return;
+      }
+      const v = videoFromPicture(it);
+      reply({
+        text: `I'll bring this picture to life as a ${v.d}-second video with sound, using ${v.m.name.replace(" (animate)", "")}. That costs ${price(v.cost)}.`,
+        offers: [{ label: "🎬 Make the video", cost: v.cost, act: { type: "video" } }],
+        state: "open",
+      });
+      return;
+    }
+    if (intent.type === "final") {
+      if (it.quality !== "draft") reply({ text: "This is already made at full quality. Tell me what you'd like changed." });
+      else {
+        const cost = finalCost(it);
+        reply({ text: `I'll make it again with the best model, from the same idea. That costs ${price(cost)}.`, offers: [{ label: "✦ Make final version", cost, act: { type: "final" } }], state: "open" });
+      }
+      return;
+    }
+    const safety = checkPrompt(text);
+    if (!safety.ok) {
+      reply({ text: safety.reason ?? "I can't make that change." });
+      return;
+    }
+    if (it.kind === "image") {
+      const editOffer: ChatOffer = { label: "✏️ Change just that", cost: fixCost(it, "edit"), act: { type: "fix", note: text, how: "edit" } };
+      const remakeOffer: ChatOffer = { label: "🔄 Remake with the fix", cost: fixCost(it, "remake"), act: { type: "fix", note: text, how: "remake" } };
+      if (!it.url) {
+        reply({ text: `I'll make it again with your change. That costs ${price(remakeOffer.cost)}.`, offers: [remakeOffer], state: "open" });
+        return;
+      }
+      const how = suggestFixMode(text);
+      reply({
+        text:
+          how === "edit"
+            ? `I'll change just that and keep everything else the same. That costs ${price(editOffer.cost)}. If it needs a new angle or layout, pick Remake instead.`
+            : `That needs a fresh picture (new angle or layout), made from your idea plus the fix. That costs ${price(remakeOffer.cost)}.`,
+        offers: how === "edit" ? [editOffer, remakeOffer] : [remakeOffer, editOffer],
+        state: "open",
+      });
+      return;
+    }
+    const cost = fixCost(it, "edit");
+    reply({
+      text: `Videos can't be edited in place, so I'll make it again with your change${it.story ? ", shot by shot" : ""}. That costs ${price(cost)}.`,
+      offers: [{ label: "🔧 Remake with the fix", cost, act: { type: "fix", note: text, how: "edit" } }],
+      state: "open",
+    });
+  }
+
+  function acceptOffer(msg: ChatMsg, offer: ChatOffer) {
+    const it = items.find((x) => x.id === msg.itemId);
+    if (!it) {
+      say(msg.thread, msg.itemId, { text: "That version was deleted, so I can't change it." });
+      patchMsg(msg.id, { state: "cancelled" });
+      return;
+    }
+    const a = offer.act;
+    let err: string | null = null;
+    if (a.type === "fix") err = fixItem(it, a.note, a.newPrompt, a.how);
+    else if (a.type === "length") doLength(it, a.seconds);
+    else if (a.type === "final") makeFinal(it);
+    else if (a.type === "sound") addSound(it);
+    else if (a.type === "video") doVideo(it);
+    if (err) {
+      say(msg.thread, it.id, { text: err });
+      return;
+    }
+    patchMsg(msg.id, { state: "done" });
+    say(msg.thread, it.id, {
+      text:
+        a.type === "sound"
+          ? "Adding sound now. It plays in the middle when it's ready."
+          : "On it. The new version appears in the middle when it's ready, and every version stays in the strip under it.",
+    });
+  }
+
+  const thread = selected ? rootOf(selected.id) : "";
+  const threadMsgs = chat.filter((m) => m.thread === thread);
+  useEffect(() => {
+    const el = chatLog.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [threadMsgs.length, selectedId, composing]);
+
+  const chips: { label: string; text: string }[] = [];
+  if (selected?.status === "done" && selected.url) {
+    chips.push({ label: "🔍 Find what's wrong", text: "Find what's wrong" });
+    if (selected.kind === "video") {
+      const next = nextLength(selected.duration, LONG_LENGTHS);
+      if ((selected.duration ?? 0) < MAX_STORY_SECONDS) chips.push({ label: `⏱️ Make it ${next}s`, text: `Make it ${next} seconds` });
+      if (!selected.hasAudio) chips.push({ label: "🔊 Add sound", text: "Add sound" });
+    } else chips.push({ label: "🎬 Turn into a video", text: "Turn it into a video" });
+    if (selected.quality === "draft") chips.push({ label: "✦ Final version", text: "Make the final version" });
+  }
+
+  const chatPanel = selected && (
+    <div className="chat">
+      <div className="chat-log" ref={chatLog}>
+        <div className="chat-msg ai">
+          <p>
+            Tell me what to change, like{" "}
+            {selected.kind === "video"
+              ? "“make it slower”, “the dog should be brown” or “make it 15 seconds”"
+              : "“make it brighter” or “the text should say SALE”"}
+            . I always tell you the price before anything is made.
+          </p>
         </div>
-        <label className="enhance-toggle">
-          <input type="checkbox" checked={enhance} onChange={(e) => setEnhance(e.target.checked)} />
-          <span>
-            <strong>✨ Enhance my prompt</strong>
-            <span className="muted small">
-              {" "}
-              Adds lighting, camera and style details so results look more professional. Untick to use your exact words.
-            </span>
-          </span>
-        </label>
-        <ReferencesBox refs={refs} onChange={setRefs} mode={mode} />
-        {!template && (
-          <div className="examples">
-            <span className="examples-label">Try:</span>
-            {EXAMPLES[kind].map((ex) => (
-              <button key={ex} className="chip" onClick={() => setPrompt(ex)}>
-                {ex.length > 42 ? ex.slice(0, 40) + "..." : ex}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <div className="step" id="templates">
-        <button className="step-head step-toggle" onClick={() => setShowTemplates(!showTemplates)} aria-expanded={showTemplates || !!template}>
-          <span className="step-num">02</span> Use a template
-          <span className="step-opt">{showTemplates || template ? "▲ hide" : "optional ▼"}</span>
-        </button>
-        {(showTemplates || template) && <div className="templates">{kindTemplates.map(templateCard)}</div>}
-
-        {template && (
-          <div className="fields">
-            <div className="fields-head">
-              {template.emoji} {template.name}
-              <span className="fields-actions">
-                <button
-                  className="link"
-                  onClick={() => {
-                    const example = Object.fromEntries(template.fields.map((f) => [f.key, f.placeholder]));
-                    setFields(example);
-                    setPrompt(fillTemplate(template, example));
-                  }}
-                >
-                  Use this example
+        {threadMsgs.map((m) => (
+          <div key={m.id} className={`chat-msg ${m.from}`}>
+            <p>
+              {m.text}
+              {m.state === "working" && <span className="spinner tiny chat-spin" />}
+            </p>
+            {m.problems && (
+              <ul className="problems">
+                {m.problems.map((p) => (
+                  <li key={p}>{p}</li>
+                ))}
+              </ul>
+            )}
+            {m.offers && m.state === "open" && (
+              <div className="chat-offers">
+                {m.offers.map((o, i) => (
+                  <button key={o.label} className={i === 0 ? "pill active" : "pill"} onClick={() => acceptOffer(m, o)} disabled={mode === "locked"}>
+                    {o.label} · {mode === "demo" ? "Free" : formatCost(o.cost)}
+                  </button>
+                ))}
+                <button className="link-btn" onClick={() => patchMsg(m.id, { state: "cancelled" })}>
+                  No thanks
                 </button>
-                <button className="link" onClick={() => chooseTemplate(null)}>
-                  Clear
-                </button>
-              </span>
-            </div>
-            {template.fields.map((f) => (
-              <label key={f.key} className="field">
-                <span>{f.label}</span>
-                <input
-                  value={fields[f.key] ?? ""}
-                  placeholder={`e.g. ${f.placeholder}`}
-                  onChange={(e) => setField(f.key, e.target.value)}
-                />
-              </label>
-            ))}
+              </div>
+            )}
+            {m.state === "cancelled" && <span className="muted small">Skipped</span>}
           </div>
-        )}
+        ))}
       </div>
-
-      <div className="step">
-        <div className="step-head">
-          <span className="step-num">03</span> Model
-        </div>
-        <div className="models">
-          <button className={isAuto ? "model auto active" : "model auto"} onClick={() => setChoice(AUTO)}>
-            <span className="model-name">
-              <span className="spark" aria-hidden>
-                ✦
-              </span>{" "}
-              Auto <span className="tag tag-rec">Recommended</span>
-            </span>
-            <span className="model-tag">Picks the best model for each job, and saves money on drafts.</span>
-          </button>
-          {models.map((m) => (
-            <button
-              key={m.id}
-              className={!isAuto && m.id === model.id ? "model active" : "model"}
-              onClick={() => setChoice(m.id)}
-            >
-              <span className="model-name">
-                {m.name}
-                {m.kind === "video" && (
-                  <span className={m.audio ? "tag tag-sound" : "tag"}>{m.audio ? "🔊 Sound" : "🔇 Silent"}</span>
-                )}
-              </span>
-              <span className="model-tag">
-                {m.tagline}
-                {m.kind === "video" && !m.audio && <span className="sound-tag"> Sound can be added.</span>}
-              </span>
-              <span className="model-cost">{m.approxCost}</span>
+      {chips.length > 0 && (
+        <div className="chat-chips">
+          {chips.map((c) => (
+            <button key={c.label} className="chip" onClick={() => sendChat(c.text)}>
+              {c.label}
             </button>
           ))}
         </div>
+      )}
+      <form
+        className="chat-input"
+        onSubmit={(e) => {
+          e.preventDefault();
+          sendChat(chatText);
+        }}
+      >
+        <textarea
+          rows={2}
+          maxLength={500}
+          aria-label="Tell me what to change"
+          placeholder="Tell me what to change..."
+          value={chatText}
+          onChange={(e) => setChatText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              sendChat(chatText);
+            }
+          }}
+        />
+        <button type="submit" className="chat-send" disabled={!chatText.trim()} aria-label="Send">
+          ↑
+        </button>
+      </form>
+    </div>
+  );
 
-        {isAuto && (
-          <>
-            <div className="sub-label">Quality</div>
-            <div className="segmented">
-              <button className={quality === "draft" ? "seg active" : "seg"} onClick={() => setQuality("draft")}>
-                <strong>Draft</strong>
-                <span>Cheap preview</span>
-              </button>
-              <button className={quality === "final" ? "seg active" : "seg"} onClick={() => setQuality("final")}>
-                <strong>Final</strong>
-                <span>Best quality</span>
-              </button>
-            </div>
-            <p className="auto-pick">
-              <span className="spark" aria-hidden>
-                ✦
-              </span>{" "}
-              Auto will use <strong>{model.name}</strong>: {auto.reason}.
-            </p>
-          </>
-        )}
+  // ---------- the pieces of the Create form ----------
+
+  const describeBlock = (
+    <>
+    <div className="prompt-box">
+      <textarea
+        id="prompt"
+        className="prompt"
+        rows={template ? 4 : 5}
+        maxLength={2000}
+        placeholder={EXAMPLES[kind][0]}
+        value={prompt}
+        onChange={(e) => setPrompt(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) generate();
+        }}
+      />
+      <span className="prompt-count">{prompt.length}/2000</span>
+    </div>
+    <label className="enhance-toggle">
+      <input type="checkbox" checked={enhance} onChange={(e) => setEnhance(e.target.checked)} />
+      <span>
+        <strong>✨ Enhance my prompt</strong>
+        <span className="muted small">
+          {" "}
+          Adds lighting, camera and style details so results look more professional. Untick to use your exact words.
+        </span>
+      </span>
+    </label>
+    <ReferencesBox refs={refs} onChange={setRefs} mode={mode} />
+    {!template && (
+      <div className="examples">
+        <span className="examples-label">Try:</span>
+        {EXAMPLES[kind].map((ex) => (
+          <button key={ex} className="chip" onClick={() => setPrompt(ex)}>
+            {ex.length > 42 ? ex.slice(0, 40) + "..." : ex}
+          </button>
+        ))}
       </div>
+    )}
+    </>
+  );
 
-      <div className="step">
-        <div className="step-head">
-          <span className="step-num">04</span> Settings
+  const templateFields = (
+    <>
+      {template && (
+        <div className="fields">
+          <div className="fields-head">
+            {template.emoji} {template.name}
+            <span className="fields-actions">
+              <button
+                className="link"
+                onClick={() => {
+                  const example = Object.fromEntries(template.fields.map((f) => [f.key, f.placeholder]));
+                  setFields(example);
+                  setPrompt(fillTemplate(template, example));
+                }}
+              >
+                Use this example
+              </button>
+              <button className="link" onClick={() => chooseTemplate(null)}>
+                Clear
+              </button>
+            </span>
+          </div>
+          {template.fields.map((f) => (
+            <label key={f.key} className="field">
+              <span>{f.label}</span>
+              <input
+                value={fields[f.key] ?? ""}
+                placeholder={`e.g. ${f.placeholder}`}
+                onChange={(e) => setField(f.key, e.target.value)}
+              />
+            </label>
+          ))}
         </div>
-        <div className="row">
-          <div>
-            <div className="sub-label">Shape</div>
-            <div className="pills">
-              {shapes.map((ar) => (
-                <button key={ar} className={ar === aspectRatio ? "pill active" : "pill"} onClick={() => setAspectRatio(ar)}>
-                  <span className={`ar ar-${ar.replace(":", "x")}`} aria-hidden /> {ar}
+      )}
+    </>
+  );
+
+  const modelBlock = (
+    <>
+    <div className="models">
+      <button className={isAuto ? "model auto active" : "model auto"} onClick={() => setChoice(AUTO)}>
+        <span className="model-name">
+          <span className="spark" aria-hidden>
+            ✦
+          </span>{" "}
+          Auto <span className="tag tag-rec">Recommended</span>
+        </span>
+        <span className="model-tag">Picks the best model for each job, and saves money on drafts.</span>
+      </button>
+      {models.map((m) => (
+        <button
+          key={m.id}
+          className={!isAuto && m.id === model.id ? "model active" : "model"}
+          onClick={() => setChoice(m.id)}
+        >
+          <span className="model-name">
+            {m.name}
+            {m.kind === "video" && (
+              <span className={m.audio ? "tag tag-sound" : "tag"}>{m.audio ? "🔊 Sound" : "🔇 Silent"}</span>
+            )}
+          </span>
+          <span className="model-tag">
+            {m.tagline}
+            {m.kind === "video" && !m.audio && <span className="sound-tag"> Sound can be added.</span>}
+          </span>
+          <span className="model-cost">{m.approxCost}</span>
+        </button>
+      ))}
+    </div>
+
+    {isAuto && (
+      <>
+        <div className="sub-label">Quality</div>
+        <div className="segmented">
+          <button className={quality === "draft" ? "seg active" : "seg"} onClick={() => setQuality("draft")}>
+            <strong>Draft</strong>
+            <span>Cheap preview</span>
+          </button>
+          <button className={quality === "final" ? "seg active" : "seg"} onClick={() => setQuality("final")}>
+            <strong>Final</strong>
+            <span>Best quality</span>
+          </button>
+        </div>
+        <p className="auto-pick">
+          <span className="spark" aria-hidden>
+            ✦
+          </span>{" "}
+          Auto will use <strong>{model.name}</strong>: {auto.reason}.
+        </p>
+      </>
+    )}
+    </>
+  );
+
+  const settingsBlock = (
+    <>
+    <div className="row">
+      <div>
+        <div className="sub-label">Shape</div>
+        <div className="pills">
+          {shapes.map((ar) => (
+            <button key={ar} className={ar === aspectRatio ? "pill active" : "pill"} onClick={() => setAspectRatio(ar)}>
+              <span className={`ar ar-${ar.replace(":", "x")}`} aria-hidden /> {ar}
+            </button>
+          ))}
+        </div>
+      </div>
+      {model.durations && (
+        <div>
+          <div className="sub-label">Length</div>
+          <div className="pills">
+            {model.durations.map((d) => (
+              <button
+                key={d}
+                className={d === length && storyLen === null ? "pill active" : "pill"}
+                onClick={() => {
+                  setDuration(d);
+                  setStoryLen(null);
+                }}
+              >
+                {d}s
+              </button>
+            ))}
+            {kind === "video" &&
+              LONG_LENGTHS.map((d) => (
+                <button
+                  key={d}
+                  className={storyLen === d ? "pill active" : "pill"}
+                  title="Made from several linked shots"
+                  onClick={() => setStoryLen(d)}
+                >
+                  {d}s
                 </button>
               ))}
-            </div>
           </div>
-          {model.durations && (
-            <div>
-              <div className="sub-label">Length</div>
-              <div className="pills">
-                {model.durations.map((d) => (
-                  <button
-                    key={d}
-                    className={d === length && storyLen === null ? "pill active" : "pill"}
-                    onClick={() => {
-                      setDuration(d);
-                      setStoryLen(null);
-                    }}
-                  >
-                    {d}s
-                  </button>
-                ))}
-                {kind === "video" &&
-                  LONG_LENGTHS.map((d) => (
-                    <button
-                      key={d}
-                      className={storyLen === d ? "pill active" : "pill"}
-                      title="Made from several linked shots"
-                      onClick={() => setStoryLen(d)}
-                    >
-                      {d}s
-                    </button>
-                  ))}
-              </div>
-            </div>
-          )}
         </div>
+      )}
+    </div>
 
-        {kind === "video" && (
-          <>
-            {storyOn ? (
-              <div className="story-advice on">
-                <strong>
-                  🎞️ {storyShots * shotSeconds}-second video · {formatCost(nowCost)}
-                </strong>
-                <span className="muted small">
-                  We plan your idea moment by moment and make it as {storyShots} linked shots, each continuing from the last
-                  frame of the one before{sound ? ", then add one soundtrack" : ""}. You get one finished video.
-                </span>
-                <button className="link-btn" onClick={() => setStoryLen(null)}>
-                  Use one short clip instead
-                </button>
-              </div>
-            ) : (
-              lengthAdvice(plan, length) && (
-                <div className="story-advice">
-                  <span>⏱️ {lengthAdvice(plan, length)?.replace(/ We recommend \d+ linked shots\./, "")}</span>
-                  <button
-                    className="pill active"
-                    onClick={() => setStoryLen(Math.min(MAX_STORY_SECONDS, plan!.neededSeconds))}
-                  >
-                    Make it {Math.min(MAX_STORY_SECONDS, plan!.neededSeconds)}s ·{" "}
-                    {formatCost(storyCost(model.id, Math.round(Math.min(MAX_STORY_SECONDS, plan!.neededSeconds) / shotSeconds), sound, refs.length > 0))}
-                  </button>
-                </div>
-              )
-            )}
-            {!storyOn && sceneWarning(prompt) && <p className="notice warn small-notice">⚠️ {sceneWarning(prompt)}</p>}
-          </>
-        )}
-
-        {kind === "video" && (
-          <>
-            <div className="sub-label">Sound</div>
-            <div className="segmented">
-              <button className={sound ? "seg active" : "seg"} onClick={() => setSound(true)}>
-                <strong>🔊 With sound</strong>
-                <span>{formatCost(costWith)}</span>
-              </button>
-              <button className={!sound ? "seg active" : "seg"} onClick={() => setSound(false)}>
-                <strong>🔇 No sound</strong>
-                <span>{formatCost(costWithout)}</span>
+    {kind === "video" && (
+      <>
+        {storyOn ? (
+          <div className="story-advice on">
+            <strong>
+              🎞️ {storyShots * shotSeconds}-second video · {formatCost(nowCost)}
+            </strong>
+            <span className="muted small">
+              We plan your idea moment by moment and make it as {storyShots} linked shots, each continuing from the last
+              frame of the one before{sound ? ", then add one soundtrack" : ""}. You get one finished video.
+            </span>
+            <button className="link-btn" onClick={() => setStoryLen(null)}>
+              Use one short clip instead
+            </button>
+          </div>
+        ) : (
+          lengthAdvice(plan, length) && (
+            <div className="story-advice">
+              <span>⏱️ {lengthAdvice(plan, length)?.replace(/ We recommend \d+ linked shots\./, "")}</span>
+              <button
+                className="pill active"
+                onClick={() => setStoryLen(Math.min(MAX_STORY_SECONDS, plan!.neededSeconds))}
+              >
+                Make it {Math.min(MAX_STORY_SECONDS, plan!.neededSeconds)}s ·{" "}
+                {formatCost(storyCost(model.id, Math.round(Math.min(MAX_STORY_SECONDS, plan!.neededSeconds) / shotSeconds), sound, refs.length > 0))}
               </button>
             </div>
-            {sound && (
-              <p className="auto-pick">
-                {model.audio
-                  ? `${model.name} makes its own sound, including speech.`
-                  : `${model.name} is silent, so we add matching sound effects and ambience after (not speech). For speech, use Google Veo 3.`}
-              </p>
-            )}
-          </>
+          )
+        )}
+        {!storyOn && sceneWarning(prompt) && <p className="notice warn small-notice">⚠️ {sceneWarning(prompt)}</p>}
+      </>
+    )}
+
+    {kind === "video" && (
+      <>
+        <div className="sub-label">Sound</div>
+        <div className="segmented">
+          <button className={sound ? "seg active" : "seg"} onClick={() => setSound(true)}>
+            <strong>🔊 With sound</strong>
+            <span>{formatCost(costWith)}</span>
+          </button>
+          <button className={!sound ? "seg active" : "seg"} onClick={() => setSound(false)}>
+            <strong>🔇 No sound</strong>
+            <span>{formatCost(costWithout)}</span>
+          </button>
+        </div>
+        {sound && (
+          <p className="auto-pick">
+            {model.audio
+              ? `${model.name} makes its own sound, including speech.`
+              : `${model.name} is silent, so we add matching sound effects and ambience after (not speech). For speech, use Google Veo 3.`}
+          </p>
+        )}
+      </>
+    )}
+    </>
+  );
+
+  const generateBar = (
+    <div className="generate-bar">
+      {formError && <p className="error">{formError}</p>}
+      {generateButton}
+      <p className="hint">
+        {mode === "demo" ? `Free in demo mode (live cost ${formatCost(nowCost)}).` : `Estimated cost: ${formatCost(nowCost)}.`}{" "}
+        <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Enter</kbd> to generate.
+      </p>
+    </div>
+  );
+
+  const modelSummary = (
+    <details className="model-more">
+      <summary>
+        <span className="sub-label-inline">Model</span>
+        <strong>{isAuto ? `✦ Auto · ${quality === "draft" ? "Draft" : "Final"}` : model.name}</strong>
+        <span className="muted small">{isAuto ? ` uses ${model.name}` : ""}</span>
+        <span className="model-more-cta">Change</span>
+      </summary>
+      {modelBlock}
+    </details>
+  );
+
+  // ---------- Create, step by step in the middle of the page ----------
+
+  const guided = (
+    <div className="guided" aria-label="Create">
+      <div className="guided-head">
+        <h1>
+          Make something <em>new</em>
+        </h1>
+        <p className="muted">Four quick steps. Everything already has a good default, so you can go straight to Generate.</p>
+        {selected && (
+          <button className="link-btn" onClick={() => setComposing(false)}>
+            ← Back to your last result
+          </button>
         )}
       </div>
 
-      <div className="generate-bar">
-        {formError && <p className="error">{formError}</p>}
-        {generateButton}
-        <p className="hint">
-          {mode === "demo" ? `Free in demo mode (live cost ${formatCost(nowCost)}).` : `Estimated cost: ${formatCost(nowCost)}.`}{" "}
-          <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Enter</kbd> to generate.
-        </p>
-      </div>
-    </section>
+      <section className="g-step">
+        <div className="g-head">
+          <span className="g-num">1</span>
+          <h2>Image or video?</h2>
+        </div>
+        {kindTabs}
+      </section>
+
+      <section className="g-step">
+        <div className="g-head">
+          <span className="g-num">2</span>
+          <h2>{template ? `${template.emoji} ${template.name}: fill in the blanks` : `Describe your ${kind}`}</h2>
+        </div>
+        {template ? (
+          <>
+            {templateFields}
+            <label className="sub-label" htmlFor="prompt">
+              Your prompt (edit freely)
+            </label>
+            {describeBlock}
+          </>
+        ) : (
+          <>
+            {describeBlock}
+            <div className="g-or">
+              <span>or start from a template</span>
+            </div>
+            <div className="templates g-templates" id="templates">
+              {kindTemplates.map(templateCard)}
+            </div>
+          </>
+        )}
+      </section>
+
+      <section className="g-step">
+        <div className="g-head">
+          <span className="g-num">3</span>
+          <h2>Options</h2>
+          <span className="step-opt">already set, change if you like</span>
+        </div>
+        {settingsBlock}
+        {modelSummary}
+      </section>
+
+      <section className="g-step g-go">
+        <div className="g-head">
+          <span className="g-num">4</span>
+          <h2>Generate</h2>
+        </div>
+        {generateBar}
+      </section>
+    </div>
+  );
+
+  // ---------- after something is made: tweak settings and chat on the right ----------
+
+  const sideSettings = (
+    <details className="side-settings">
+      <summary>✏️ Prompt and settings for a new {kind}</summary>
+      {kindTabs}
+      <label className="sub-label" htmlFor="prompt">
+        Describe your {kind}
+      </label>
+      {describeBlock}
+      {template && templateFields}
+      {settingsBlock}
+      {modelSummary}
+      {generateBar}
+    </details>
   );
 
   // ---------- the selected result, shown large ----------
@@ -1278,18 +1781,6 @@ export default function Studio({ mode }: { mode: AppMode }) {
         {selected.story && selected.status !== "done" && (
           <StoryPanel item={selected} running={storyRuns.current.has(selected.id)} onResume={runStory} />
         )}
-        {selected.status === "done" && selected.url && <FixBox key={selected.id} item={selected} onFix={fixItem} />}
-        {selected.quality === "draft" && selected.status === "done" && <FinalButton draft={selected} onClick={makeFinal} />}
-        {selected.kind === "video" && selected.status === "done" && !selected.hasAudio && selected.url && (
-          <div className="final-box">
-            <button className="btn" onClick={() => addSound(selected)}>
-              🔊 Add sound
-            </button>
-            <p className="hint">
-              Adds matching sound effects and ambience. About {formatCost(estimateCost(ADD_SOUND_MODEL, selected.duration))}.
-            </p>
-          </div>
-        )}
         <div className="viewer-actions">
           {selected.url && (
             <button className="btn btn-light" onClick={() => download(selected)}>
@@ -1309,7 +1800,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
     <div className="canvas-empty">
       <LogoMark size={44} />
       <h3>Your creation will appear here</h3>
-      <p className="muted">Pick a template or describe what you want on the right, then press Generate.</p>
+      <p className="muted">Describe what you want or pick a template, then press Generate.</p>
     </div>
   );
 
@@ -1389,7 +1880,13 @@ export default function Studio({ mode }: { mode: AppMode }) {
             >
               {enhance ? "✨ Enhance on" : "✨ Enhance off"}
             </button>
-            <button className="link" onClick={() => go("create")}>
+            <button
+              className="link"
+              onClick={() => {
+                setComposing(true);
+                go("create");
+              }}
+            >
               More settings
             </button>
           </div>
@@ -1424,14 +1921,26 @@ export default function Studio({ mode }: { mode: AppMode }) {
     </div>
   );
 
-  const createView = (
-    <div className="workspace">
-      <div className="workspace-main">
-        {stage}
+  const createView =
+    composing || !selected ? (
+      guided
+    ) : (
+      <div className="workspace">
+        <div className="workspace-main">{stage}</div>
+        <div className="workspace-side">
+          <section className="panel side-panel" aria-label="Chat about this result">
+            <div className="side-top">
+              <strong>Keep going</strong>
+              <button className="btn" onClick={newCreation}>
+                ＋ New
+              </button>
+            </div>
+            {sideSettings}
+            {chatPanel}
+          </section>
+        </div>
       </div>
-      <div className="workspace-side">{composer}</div>
-    </div>
-  );
+    );
 
   const templatesView = (
     <div className="page">
@@ -1500,12 +2009,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
 
         <button
           className="new-btn"
-          onClick={() => {
-            setTemplate(null);
-            setPrompt("");
-            go("home");
-            setTimeout(() => document.getElementById("home-prompt")?.focus(), 50);
-          }}
+          onClick={newCreation}
         >
           <span aria-hidden>+</span> New creation
         </button>
@@ -1793,136 +2297,25 @@ function suggestFixMode(note: string): FixMode {
     : "edit";
 }
 
-function FixBox({
-  item,
-  onFix,
-}: {
-  item: Item;
-  onFix: (it: Item, note: string, newPrompt?: string, how?: FixMode) => string | null;
-}) {
-  const [note, setNote] = useState("");
-  const [picked, setPicked] = useState<FixMode | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [analysis, setAnalysis] = useState<Analysis | null>(null);
-  const [analyzing, setAnalyzing] = useState(false);
-  const m = getModel(item.modelId);
-  const isImage = item.kind === "image";
-  const how: FixMode = picked ?? suggestFixMode(note);
-  const cost = isImage
-    ? how === "remake"
-      ? estimateCost(getModel(KEYFRAME_MODEL_ID)!)
-      : estimateCost(EDIT_IMAGE_MODEL)
-    : m
-      ? estimateCost(m, item.duration, item.wantSound !== false)
-      : 0;
-  const analyzeCost = isImage ? 0.01 : 0.01 * Math.ceil((item.duration ?? 5) / 5);
-
-  async function analyze() {
-    setError(null);
-    setAnalyzing(true);
-    try {
-      const res = await fetch("/api/analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ kind: item.kind, url: item.url, prompt: basePrompt(item) }),
-      });
-      let data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error ?? "Couldn't analyze this.");
-      const started = Date.now();
-      while (data.status !== "COMPLETED") {
-        if (data.status === "FAILED") throw new Error(data.error ?? "The analysis failed.");
-        if (Date.now() - started > 3 * 60 * 1000) throw new Error("The analysis took too long. Try again.");
-        await new Promise((r) => setTimeout(r, 2000));
-        const r = await fetch(`/api/analyze?kind=${item.kind}&requestId=${encodeURIComponent(data.requestId)}`);
-        const next = await r.json().catch(() => ({}));
-        data = { ...next, requestId: data.requestId };
-      }
-      const a = data.analysis as Analysis;
-      setAnalysis(a);
-      if (a.problems.length === 0) setError("No clear problems found. Describe what you'd like changed.");
-      else setNote(isImage && a.fix ? a.fix : a.problems.join(" "));
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setAnalyzing(false);
-    }
+/** Asks the vision model to look for mistakes in a finished picture or video (about 1 cent per 5 seconds). */
+async function analyzeItem(item: Item): Promise<Analysis> {
+  const res = await fetch("/api/analyze", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ kind: item.kind, url: item.url, prompt: basePrompt(item) }),
+  });
+  let data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error ?? "Couldn't check this.");
+  const started = Date.now();
+  while (data.status !== "COMPLETED") {
+    if (data.status === "FAILED") throw new Error(data.error ?? "The check failed.");
+    if (Date.now() - started > 3 * 60 * 1000) throw new Error("The check took too long. Try again.");
+    await new Promise((r) => setTimeout(r, 2000));
+    const r = await fetch(`/api/analyze?kind=${item.kind}&requestId=${encodeURIComponent(data.requestId)}`);
+    const next = await r.json().catch(() => ({}));
+    data = { ...next, requestId: data.requestId };
   }
-
-  return (
-    <div className="fix-box">
-      <label className="label" htmlFor="fix-note">
-        Something not right?
-      </label>
-      <button className="pill" onClick={analyze} disabled={analyzing}>
-        {analyzing ? "Looking closely..." : `🔍 Find what's wrong (${formatCost(analyzeCost)})`}
-      </button>
-      {analysis && analysis.problems.length > 0 && (
-        <ul className="problems">
-          {analysis.problems.map((p) => (
-            <li key={p}>{p}</li>
-          ))}
-        </ul>
-      )}
-      <textarea
-        id="fix-note"
-        className="prompt fix-input"
-        rows={3}
-        maxLength={500}
-        placeholder={isImage ? 'e.g. The text should say "I TRIED IT", not IT twice' : "e.g. The hoop should be on the right and the boy should face the court"}
-        value={note}
-        onChange={(e) => setNote(e.target.value)}
-      />
-      {isImage && (
-        <div className="segmented fix-mode">
-          <button className={how === "edit" ? "seg active" : "seg"} onClick={() => setPicked("edit")}>
-            <strong>✏️ Change one part</strong>
-            <span>keeps the rest</span>
-          </button>
-          <button className={how === "remake" ? "seg active" : "seg"} onClick={() => setPicked("remake")}>
-            <strong>🔄 Remake with fix</strong>
-            <span>new angle or layout</span>
-          </button>
-        </div>
-      )}
-      {error && <p className="error">{error}</p>}
-      <button
-        className="pill active"
-        onClick={() =>
-          setError(onFix(item, note, !isImage && analysis?.prompt ? analysis.prompt : undefined, isImage ? how : "edit"))
-        }
-      >
-        🔧 Fix this
-      </button>
-      <p className="hint">
-        {isImage
-          ? how === "remake"
-            ? "Makes a fresh picture from your original idea plus your fix, so the camera angle and who stands where can change. "
-            : "Changes just what you describe and keeps everything else, including the camera angle. "
-          : item.purpose === "animate"
-            ? "Makes the video again from the same picture, with your note. "
-            : "Videos can't be edited in place, so we make it again with your note. "}
-        About {formatCost(cost)}.
-      </p>
-    </div>
-  );
-}
-
-function FinalButton({ draft, onClick }: { draft: Item; onClick: (d: Item) => void }) {
-  const pick = pickModel({ kind: draft.kind, prompt: draft.prompt, quality: "final", aspectRatio: draft.aspectRatio });
-  const d = pick.model.durations?.find((x) => x >= (draft.duration ?? 0)) ?? pick.model.durations?.[0];
-  return (
-    <div className="final-box">
-      <button className="generate small" onClick={() => onClick(draft)}>
-        <span className="spark" aria-hidden>
-          ✦
-        </span>{" "}
-        Make final version
-      </button>
-      <p className="hint">
-        Re-creates this with {pick.model.name} ({pick.reason}). About {formatCost(estimateCost(pick.model, d, draft.kind === "video" && draft.wantSound !== false))}.
-      </p>
-    </div>
-  );
+  return data.analysis as Analysis;
 }
 
 function ModeBadge({ mode }: { mode: AppMode }) {
@@ -1997,7 +2390,7 @@ function sceneWarning(prompt: string): string | null {
   const sentences = p.split(/[.!?]+\s/).filter((x) => x.trim().length > 3).length;
   const storyWords = (p.toLowerCase().match(/\b(then|after that|afterwards|later|meanwhile|while|as the|as he|as she|and you see|suddenly|finally)\b/g) ?? []).length;
   if (words > 35 || sentences >= 3 || storyWords >= 2 || (sentences >= 2 && storyWords >= 1)) {
-    return "This sounds like several moments. A 5 to 10 second clip can show about one, so we'll focus on the main moment. Picture first lets you check the layout before paying for video.";
+    return "This sounds like several moments. A 5 to 10 second clip can show about one, so we'll focus on the main moment, or pick a longer length to fit them all.";
   }
   return null;
 }
