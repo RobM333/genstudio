@@ -40,6 +40,20 @@ export function saveRefs(refs: RefItem[]) {
   }
 }
 
+/** Waits for the server's safety check of an uploaded picture; returns the signed picture. */
+export async function finishReference(data: { status?: string; requestId?: string; url?: string; checkToken?: string; token?: string }, kind: RefKindClient): Promise<{ url: string; token: string }> {
+  if (data.status === "COMPLETED") return { url: data.url!, token: data.token! };
+  const q = new URLSearchParams({ requestId: data.requestId ?? "", url: data.url ?? "", kind, checkToken: data.checkToken ?? "" });
+  for (let i = 0; i < 30; i++) {
+    await new Promise((r) => setTimeout(r, 2000));
+    const r = await fetch(`/api/reference?${q}`);
+    const done = await r.json().catch(() => ({}));
+    if (!r.ok || done.status === "REJECTED" || done.status === "FAILED") throw new Error(done.error ?? "Check failed.");
+    if (done.status === "COMPLETED") return { url: done.url, token: done.token };
+  }
+  throw new Error("The check took too long. Please try again.");
+}
+
 /** Shrinks very large photos in the browser so uploads stay quick and under the size limit. */
 async function shrink(file: File, keepPng: boolean): Promise<Blob> {
   if (file.size <= MAX_BYTES && file.type !== "image/heic") {
@@ -66,18 +80,27 @@ export default function ReferencesBox({
   refs,
   onChange,
   mode,
+  max = MAX,
+  kit,
+  onSave,
+  library,
 }: {
   refs: RefItem[];
   onChange: (refs: RefItem[]) => void;
   mode: AppMode;
+  max?: number;
+  kit?: RefItem[]; // the brand kit's pictures, one click to add
+  onSave?: (r: RefItem) => void; // saves a picture into the brand kit
+  library?: boolean; // shown on the brand kit page: names can be edited
 }) {
-  const [open, setOpen] = useState(refs.length > 0);
+  const [open, setOpen] = useState(refs.length > 0 || !!library || (kit?.length ?? 0) > 0);
   const [kind, setKind] = useState<RefKindClient>("product");
   const [consent, setConsent] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
-  const full = refs.length >= MAX;
+  const full = refs.length >= max;
+  const fromKit = (kit ?? []).filter((k) => !refs.some((r) => r.url === k.url));
 
   async function upload(file: File) {
     setError(null);
@@ -99,20 +122,10 @@ export default function ReferencesBox({
       const res = await fetch("/api/reference", { method: "POST", body: form });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error ?? "Upload failed.");
-      let done = data;
-      if (data.status !== "COMPLETED") {
-        setBusy("Checking the picture…");
-        const q = new URLSearchParams({ requestId: data.requestId, url: data.url, kind, checkToken: data.checkToken });
-        for (let i = 0; i < 30; i++) {
-          await new Promise((r) => setTimeout(r, 2000));
-          const r = await fetch(`/api/reference?${q}`);
-          done = await r.json().catch(() => ({}));
-          if (!r.ok || done.status === "REJECTED" || done.status === "FAILED") throw new Error(done.error ?? "Check failed.");
-          if (done.status === "COMPLETED") break;
-        }
-        if (done.status !== "COMPLETED") throw new Error("The check took too long. Please try again.");
-      }
-      onChange([...refs, { url: done.url, token: done.token, kind, name: file.name.slice(0, 60) }].slice(0, MAX));
+      if (data.status !== "COMPLETED") setBusy("Checking the picture…");
+      const done = await finishReference(data, kind);
+      const name = library ? (kind === "person" ? "" : file.name.replace(/\.[a-z]+$/i, "").slice(0, 40)) : file.name.slice(0, 60);
+      onChange([...refs, { url: done.url, token: done.token, kind, name }].slice(0, max));
     } catch (e) {
       setError((e as Error).message || "Upload failed.");
     } finally {
@@ -133,9 +146,11 @@ export default function ReferencesBox({
   return (
     <div className="refs-box">
       <div className="refs-head">
-        <strong>📎 Your references</strong>
+        <strong>{library ? "🖼️ Your pictures" : "📎 Your references"}</strong>
         <span className="muted small">
-          {refs.length > 0
+          {library
+            ? ` Up to ${max}. Name people (for example "Mia") so you can find them again. Pick them in any project with one click.`
+            : refs.length > 0
             ? " Used in your next picture. Videos start from that picture."
             : " Add up to 4 pictures. They're put into your ad exactly as they look."}
         </span>
@@ -147,7 +162,23 @@ export default function ReferencesBox({
             <figure key={r.url} className="ref-thumb">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={r.url} alt={`${r.kind} reference`} />
-              <figcaption>{KINDS.find((k) => k.kind === r.kind)?.label ?? r.kind}</figcaption>
+              {library ? (
+                <input
+                  className="ref-name"
+                  aria-label="Name"
+                  maxLength={40}
+                  placeholder={KINDS.find((k) => k.kind === r.kind)?.label ?? r.kind}
+                  value={r.name ?? ""}
+                  onChange={(e) => onChange(refs.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))}
+                />
+              ) : (
+                <figcaption>{r.kind === "person" && r.name ? `🙂 ${r.name}` : KINDS.find((k) => k.kind === r.kind)?.label ?? r.kind}</figcaption>
+              )}
+              {onSave && !kit?.some((k) => k.url === r.url) && (
+                <button className="ref-save" title="Save to your brand kit, to reuse in any project" onClick={() => onSave(r)}>
+                  ☆ Save
+                </button>
+              )}
               <button
                 className="ref-remove"
                 aria-label="Remove this reference"
@@ -157,6 +188,21 @@ export default function ReferencesBox({
               </button>
             </figure>
           ))}
+        </div>
+      )}
+
+      {!full && fromKit.length > 0 && (
+        <div className="refs-kit">
+          <span className="muted small">From your brand kit:</span>
+          <div className="refs-list">
+            {fromKit.map((k) => (
+              <button key={k.url} className="ref-thumb ref-pick" title="Use in this project" onClick={() => onChange([...refs, k].slice(0, max))}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={k.url} alt={`${k.kind} from your brand kit`} />
+                <span className="ref-pick-label">＋ {k.name || KINDS.find((x) => x.kind === k.kind)?.label}</span>
+              </button>
+            ))}
+          </div>
         </div>
       )}
 

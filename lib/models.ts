@@ -26,6 +26,7 @@ export type ModelInfo = {
     sourceUrl?: string;
     sound?: boolean;
     refUrls?: string[]; // the user's own reference pictures (product, logo, person)
+    avoid?: string; // things that must not appear (sent as a negative prompt where the model supports it)
   }) => Record<string, unknown>;
 };
 
@@ -118,10 +119,11 @@ export const MODELS: ModelInfo[] = [
     approxCost: "~$0.07 / second",
     durations: [5, 10],
     aspectRatios: ["16:9", "9:16", "1:1"],
-    buildInput: ({ prompt, aspectRatio, duration }) => ({
+    buildInput: ({ prompt, aspectRatio, duration, avoid }) => ({
       prompt,
       duration: String(duration ?? 5),
       aspect_ratio: aspectRatio,
+      ...(avoid ? { negative_prompt: avoid } : {}),
     }),
   },
   {
@@ -219,10 +221,11 @@ export const ANIMATE_MODELS: ModelInfo[] = [
     durations: [5, 10],
     aspectRatios: ["16:9", "9:16", "1:1"],
     takesImage: true,
-    buildInput: ({ prompt, duration, sourceUrl }) => ({
+    buildInput: ({ prompt, duration, sourceUrl, avoid }) => ({
       prompt,
       image_url: sourceUrl,
       duration: String(duration ?? 5),
+      ...(avoid ? { negative_prompt: avoid } : {}),
     }),
   },
   {
@@ -277,7 +280,73 @@ export const REFERENCE_IMAGE_MODEL: ModelInfo = {
   }),
 };
 
-const HIDDEN = [ADD_SOUND_MODEL, EDIT_IMAGE_MODEL, REFERENCE_IMAGE_MODEL, ...ANIMATE_MODELS];
+/** Storyboard helpers on fal (used through /api/tool, not the picker). */
+export const LAST_FRAME_MODEL: ModelInfo = {
+  id: "fal-ai/ffmpeg-api/extract-frame",
+  typicalSeconds: 8,
+  name: "Last frame",
+  kind: "image",
+  tagline: "Takes the last frame of a video so the next shot can continue from it.",
+  approxCost: "~$0.001",
+  aspectRatios: ["1:1", "16:9", "9:16"],
+  buildInput: ({ sourceUrl }) => ({ video_url: sourceUrl, frame_type: "last" }),
+};
+export const MERGE_VIDEOS_MODEL: ModelInfo = {
+  id: "fal-ai/ffmpeg-api/merge-videos",
+  typicalSeconds: 20,
+  name: "Join shots",
+  kind: "video",
+  tagline: "Joins the shots of a storyboard into one video.",
+  approxCost: "~$0.001",
+  aspectRatios: ["1:1", "16:9", "9:16"],
+  buildInput: () => ({}),
+};
+
+/** Full ad helpers (used through /api/tool). Prices checked on fal.ai 2026-11-23. */
+export const VOICE_MODEL: ModelInfo = {
+  id: "fal-ai/elevenlabs/tts/turbo-v2.5",
+  typicalSeconds: 8,
+  name: "Voiceover",
+  kind: "video",
+  tagline: "Reads the voiceover in a natural voice.",
+  approxCost: "~$0.05 / 1000 characters",
+  aspectRatios: ["1:1", "16:9", "9:16"],
+  buildInput: () => ({}),
+};
+export const MUSIC_MODEL: ModelInfo = {
+  id: "cassetteai/music-generator",
+  typicalSeconds: 20,
+  name: "Music",
+  kind: "video",
+  tagline: "Makes an instrumental music bed.",
+  approxCost: "~$0.02 / minute",
+  aspectRatios: ["1:1", "16:9", "9:16"],
+  buildInput: () => ({}),
+};
+export const COMPOSE_MODEL: ModelInfo = {
+  id: "fal-ai/ffmpeg-api/compose",
+  typicalSeconds: 25,
+  name: "Mix",
+  kind: "video",
+  tagline: "Mixes the video, voiceover and music into one file.",
+  approxCost: "~$0.0002 / second",
+  aspectRatios: ["1:1", "16:9", "9:16"],
+  buildInput: () => ({}),
+};
+
+/** Brings the ad's end card to life with a gentle, nearly still move ($0.02 per second). */
+export const CARD_MOTION_MODEL: ModelInfo = {
+  id: "fal-ai/ltxv-13b-098-distilled/image-to-video",
+  typicalSeconds: 40,
+  name: "End card",
+  kind: "video",
+  tagline: "Holds the end card on screen with a gentle move.",
+  approxCost: "~$0.02 / second",
+  aspectRatios: ["1:1", "16:9", "9:16"],
+  buildInput: () => ({}),
+};
+
+const HIDDEN = [ADD_SOUND_MODEL, EDIT_IMAGE_MODEL, REFERENCE_IMAGE_MODEL, LAST_FRAME_MODEL, MERGE_VIDEOS_MODEL, VOICE_MODEL, MUSIC_MODEL, COMPOSE_MODEL, CARD_MOTION_MODEL, ...ANIMATE_MODELS];
 
 export function getModel(id: string): ModelInfo | undefined {
   return MODELS.find((m) => m.id === id) ?? HIDDEN.find((m) => m.id === id);
@@ -301,7 +370,7 @@ export function isFalMediaUrl(url: string): boolean {
 export function extractMediaUrl(data: unknown): string | undefined {
   const d = data as Record<string, any> | null;
   if (!d) return undefined;
-  return d.images?.[0]?.url ?? d.image?.url ?? d.video?.url ?? d.videos?.[0]?.url;
+  return d.images?.[0]?.url ?? d.image?.url ?? d.video?.url ?? d.videos?.[0]?.url ?? d.video_url ?? d.audio?.url ?? d.audio_file?.url;
 }
 
 /** Rough USD per image, or per second for video, read from approxCost. */
@@ -322,6 +391,23 @@ export function estimateCost(model: ModelInfo, duration?: number, sound = false)
   return unit * secs + (sound ? unitPrice(ADD_SOUND_MODEL) * secs : 0);
 }
 
-export function formatCost(usd: number): string {
-  return usd < 0.01 ? "under 1 cent" : "~$" + usd.toFixed(2);
+/**
+ * Prices are always shown as an estimated range, never one exact figure: what
+ * the AI services bill can differ a little from our estimate (prompt helpers,
+ * exact length, queue retries).
+ */
+export function costRange(usd: number): [number, number] {
+  const low = Math.max(0.01, Math.floor(usd * 0.9 * 100) / 100);
+  let high = Math.ceil(usd * 1.15 * 100) / 100;
+  if (high <= low) high = low + 0.01;
+  return [low, high];
 }
+
+export function formatCost(usd: number): string {
+  if (usd < 0.01) return "under 1 cent";
+  const [low, high] = costRange(usd);
+  return `$${low.toFixed(2)}–$${high.toFixed(2)}`;
+}
+
+/** One line to show near prices. */
+export const COST_NOTE = "Prices are estimates. The final cost may vary slightly.";

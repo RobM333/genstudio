@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 const MAX_PROMPT = 2000;
 
 export async function POST(req: Request) {
-  let body: { modelId?: string; prompt?: string; aspectRatio?: string; duration?: number; sourceUrl?: string; sound?: boolean; enhance?: boolean; purpose?: string; refs?: { url?: string; kind?: string; token?: string }[] };
+  let body: { modelId?: string; prompt?: string; aspectRatio?: string; duration?: number; sourceUrl?: string; sound?: boolean; enhance?: boolean; purpose?: string; refs?: { url?: string; kind?: string; token?: string }[]; productUrl?: string; productToken?: string };
   try {
     body = await req.json();
   } catch {
@@ -28,7 +28,9 @@ export async function POST(req: Request) {
   const refs = rawRefs.map((r) => ({ url: String(r?.url ?? ""), kind: r?.kind, token: String(r?.token ?? "") }));
   if (refs.some((r) => !isRefKind(r.kind))) return NextResponse.json({ error: "Bad reference picture." }, { status: 400 });
   const refKinds = refs.map((r) => r.kind as RefKind);
-  if (refs.length > 0) {
+  // A product picture GenStudio made earlier (signed when it finished), reused so every scene of an ad shows the same product.
+  const productUrl = body.productUrl ? String(body.productUrl) : "";
+  if (refs.length > 0 || productUrl) {
     if (model.kind !== "image" || model.needsSource)
       return NextResponse.json({ error: "Reference pictures are used to make a picture first." }, { status: 400 });
     model = REFERENCE_IMAGE_MODEL;
@@ -74,14 +76,16 @@ export async function POST(req: Request) {
   let finalPrompt = prompt;
   let enhancedPrompt: string | undefined;
   let enhanceNote: string | undefined;
+  let avoid: string | undefined;
   if (body.enhance !== false && !model.needsSource) {
     const purpose =
       body.purpose === "refix" ? "refix" : body.purpose === "keyframe" ? "keyframe" : model.takesImage ? "animate" : "direct";
-    const e = await enhancePrompt(prompt, model, { live: mode === "live", sound: body.sound !== false, purpose, refKinds });
+    const e = await enhancePrompt(prompt, model, { live: mode === "live", sound: body.sound !== false, purpose, refKinds, seconds: duration });
     if (e.by !== "none" && checkPrompt(e.prompt).ok && (!refKinds.includes("person") || checkWithPersonPhoto(e.prompt).ok)) {
       finalPrompt = e.prompt;
       enhancedPrompt = e.prompt;
       enhanceNote = e.note;
+      avoid = e.avoid && checkPrompt(e.avoid).ok ? e.avoid : undefined;
     }
   }
 
@@ -92,6 +96,7 @@ export async function POST(req: Request) {
       status: "COMPLETED",
       demo: true,
       url: makeDemoMedia({ prompt, kind: model.kind, aspectRatio, modelName: model.name }),
+      resultToken: "demo",
       aspectRatio,
       duration,
       enhancedPrompt,
@@ -105,12 +110,14 @@ export async function POST(req: Request) {
   // Each reference must be one our safety check passed (signed by /api/reference).
   if (refs.some((r) => !isFalMediaUrl(r.url) || !verify(r.token, "ref", r.url, r.kind as string)))
     return NextResponse.json({ error: "Please upload your reference pictures again." }, { status: 400 });
-  const refUrls = refs.map((r) => r.url);
+  if (productUrl && (!isFalMediaUrl(productUrl) || !verify(String(body.productToken ?? ""), "result", productUrl)))
+    return NextResponse.json({ error: "That product picture can't be used." }, { status: 400 });
+  const refUrls = [...(productUrl ? [productUrl] : []), ...refs.map((r) => r.url)];
   if (refs.length > 0) finalPrompt = `${referenceInstructions(refKinds)}\n${finalPrompt}`;
 
   try {
     const { request_id } = await fal.queue.submit(model.id, {
-      input: model.buildInput({ prompt: finalPrompt, aspectRatio, duration, sourceUrl, sound: body.sound !== false, refUrls }),
+      input: model.buildInput({ prompt: finalPrompt, aspectRatio, duration, sourceUrl, sound: body.sound !== false, refUrls, avoid }),
     });
     return NextResponse.json({ status: "IN_QUEUE", requestId: request_id, modelId: model.id, aspectRatio, duration, enhancedPrompt, enhanceNote });
   } catch (err) {
