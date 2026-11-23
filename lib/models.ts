@@ -133,3 +133,18 @@ export function extractMediaUrl(data: unknown): string | undefined {
   if (!d) return undefined;
   return d.images?.[0]?.url ?? d.image?.url ?? d.video?.url ?? d.videos?.[0]?.url;
 }
+
+/** Rough USD per image, or per second for video, read from approxCost. */
+export function unitPrice(model: ModelInfo): number {
+  return parseFloat(model.approxCost.match(/[\d.]+/)?.[0] ?? "0");
+}
+
+/** Rough cost of one job in USD. */
+export function estimateCost(model: ModelInfo, duration?: number): number {
+  const unit = unitPrice(model);
+  return model.kind === "video" ? unit * (duration ?? model.durations?.[0] ?? 5) : unit;
+}
+
+export function formatCost(usd: number): string {
+  return usd < 0.01 ? "under 1 cent" : "~$" + usd.toFixed(2);
+}

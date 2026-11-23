@@ -1,7 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { MODELS, type AspectRatio, type MediaKind } from "@/lib/models";
+import { estimateCost, formatCost, getModel, MODELS, type AspectRatio, type MediaKind } from "@/lib/models";
+import { autoAspectRatios, pickModel, type Quality } from "@/lib/router";
+import { fillTemplate, TEMPLATES, type Template } from "@/lib/templates";
 import type { AppMode } from "@/lib/config";
 
 type Item = {
@@ -18,8 +20,25 @@ type Item = {
   error?: string;
   demo?: boolean;
   createdAt: number;
+  quality?: Quality; // set when Auto picked the model
+  autoReason?: string;
+  parentId?: string; // the draft this final was made from
+  templateName?: string;
 };
 
+type JobSpec = {
+  kind: MediaKind;
+  modelId: string;
+  prompt: string;
+  aspectRatio: AspectRatio;
+  duration?: number;
+  quality?: Quality;
+  autoReason?: string;
+  parentId?: string;
+  templateName?: string;
+};
+
+const AUTO = "auto";
 const STORAGE_KEY = "genstudio.gallery.v1";
 const MAX_ITEMS = 200;
 
@@ -56,17 +75,27 @@ function saveItems(items: Item[]) {
 export default function Studio({ mode }: { mode: AppMode }) {
   const [kind, setKind] = useState<MediaKind>("image");
   const models = useMemo(() => MODELS.filter((m) => m.kind === kind), [kind]);
-  const [modelId, setModelId] = useState(models[0].id);
-  const model = MODELS.find((m) => m.id === modelId) ?? models[0];
+  const [choice, setChoice] = useState<string>(AUTO); // "auto" or a model id
+  const [quality, setQuality] = useState<Quality>("draft");
   const [prompt, setPrompt] = useState("");
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>("1:1");
   const [duration, setDuration] = useState<number | undefined>(undefined);
+  const [template, setTemplate] = useState<Template | null>(null);
+  const [fields, setFields] = useState<Record<string, string>>({});
   const [items, setItems] = useState<Item[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [filter, setFilter] = useState<"all" | MediaKind>("all");
   const [open, setOpen] = useState<Item | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const polling = useRef(new Set<string>());
+
+  const isAuto = choice === AUTO;
+  const auto = pickModel({ kind, prompt, quality, aspectRatio });
+  const model = isAuto ? auto.model : (getModel(choice) ?? models[0]);
+  const shapes = isAuto ? autoAspectRatios(kind) : model.aspectRatios;
+  // The length to use right now (the stored one can lag a render behind a model change).
+  const length = model.durations ? (model.durations.includes(duration ?? -1) ? duration : model.durations[0]) : undefined;
+  const cost = estimateCost(model, length);
 
   // Load the saved gallery once, in the browser.
   useEffect(() => {
@@ -77,18 +106,22 @@ export default function Studio({ mode }: { mode: AppMode }) {
     if (loaded) saveItems(items);
   }, [items, loaded]);
 
-  // Keep model, size and length valid when switching between image and video.
+  // Keep choices valid when switching between image and video or between models.
   useEffect(() => {
-    if (!models.some((m) => m.id === modelId)) setModelId(models[0].id);
-  }, [models, modelId]);
+    if (choice !== AUTO && !models.some((m) => m.id === choice)) setChoice(AUTO);
+  }, [models, choice]);
   useEffect(() => {
-    if (!model.aspectRatios.includes(aspectRatio)) setAspectRatio(model.aspectRatios[0]);
-    if (model.durations && !model.durations.includes(duration ?? -1)) setDuration(model.durations[0]);
-    if (!model.durations) setDuration(undefined);
-  }, [model, aspectRatio, duration]);
+    if (!shapes.includes(aspectRatio)) setAspectRatio(shapes[0]);
+  }, [shapes, aspectRatio]);
+  useEffect(() => {
+    if (!model.durations) {
+      if (duration !== undefined) setDuration(undefined);
+    } else if (!model.durations.includes(duration ?? -1)) setDuration(model.durations[0]);
+  }, [model, duration]);
 
   const update = useCallback((id: string, patch: Partial<Item>) => {
     setItems((prev) => prev.map((it) => (it.id === id ? { ...it, ...patch } : it)));
+    setOpen((cur) => (cur && cur.id === id ? { ...cur, ...patch } : cur));
   }, []);
 
   const poll = useCallback(
@@ -124,41 +157,88 @@ export default function Studio({ mode }: { mode: AppMode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded]);
 
-  async function generate() {
+  async function runJob(spec: JobSpec) {
+    const m = getModel(spec.modelId)!;
+    const item: Item = { ...spec, id: crypto.randomUUID(), modelName: m.name, status: "pending", createdAt: Date.now() };
+    setItems((prev) => [item, ...prev]);
+    try {
+      const res = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          modelId: spec.modelId,
+          prompt: spec.prompt,
+          aspectRatio: spec.aspectRatio,
+          duration: spec.duration,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return update(item.id, { status: "failed", error: data.error ?? "Something went wrong." });
+      if (data.status === "COMPLETED")
+        return update(item.id, { status: "done", url: data.url, demo: data.demo, duration: data.duration });
+      update(item.id, { requestId: data.requestId as string, duration: data.duration });
+      poll({ ...item, requestId: data.requestId as string });
+    } catch {
+      update(item.id, { status: "failed", error: "Couldn't reach the server." });
+    }
+  }
+
+  function generate() {
     setFormError(null);
     const text = prompt.trim();
     if (!text) {
       setFormError("Describe what you want to create first.");
       return;
     }
-    const item: Item = {
-      id: crypto.randomUUID(),
-      kind: model.kind,
+    runJob({
+      kind,
       modelId: model.id,
-      modelName: model.name,
       prompt: text,
       aspectRatio,
-      duration,
-      status: "pending",
-      createdAt: Date.now(),
-    };
-    setItems((prev) => [item, ...prev]);
+      duration: length,
+      quality: isAuto ? quality : undefined,
+      autoReason: isAuto ? auto.reason : undefined,
+      templateName: template?.name,
+    });
+  }
 
-    try {
-      const res = await fetch("/api/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ modelId: model.id, prompt: text, aspectRatio, duration }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) return update(item.id, { status: "failed", error: data.error ?? "Something went wrong." });
-      if (data.status === "COMPLETED") return update(item.id, { status: "done", url: data.url, demo: data.demo });
-      const withRequest = { ...item, requestId: data.requestId as string };
-      update(item.id, { requestId: withRequest.requestId });
-      poll(withRequest);
-    } catch {
-      update(item.id, { status: "failed", error: "Couldn't reach the server." });
-    }
+  /** Re-runs a draft's prompt with the best model for a final version. */
+  function makeFinal(draft: Item) {
+    const pick = pickModel({ kind: draft.kind, prompt: draft.prompt, quality: "final", aspectRatio: draft.aspectRatio });
+    const d = pick.model.durations
+      ? (pick.model.durations.find((x) => x >= (draft.duration ?? 0)) ?? pick.model.durations[0])
+      : undefined;
+    runJob({
+      kind: draft.kind,
+      modelId: pick.model.id,
+      prompt: draft.prompt,
+      aspectRatio: pick.model.aspectRatios.includes(draft.aspectRatio) ? draft.aspectRatio : pick.model.aspectRatios[0],
+      duration: d,
+      quality: "final",
+      autoReason: pick.reason,
+      parentId: draft.id,
+      templateName: draft.templateName,
+    });
+    setOpen(null);
+  }
+
+  function chooseTemplate(t: Template | null) {
+    setTemplate(t);
+    setFormError(null);
+    if (!t) return;
+    const empty: Record<string, string> = {};
+    setFields(empty);
+    setKind(t.kind);
+    setAspectRatio(t.aspectRatio);
+    setChoice(AUTO);
+    setPrompt(fillTemplate(t, empty));
+  }
+
+  function setField(key: string, value: string) {
+    if (!template) return;
+    const next = { ...fields, [key]: value };
+    setFields(next);
+    setPrompt(fillTemplate(template, next));
   }
 
   function remove(id: string) {
@@ -168,6 +248,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
 
   const shown = items.filter((it) => filter === "all" || it.kind === filter);
   const pendingCount = items.filter((it) => it.status === "pending").length;
+  const kindTemplates = TEMPLATES.filter((t) => t.kind === kind);
 
   return (
     <div className="shell">
@@ -200,20 +281,56 @@ export default function Studio({ mode }: { mode: AppMode }) {
                 role="tab"
                 aria-selected={kind === k}
                 className={kind === k ? "tab active" : "tab"}
-                onClick={() => setKind(k)}
+                onClick={() => {
+                  setKind(k);
+                  if (template && template.kind !== k) setTemplate(null);
+                }}
               >
                 {k === "image" ? "Image" : "Video"}
               </button>
             ))}
           </div>
 
+          <div className="label">Start from a template</div>
+          <div className="templates">
+            {kindTemplates.map((t) => (
+              <button
+                key={t.id}
+                className={template?.id === t.id ? "template active" : "template"}
+                onClick={() => chooseTemplate(template?.id === t.id ? null : t)}
+                title={t.use}
+              >
+                <span className="template-emoji" aria-hidden>
+                  {t.emoji}
+                </span>
+                <span className="template-name">{t.name}</span>
+                <span className="template-use">{t.use}</span>
+              </button>
+            ))}
+          </div>
+
+          {template && (
+            <div className="fields">
+              {template.fields.map((f) => (
+                <label key={f.key} className="field">
+                  <span>{f.label}</span>
+                  <input
+                    value={fields[f.key] ?? ""}
+                    placeholder={f.placeholder}
+                    onChange={(e) => setField(f.key, e.target.value)}
+                  />
+                </label>
+              ))}
+            </div>
+          )}
+
           <label className="label" htmlFor="prompt">
-            Describe your {kind}
+            {template ? "Your prompt (edit freely)" : `Or describe your ${kind}`}
           </label>
           <textarea
             id="prompt"
             className="prompt"
-            rows={5}
+            rows={template ? 4 : 5}
             maxLength={2000}
             placeholder={EXAMPLES[kind][0]}
             value={prompt}
@@ -222,21 +339,28 @@ export default function Studio({ mode }: { mode: AppMode }) {
               if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) generate();
             }}
           />
-          <div className="examples">
-            {EXAMPLES[kind].map((ex) => (
-              <button key={ex} className="chip" onClick={() => setPrompt(ex)}>
-                {ex.length > 42 ? ex.slice(0, 40) + "..." : ex}
-              </button>
-            ))}
-          </div>
+          {!template && (
+            <div className="examples">
+              {EXAMPLES[kind].map((ex) => (
+                <button key={ex} className="chip" onClick={() => setPrompt(ex)}>
+                  {ex.length > 42 ? ex.slice(0, 40) + "..." : ex}
+                </button>
+              ))}
+            </div>
+          )}
 
           <div className="label">Model</div>
           <div className="models">
+            <button className={isAuto ? "model active" : "model"} onClick={() => setChoice(AUTO)}>
+              <span className="model-name">✨ Auto</span>
+              <span className="model-cost">recommended</span>
+              <span className="model-tag">Picks the best model for each job, and saves money on drafts.</span>
+            </button>
             {models.map((m) => (
               <button
                 key={m.id}
-                className={m.id === model.id ? "model active" : "model"}
-                onClick={() => setModelId(m.id)}
+                className={!isAuto && m.id === model.id ? "model active" : "model"}
+                onClick={() => setChoice(m.id)}
               >
                 <span className="model-name">{m.name}</span>
                 <span className="model-tag">{m.tagline}</span>
@@ -245,11 +369,30 @@ export default function Studio({ mode }: { mode: AppMode }) {
             ))}
           </div>
 
+          {isAuto && (
+            <>
+              <div className="label">Quality</div>
+              <div className="segmented">
+                <button className={quality === "draft" ? "seg active" : "seg"} onClick={() => setQuality("draft")}>
+                  <strong>Draft</strong>
+                  <span>Cheap preview</span>
+                </button>
+                <button className={quality === "final" ? "seg active" : "seg"} onClick={() => setQuality("final")}>
+                  <strong>Final</strong>
+                  <span>Best quality</span>
+                </button>
+              </div>
+              <p className="auto-pick">
+                Auto will use <strong>{model.name}</strong>: {auto.reason}.
+              </p>
+            </>
+          )}
+
           <div className="row">
             <div>
               <div className="label">Shape</div>
               <div className="pills">
-                {model.aspectRatios.map((ar) => (
+                {shapes.map((ar) => (
                   <button
                     key={ar}
                     className={ar === aspectRatio ? "pill active" : "pill"}
@@ -265,7 +408,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
                 <div className="label">Length</div>
                 <div className="pills">
                   {model.durations.map((d) => (
-                    <button key={d} className={d === duration ? "pill active" : "pill"} onClick={() => setDuration(d)}>
+                    <button key={d} className={d === length ? "pill active" : "pill"} onClick={() => setDuration(d)}>
                       {d}s
                     </button>
                   ))}
@@ -276,12 +419,12 @@ export default function Studio({ mode }: { mode: AppMode }) {
 
           {formError && <p className="error">{formError}</p>}
           <button className="generate" onClick={generate} disabled={mode === "locked"}>
-            Generate {kind}
+            {isAuto && quality === "draft" ? `Generate ${kind} draft` : `Generate ${kind}`}
             {pendingCount > 0 && <span className="count">{pendingCount} running</span>}
           </button>
           <p className="hint">
-            {mode === "demo" ? "Demo results are free." : `Estimated cost: ${model.approxCost}.`} Tip: Ctrl/⌘ + Enter
-            to generate.
+            {mode === "demo" ? `Free in demo mode (live cost ${formatCost(cost)}).` : `Estimated cost: ${formatCost(cost)}.`}{" "}
+            Ctrl/⌘ + Enter to generate.
           </p>
         </section>
 
@@ -300,7 +443,10 @@ export default function Studio({ mode }: { mode: AppMode }) {
           {loaded && shown.length === 0 && (
             <div className="empty">
               <p>Nothing here yet.</p>
-              <p className="muted">Write a prompt and press Generate. Your creations are saved in this browser.</p>
+              <p className="muted">
+                Pick a template or write a prompt, then press Generate. Start with a cheap draft, and make a final
+                version of the ones you like.
+              </p>
             </div>
           )}
 
@@ -308,14 +454,16 @@ export default function Studio({ mode }: { mode: AppMode }) {
             {shown.map((it) => (
               <button
                 key={it.id}
-                className={`tile ar-box-${it.aspectRatio.replace(":", "x")}`}
+                className="tile"
                 onClick={() => it.status !== "pending" && setOpen(it)}
                 title={it.prompt}
               >
                 {it.status === "pending" && (
                   <div className="tile-state">
                     <span className="spinner" aria-hidden />
-                    <span>Creating {it.kind}...</span>
+                    <span>
+                      Creating {it.quality === "draft" ? "draft" : it.quality === "final" ? "final" : it.kind}...
+                    </span>
                   </div>
                 )}
                 {it.status === "failed" && (
@@ -325,6 +473,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
                   </div>
                 )}
                 {it.status === "done" && it.url && <Media item={it} thumb />}
+                {it.quality && <span className={`tile-quality q-${it.quality}`}>{it.quality === "draft" ? "Draft" : "Final"}</span>}
                 <span className="tile-label">
                   {it.kind === "video" ? "▶ " : ""}
                   {it.modelName}
@@ -345,7 +494,22 @@ export default function Studio({ mode }: { mode: AppMode }) {
               <p className="viewer-prompt">{open.prompt}</p>
               <dl className="meta">
                 <dt>Model</dt>
-                <dd>{open.modelName}</dd>
+                <dd>
+                  {open.modelName}
+                  {open.autoReason && <span className="muted small"> (Auto: {open.autoReason})</span>}
+                </dd>
+                {open.quality && (
+                  <>
+                    <dt>Quality</dt>
+                    <dd>{open.quality === "draft" ? "Draft" : "Final"}</dd>
+                  </>
+                )}
+                {open.templateName && (
+                  <>
+                    <dt>Template</dt>
+                    <dd>{open.templateName}</dd>
+                  </>
+                )}
                 <dt>Shape</dt>
                 <dd>{open.aspectRatio}</dd>
                 {open.duration && (
@@ -357,6 +521,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
                 <dt>Made</dt>
                 <dd>{new Date(open.createdAt).toLocaleString()}</dd>
               </dl>
+              {open.quality === "draft" && open.status === "done" && <FinalButton draft={open} onClick={makeFinal} />}
               <div className="viewer-actions">
                 {open.url && (
                   <button className="pill active" onClick={() => download(open)}>
@@ -366,8 +531,11 @@ export default function Studio({ mode }: { mode: AppMode }) {
                 <button
                   className="pill"
                   onClick={() => {
+                    setTemplate(null);
                     setKind(open.kind);
-                    setModelId(open.modelId);
+                    setChoice(open.quality ? AUTO : open.modelId);
+                    if (open.quality) setQuality(open.quality);
+                    setAspectRatio(open.aspectRatio);
                     setPrompt(open.prompt);
                     setOpen(null);
                   }}
@@ -385,6 +553,21 @@ export default function Studio({ mode }: { mode: AppMode }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function FinalButton({ draft, onClick }: { draft: Item; onClick: (d: Item) => void }) {
+  const pick = pickModel({ kind: draft.kind, prompt: draft.prompt, quality: "final", aspectRatio: draft.aspectRatio });
+  const d = pick.model.durations?.find((x) => x >= (draft.duration ?? 0)) ?? pick.model.durations?.[0];
+  return (
+    <div className="final-box">
+      <button className="generate small" onClick={() => onClick(draft)}>
+        Make final version
+      </button>
+      <p className="hint">
+        Re-creates this with {pick.model.name} ({pick.reason}). About {formatCost(estimateCost(pick.model, d))}.
+      </p>
     </div>
   );
 }
