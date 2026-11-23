@@ -22,7 +22,8 @@ Rules:
 - Do not add any nudity, sexual content, violence or gore.
 - If the user's text is in quotes or they ask for words on screen, keep that text exactly, in quotes.
 - Never add any other words, slogans or captions to the image. If the user asked for no text, say "no text".
-- If the user names a real, famous person, describe them generically instead (for example "a legendary basketball player"), and say so in the note.
+- If the user names a real, famous person, describe them generically instead (for example "a tall basketball player"), and say so in the note. Never hint at who they are: no "legendary", no famous numbers, signature moves or team.
+- For sports, uniforms or products, invent plain team colours and a made-up name or none. Never use real teams, clubs, leagues, jersey numbers tied to famous players, or brand logos.
 - Write one paragraph, about 60 to 110 words, in plain English.`;
 
 const PLAIN_REPLY = "Reply with the prompt only. No title, no explanation, no quotes around the whole thing.";
