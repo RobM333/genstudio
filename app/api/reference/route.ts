@@ -3,6 +3,7 @@ import { getMode } from "@/lib/config";
 import { fal } from "@/lib/fal";
 import { IMAGE_ANALYZER } from "@/lib/analyze";
 import { isFalMediaUrl } from "@/lib/models";
+import { safeFetch } from "@/lib/safefetch";
 import { isRefKind, judgeRefCheck, MAX_REF_BYTES, refCheckInstructions, sign, verify } from "@/lib/references";
 
 export const dynamic = "force-dynamic";
@@ -20,22 +21,41 @@ function sniffImageType(b: Uint8Array): string | null {
 }
 
 export async function POST(req: Request) {
-  let form: FormData;
-  try {
-    form = await req.formData();
-  } catch {
-    return NextResponse.json({ error: "Bad request." }, { status: 400 });
+  let kind: unknown, consent: unknown, bytes: Uint8Array<ArrayBuffer>;
+  if ((req.headers.get("content-type") ?? "").includes("application/json")) {
+    // A picture from the user's own product page, fetched here.
+    let body: { imageUrl?: string; kind?: string; consent?: string };
+    try {
+      body = await req.json();
+    } catch {
+      return NextResponse.json({ error: "Bad request." }, { status: 400 });
+    }
+    kind = body.kind;
+    consent = body.consent;
+    if (consent !== "yes") return NextResponse.json({ error: "Please confirm this is your product and you may use its pictures." }, { status: 400 });
+    try {
+      bytes = (await safeFetch(String(body.imageUrl ?? ""), { maxBytes: MAX_REF_BYTES, accept: "image/png,image/jpeg,image/webp" })).bytes;
+    } catch (e) {
+      return NextResponse.json({ error: (e as Error).message === "That file is too big." ? "That picture is too big. Please use one under 4 MB." : "We couldn't get that picture." }, { status: 400 });
+    }
+  } else {
+    let form: FormData;
+    try {
+      form = await req.formData();
+    } catch {
+      return NextResponse.json({ error: "Bad request." }, { status: 400 });
+    }
+    kind = form.get("kind");
+    consent = form.get("consent");
+    const file = form.get("file");
+    if (consent !== "yes")
+      return NextResponse.json({ error: "Please confirm you own this picture or have permission from the person shown." }, { status: 400 });
+    if (!(file instanceof Blob) || file.size === 0) return NextResponse.json({ error: "No picture received." }, { status: 400 });
+    if (file.size > MAX_REF_BYTES) return NextResponse.json({ error: "That picture is too big. Please use one under 4 MB." }, { status: 413 });
+    bytes = new Uint8Array(await file.arrayBuffer());
   }
-  const kind = form.get("kind");
-  const consent = form.get("consent");
-  const file = form.get("file");
   if (!isRefKind(kind)) return NextResponse.json({ error: "Pick what this picture is." }, { status: 400 });
-  if (consent !== "yes")
-    return NextResponse.json({ error: "Please confirm you own this picture or have permission from the person shown." }, { status: 400 });
-  if (!(file instanceof Blob) || file.size === 0) return NextResponse.json({ error: "No picture received." }, { status: 400 });
-  if (file.size > MAX_REF_BYTES) return NextResponse.json({ error: "That picture is too big. Please use one under 4 MB." }, { status: 413 });
 
-  const bytes = new Uint8Array(await file.arrayBuffer());
   const type = sniffImageType(bytes);
   if (!type) return NextResponse.json({ error: "Please upload a PNG, JPG or WebP picture." }, { status: 400 });
 

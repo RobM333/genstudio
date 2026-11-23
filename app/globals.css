@@ -912,3 +912,55 @@ select.text-input { appearance: auto; }
 .error-text { color: var(--danger); }
 .ad-summary ol { margin: 8px 0; padding-left: 18px; display: grid; gap: 6px; line-height: 1.45; }
 .ad-review .chat-input { margin: 0; }
+
+/* ---------- Brand kit ---------- */
+.brand-chip { display: flex; gap: 10px; align-items: center; margin-top: 12px; font-size: 13px; cursor: pointer; flex-wrap: wrap; }
+.brand-chip input { accent-color: var(--iris); }
+.brand-dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-left: 6px; vertical-align: -1px; border: 1px solid var(--line-strong); }
+.brand-setup { margin-top: 12px; font-size: 13px; text-align: left; }
+.brand-colors { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 6px; }
+.brand-color { display: inline-flex; gap: 6px; align-items: center; padding: 4px 8px; border: 1px solid var(--line); border-radius: 999px; }
+.brand-color input[type="color"] { width: 28px; height: 28px; border: none; background: none; padding: 0; cursor: pointer; }
+.brand-preview em { color: var(--text); font-style: normal; }
+.ref-name {
+  width: 84px;
+  margin-top: 3px;
+  font-size: 11px;
+  padding: 3px 5px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--text);
+}
+.ref-save {
+  display: block;
+  width: 100%;
+  margin-top: 3px;
+  font-size: 11px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.ref-save:hover { color: var(--text); }
+.refs-kit { margin-bottom: 8px; }
+.refs-kit .refs-list { margin-top: 6px; }
+.ref-pick { padding: 0; border: none; background: transparent; color: var(--text); cursor: pointer; text-align: center; }
+.ref-pick img { opacity: 0.75; }
+.ref-pick:hover img,
+.ref-pick.picked img { opacity: 1; border-color: var(--iris); }
+.ref-pick-label { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ref-pick.picked .ref-pick-label { color: var(--text); }
+
+/* ---------- Product page link ---------- */
+.product-link { margin-bottom: 14px; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.product-link-row { display: flex; gap: 8px; }
+.product-link-row .text-input { flex: 1; min-width: 0; margin: 0; }
+.product-pics { margin-top: 10px; }
+.product-pics .refs-list { margin-top: 6px; }
+
+/* ---------- Full ad quality check ---------- */
+.check-toggle { display: flex; gap: 10px; align-items: flex-start; margin-bottom: 14px; cursor: pointer; line-height: 1.45; text-align: left; }
+.check-toggle input { margin-top: 4px; accent-color: var(--iris); }
+.check-log { margin-top: 10px; }
+.check-log ul { margin: 6px 0 0; padding-left: 18px; }

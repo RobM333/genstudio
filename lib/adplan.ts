@@ -21,7 +21,9 @@ export type AdPlan = {
   seconds: number;
 };
 
-export type AdBrief = { product: string; audience: string; seconds: number; tone: string; refKinds?: string[] };
+import { brandLine, type BrandInfo } from "./brand";
+
+export type AdBrief = { product: string; audience: string; seconds: number; tone: string; refKinds?: string[]; brand?: BrandInfo };
 
 export const AD_LENGTHS = [15, 30, 60] as const;
 export const AD_TONES = ["Friendly", "Premium", "Energetic", "Funny", "Calm"] as const;
@@ -55,8 +57,9 @@ export function adPlanInstructions(brief: AdBrief): string {
   const refs = brief.refKinds?.length
     ? `The user uploaded their own ${brief.refKinds.join(" and ")} picture(s). Every scene that shows the product must show it exactly as in their picture; describe it plainly as "the product" and never invent a different design, colour or label.`
     : "The user did not upload a product picture, so describe the product's look once, clearly, in the look line, and keep it identical in every scene.";
+  const brand = brandLine(brief.brand);
   return `You are an award-winning ad creative director. Plan a ${brief.seconds}-second video ad.
-Tone: ${brief.tone}. ${refs}
+Tone: ${brief.tone}. ${refs}${brand ? `\nThe brand kit: ${brand}. Use the brand colours in the look line (setting, props, light) and on the end card, follow the brand style, and use the brand name on the end card.` : ""}
 Write exactly ${n} scenes of ${SCENE_SECONDS} seconds each, then an end card of ${card} seconds.
 Rules:
 - Open with a hook in scene 1 (a striking moment, a problem the audience feels, or a surprising visual). Show the product in use, the benefit, then the payoff. The end card has the product name and a short call to action.
@@ -156,15 +159,31 @@ export const AD_PRICES = {
   musicPerMinute: 0.02,
   cardPerSecond: 0.02, // the end card's gentle move
   editPerSecond: 0.0006, // joining and mixing
+  checkPicture: 0.01, // the quality check of each scene's first frame
+  checkScene: 0.01, // the quality check of each 5-second scene
 };
+
+/** The quality check remakes at most this many scenes on its own (the spending cap). */
+export function maxRedos(scenes: number): number {
+  return Math.max(1, Math.ceil(scenes / 3));
+}
+/** What the quality check always costs: one look at each frame and each scene. */
+export function checkCost(scenes: number): number {
+  return scenes * (AD_PRICES.checkPicture + AD_PRICES.checkScene);
+}
+/** The most the automatic remakes can add: a new frame for every scene, and the capped scene remakes. */
+export function redoCap(scenes: number): number {
+  return scenes * AD_PRICES.picture + maxRedos(scenes) * (AD_PRICES.scene + AD_PRICES.checkScene);
+}
 
 export function voiceChars(plan: AdPlan): number {
   return plan.scenes.reduce((n, s) => n + s.voice.length, 0) + plan.endCard.voice.length;
 }
 
-export function adCost(plan: AdPlan, withRefs: boolean): number {
+export function adCost(plan: AdPlan, withRefs: boolean, check = false): number {
   const n = plan.scenes.length;
   return (
+    (check ? checkCost(n) : 0) +
     n * AD_PRICES.scene +
     n * AD_PRICES.picture + // each scene's first frame, showing the same product
     (withRefs ? 0 : AD_PRICES.picture) + // our product picture when there is no photo
@@ -193,8 +212,9 @@ export function scenePrompt(plan: AdPlan, i: number): string {
   return `${s.visual}. Camera: ${s.camera}. ${plan.look ? `Keep consistent: ${plan.look}.` : ""} No on-screen text, captions or logos.`.slice(0, 1800);
 }
 
-export function endCardPrompt(plan: AdPlan, withRefs: boolean): string {
-  return `A clean, premium end card for a video ad. ${withRefs ? "Show the product from the reference picture exactly as it is, centred, " : `${plan.look}. Show the product centred, `}on a simple background that matches this palette. Large bold headline text that reads exactly "${plan.endCard.headline}"${
+export function endCardPrompt(plan: AdPlan, withRefs: boolean, brand?: BrandInfo): string {
+  const b = brandLine(brand);
+  return `A clean, premium end card for a video ad.${b ? ` ${b}; use the brand colours for the background and type.` : ""} ${withRefs ? "Show the product from the reference picture exactly as it is, centred, " : `${plan.look}. Show the product centred, `}on a simple background that matches this palette. Large bold headline text that reads exactly "${plan.endCard.headline}"${
     plan.endCard.tagline ? ` and smaller text underneath that reads exactly "${plan.endCard.tagline}"` : ""
   }. Spell every word exactly, nothing else written anywhere. Modern sans-serif type, plenty of space.`;
 }

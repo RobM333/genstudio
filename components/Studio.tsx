@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ADD_SOUND_MODEL, animateModelFor, EDIT_IMAGE_MODEL, estimateCost, KEYFRAME_MODEL_ID, REFERENCE_IMAGE_MODEL, formatCost, COST_NOTE, getModel, MODELS, type AspectRatio, type MediaKind } from "@/lib/models";
+import { ADD_SOUND_MODEL, animateModelFor, costRange, EDIT_IMAGE_MODEL, estimateCost, KEYFRAME_MODEL_ID, REFERENCE_IMAGE_MODEL, formatCost, COST_NOTE, getModel, MODELS, type AspectRatio, type MediaKind } from "@/lib/models";
 import { autoAspectRatios, pickModel, type Quality } from "@/lib/router";
 import { fillTemplate, TEMPLATES, type Template } from "@/lib/templates";
 import type { AppMode } from "@/lib/config";
@@ -10,11 +10,13 @@ import { checkPrompt } from "@/lib/safety";
 import AgreeModal, { hasAcceptedTerms } from "./AgreeModal";
 import Link from "next/link";
 import { progressView, type Phase } from "@/lib/progress";
-import ReferencesBox, { loadRefs, saveRefs, type RefItem } from "./ReferencesBox";
+import ReferencesBox, { finishReference, loadRefs, saveRefs, type RefItem } from "./ReferencesBox";
+import BrandKit, { brandInfo, hasBrand, KIT_PICTURES, loadBrand, saveBrand, type Brand } from "./BrandKit";
+import { brandLine, colorName } from "@/lib/brand";
 import { addSoundTo, animateShot, joinShots, lastFrame, planStory, startPicture, type Story } from "./storyRunner";
 import { lengthAdvice, LONG_LENGTHS, MAX_STORY_SECONDS, type ShotPlan } from "@/lib/storyboard";
 import { nextLength, readChat } from "@/lib/chat";
-import { AD_LENGTHS, AD_PRICES, AD_TONES, AD_VOICES, adCost, endCardSeconds, maxVoiceWords, SCENE_SECONDS, sceneCount, sceneRemakeCost, type AdBrief, type AdPlan } from "@/lib/adplan";
+import { AD_LENGTHS, AD_PRICES, AD_TONES, AD_VOICES, adCost, checkCost, endCardSeconds, maxRedos, maxVoiceWords, redoCap, SCENE_SECONDS, sceneCount, sceneRemakeCost, type AdBrief, type AdPlan } from "@/lib/adplan";
 import { AD_T2V, buildAd, changedAdJob, newAdJob, type AdJob } from "./adRunner";
 
 type Item = {
@@ -63,7 +65,8 @@ type ChatAct =
   | { type: "final" }
   | { type: "sound" }
   | { type: "video" }
-  | { type: "ad"; plan: AdPlan; note: string };
+  | { type: "ad"; plan: AdPlan; note: string }
+  | { type: "shape"; aspectRatio: AspectRatio };
 type ChatOffer = { label: string; cost: number; act: ChatAct };
 type ChatMsg = {
   id: string;
@@ -126,7 +129,10 @@ type JobSpec = {
 };
 
 const AUTO = "auto";
-type View = "home" | "create" | "templates" | "gallery";
+// The brand kit's words are added after this mark, so "Reuse prompt" can take them off again.
+const BRAND_MARK = "\n\nOn brand: ";
+const SHAPE_USES: Record<string, string> = { "9:16": "TikTok, Reels and Shorts", "1:1": "the Instagram feed", "16:9": "YouTube and websites" };
+type View = "home" | "create" | "templates" | "gallery" | "brand";
 const STORAGE_KEY = "genstudio.gallery.v1";
 const MAX_ITEMS = 200;
 
@@ -200,9 +206,22 @@ export default function Studio({ mode }: { mode: AppMode }) {
   const [adBusy, setAdBusy] = useState<string | null>(null);
   const [adError, setAdError] = useState<string | null>(null);
   const [adAsk, setAdAsk] = useState("");
+  const [adCheck, setAdCheck] = useState(true); // check every scene and remake weak ones
+  // Brand kit, saved in this browser and switched on per project.
+  const [brand, setBrand] = useState<Brand>({ pictures: [] });
+  const [useBrand, setUseBrand] = useState(true);
+  // Start an ad from a product page.
+  const [productLink, setProductLink] = useState("");
+  const [productBusy, setProductBusy] = useState<string | null>(null);
+  const [productPics, setProductPics] = useState<string[]>([]);
+  const [productPicked, setProductPicked] = useState<string[]>([]);
+  const [productConsent, setProductConsent] = useState(false);
   const polling = useRef(new Set<string>());
 
   const isAuto = choice === AUTO;
+  const brandOn = useBrand && hasBrand(brand);
+  const kitPics = brandOn ? brand.pictures : undefined;
+  const saveToKit = (r: RefItem) => setBrand((b) => ({ ...b, pictures: [...b.pictures.filter((x) => x.url !== r.url), r].slice(-KIT_PICTURES) }));
   const auto = pickModel({ kind, prompt, quality, aspectRatio });
   const model = isAuto ? auto.model : (getModel(choice) ?? models[0]);
   const shapes = isAuto ? autoAspectRatios(kind) : model.aspectRatios;
@@ -251,6 +270,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
   useEffect(() => {
     setItems(loadItems());
     setRefs(loadRefs());
+    setBrand(loadBrand());
     try {
       const raw = localStorage.getItem(CHAT_KEY);
       const list = raw ? (JSON.parse(raw) as ChatMsg[]) : [];
@@ -271,6 +291,9 @@ export default function Studio({ mode }: { mode: AppMode }) {
   useEffect(() => {
     if (loaded) saveRefs(refs);
   }, [refs, loaded]);
+  useEffect(() => {
+    if (loaded) saveBrand(brand);
+  }, [brand, loaded]);
   useEffect(() => {
     if (loaded) saveItems(items);
   }, [items, loaded]);
@@ -442,7 +465,9 @@ export default function Studio({ mode }: { mode: AppMode }) {
 
   function generate() {
     setFormError(null);
-    const text = prompt.trim();
+    const typed = prompt.trim();
+    const kitLine = brandOn ? brandLine(brandInfo(brand)) : "";
+    const text = kitLine && typed ? `${typed}${BRAND_MARK}${kitLine}.`.slice(0, 2000) : typed;
     if (!text) {
       setFormError("Describe what you want to create first.");
       return;
@@ -661,6 +686,60 @@ export default function Studio({ mode }: { mode: AppMode }) {
 
   // ---------- Full ad ----------
 
+  /** The brief as sent to the planner: with the kinds of pictures given and, when it's on, the brand kit. */
+  function adBriefNow(): AdBrief {
+    return { ...brief, refKinds: refs.map((r) => r.kind), brand: brandOn ? brandInfo(brand) : undefined };
+  }
+
+  /** Reads the user's product page: fills in the brief and offers its pictures (free, no AI). */
+  async function readProductLink() {
+    setAdError(null);
+    setProductBusy("Reading the page...");
+    setProductPics([]);
+    setProductPicked([]);
+    try {
+      const res = await fetch("/api/product", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: productLink.trim() }) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? "That page couldn't be read.");
+      setBrief((b) => ({ ...b, product: data.brief }));
+      const pics = (data.product?.images ?? []) as string[];
+      setProductPics(pics);
+      setProductPicked(pics.slice(0, 1));
+    } catch (e) {
+      setAdError((e as Error).message);
+    } finally {
+      setProductBusy(null);
+    }
+  }
+
+  /** Brings the chosen product page pictures in as product references, each one checked first. */
+  async function useProductPics() {
+    setAdError(null);
+    const room = 4 - refs.length;
+    const pick = productPicked.filter((u) => !refs.some((r) => r.name === u)).slice(0, Math.max(0, room));
+    if (!pick.length) {
+      setAdError(room <= 0 ? "You already have 4 pictures. Remove one first." : "Pick a picture first.");
+      return;
+    }
+    const added: RefItem[] = [];
+    try {
+      for (let i = 0; i < pick.length; i++) {
+        setProductBusy(`Checking picture ${i + 1} of ${pick.length}...`);
+        const res = await fetch("/api/reference", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ imageUrl: pick[i], kind: "product", consent: "yes" }) });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error ?? "We couldn't use that picture.");
+        const done = await finishReference(data, "product");
+        added.push({ url: done.url, token: done.token, kind: "product", name: pick[i] });
+      }
+      setProductPics([]);
+    } catch (e) {
+      setAdError((e as Error).message);
+    } finally {
+      if (added.length) setRefs((r) => [...r, ...added].slice(0, 4));
+      setProductBusy(null);
+    }
+  }
+
   async function planAd(request?: string) {
     setAdError(null);
     if (!brief.product.trim()) {
@@ -676,11 +755,13 @@ export default function Studio({ mode }: { mode: AppMode }) {
       const res = await fetch("/api/adplan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ brief: { ...brief, refKinds: refs.map((r) => r.kind) }, plan: request ? adPlan : undefined, request }),
+        body: JSON.stringify({ brief: adBriefNow(), plan: request ? adPlan : undefined, request }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.plan) throw new Error(data.error ?? "Couldn't plan the ad. Please try again.");
-      setAdPlan(data.plan as AdPlan);
+      const next = data.plan as AdPlan;
+      if (brandOn && brand.voice && !request) next.voice = brand.voice;
+      setAdPlan(next);
       if (request) setAdAsk("");
     } catch (e) {
       setAdError((e as Error).message);
@@ -725,7 +806,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
   function buildPlannedAd() {
     if (!adPlan) return;
     const useRefs = refs.map(({ url, kind, token }) => ({ url, kind, token }));
-    startAd(newAdJob({ ...brief, refKinds: refs.map((r) => r.kind) }, adPlan, useRefs), { aspectRatio: adShape });
+    startAd(newAdJob(adBriefNow(), adPlan, useRefs, adCheck), { aspectRatio: adShape });
   }
 
   /** Makes every missing part of an ad, then joins and mixes. Safe to call again to resume. */
@@ -759,6 +840,40 @@ export default function Studio({ mode }: { mode: AppMode }) {
       (c.music ? AD_PRICES.musicPerMinute * Math.ceil(plan.seconds / 60) : 0) +
       plan.seconds * AD_PRICES.editPerSecond * 2
     );
+  }
+
+  /** The same ad in another shape: new pictures and scenes, the voiceover and music are reused. */
+  function shapeCost(job: AdJob): number {
+    const n = job.plan.scenes.length;
+    return (
+      n * (AD_PRICES.scene + AD_PRICES.picture) +
+      AD_PRICES.picture +
+      endCardSeconds(job.plan.seconds) * AD_PRICES.cardPerSecond +
+      job.plan.seconds * AD_PRICES.editPerSecond * 2 +
+      (job.check?.on ? checkCost(n) : 0)
+    );
+  }
+  function makeShape(it: Item, aspectRatio: AspectRatio) {
+    const old = it.ad!;
+    const job: AdJob = {
+      ...newAdJob(old.brief, old.plan, old.refs, Boolean(old.check?.on)),
+      voices: [...old.voices],
+      voiceFor: [...old.voiceFor],
+      musicUrl: old.musicUrl,
+      musicFor: old.musicFor,
+      productUrl: old.productUrl,
+      productToken: old.productToken,
+    };
+    startAd(job, { parentId: it.id, fixNote: `${SHAPE_USES[aspectRatio] ?? aspectRatio} version`, aspectRatio });
+  }
+  function offerShapes(it: Item, thread: string) {
+    const cost = shapeCost(it.ad!);
+    const others = (["9:16", "1:1", "16:9"] as AspectRatio[]).filter((ar) => ar !== it.aspectRatio);
+    say(thread, it.id, {
+      text: `I'll make the same ad in another shape, with the same plan, voiceover and music. Only the pictures and scenes are made again, so each shape costs ${price(cost)}.`,
+      offers: others.map((ar) => ({ label: `📐 ${ar} for ${SHAPE_USES[ar]}`, cost, act: { type: "shape" as const, aspectRatio: ar } })),
+      state: "open",
+    });
   }
 
   /** Works out a change to a finished ad from plain words, then offers it with its price. */
@@ -998,6 +1113,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
     if (it.ad) {
       setAdMode(true);
       setBrief({ product: it.ad.brief.product, audience: it.ad.brief.audience, seconds: it.ad.brief.seconds, tone: it.ad.brief.tone });
+      setAdCheck(it.ad.check?.on ?? true);
       setAdShape(it.aspectRatio);
       setAdPlan(JSON.parse(JSON.stringify(it.ad.plan)) as AdPlan);
       if (it.ad.refs?.length) setRefs(it.ad.refs.map((r) => ({ ...r, kind: r.kind as RefItem["kind"] })));
@@ -1012,7 +1128,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
     setChoice(it.quality || !pickable ? AUTO : it.modelId);
     if (it.quality) setQuality(it.quality);
     setAspectRatio(it.aspectRatio);
-    setPrompt(basePrompt(it));
+    setPrompt(basePrompt(it).split(BRAND_MARK)[0]);
     if (it.kind === "video") {
       if (it.story && (it.duration ?? 0) > 10) setStoryLen(LONG_LENGTHS.find((d) => d >= (it.duration ?? 0)) ?? MAX_STORY_SECONDS);
       else {
@@ -1328,6 +1444,10 @@ export default function Studio({ mode }: { mode: AppMode }) {
       else checkItem(it, thread);
       return;
     }
+    if (it.ad && /\b(shapes?|tiktok|reels?|shorts|instagram|youtube|vertical|square|landscape|9:16|1:1|16:9)\b/i.test(text) && text.length < 80) {
+      offerShapes(it, thread);
+      return;
+    }
     if (it.ad) {
       const safe = checkPrompt(text);
       if (!safe.ok) reply({ text: safe.reason ?? "I can't make that change." });
@@ -1422,6 +1542,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
     else if (a.type === "final") makeFinal(it);
     else if (a.type === "sound") addSound(it);
     else if (a.type === "video") doVideo(it);
+    else if (a.type === "shape" && it.ad) makeShape(it, a.aspectRatio);
     else if (a.type === "ad" && it.ad) startAd(changedAdJob(it.ad, a.plan).job, { parentId: it.id, fixNote: a.note, aspectRatio: it.aspectRatio });
     if (err) {
       say(msg.thread, it.id, { text: err });
@@ -1447,6 +1568,8 @@ export default function Studio({ mode }: { mode: AppMode }) {
   if (selected?.status === "done" && selected.url) {
     chips.push({ label: "🔍 Find what's wrong", text: "Find what's wrong" });
     if (selected.ad) {
+      chips.push({ label: "✨ Try a new hook", text: "Give scene 1 a new, more gripping hook (new picture and voice line). Keep everything else the same." });
+      chips.push({ label: "📐 Other shapes", text: "Make it in other shapes for TikTok, Instagram and YouTube" });
       chips.push({ label: "🎙️ Change the voiceover", text: "Make the voiceover warmer and slower" });
       chips.push({ label: "🎵 Different music", text: "music: more upbeat" });
     } else if (selected.kind === "video") {
@@ -1566,7 +1689,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
         </span>
       </span>
     </label>
-    <ReferencesBox refs={refs} onChange={setRefs} mode={mode} />
+    <ReferencesBox refs={refs} onChange={setRefs} mode={mode} kit={kitPics} onSave={saveToKit} />
     {!template && (
       <div className="examples">
         <span className="examples-label">Try:</span>
@@ -1791,6 +1914,28 @@ export default function Studio({ mode }: { mode: AppMode }) {
     </details>
   );
 
+  // ---------- Brand kit switch, shown in step 1 ----------
+
+  const brandChip = hasBrand(brand) ? (
+    <label className="brand-chip">
+      <input type="checkbox" checked={useBrand} onChange={(e) => setUseBrand(e.target.checked)} />
+      <span>
+        Use my brand kit
+        {brand.name ? <strong> · {brand.name}</strong> : null}
+        {(brand.colors ?? []).map((c) => (
+          <span key={c} className="brand-dot" style={{ background: c }} title={colorName(c)} />
+        ))}
+      </span>
+      <button className="link-btn" onClick={(e) => { e.preventDefault(); go("brand"); }}>
+        Edit
+      </button>
+    </label>
+  ) : (
+    <button className="link-btn brand-setup" onClick={() => go("brand")}>
+      🎨 Set up a brand kit, so everything you make uses your name, colours and pictures
+    </button>
+  );
+
   // ---------- Full ad: the brief, then the plan to review ----------
 
   const adBrief = (
@@ -1799,6 +1944,47 @@ export default function Studio({ mode }: { mode: AppMode }) {
         <div className="g-head">
           <span className="g-num">2</span>
           <h2>Tell us about your ad</h2>
+        </div>
+        <div className="product-link">
+          <label className="sub-label" htmlFor="ad-link">
+            🔗 Start from your product page <span className="step-opt">optional</span>
+          </label>
+          <form
+            className="product-link-row"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (productLink.trim()) readProductLink();
+            }}
+          >
+            <input id="ad-link" className="text-input" maxLength={1000} placeholder="https://yourshop.com/products/..." value={productLink} onChange={(e) => setProductLink(e.target.value)} />
+            <button className="pill" type="submit" disabled={!productLink.trim() || !!productBusy}>
+              {productBusy ?? "Fill in for me"}
+            </button>
+          </form>
+          {productPics.length > 0 && (
+            <div className="product-pics">
+              <span className="muted small">Pictures from the page. Pick the ones that show your product:</span>
+              <div className="refs-list">
+                {productPics.map((u) => {
+                  const on = productPicked.includes(u);
+                  return (
+                    <button key={u} className={on ? "ref-thumb ref-pick picked" : "ref-thumb ref-pick"} onClick={() => setProductPicked(on ? productPicked.filter((x) => x !== u) : [...productPicked, u])} aria-pressed={on}>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={u} alt="Product page picture" referrerPolicy="no-referrer" />
+                      <span className="ref-pick-label">{on ? "✓ Use" : "＋ Use"}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              <label className="refs-consent">
+                <input type="checkbox" checked={productConsent} onChange={(e) => setProductConsent(e.target.checked)} />
+                <span>This is my product and I may use these pictures.</span>
+              </label>
+              <button className="refs-add" disabled={!productConsent || !productPicked.length || !!productBusy || mode === "locked"} onClick={useProductPics}>
+                {productBusy ?? "Use the picked pictures"}
+              </button>
+            </div>
+          )}
         </div>
         <label className="sub-label" htmlFor="ad-product">
           What are you advertising?
@@ -1825,7 +2011,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
           value={brief.audience}
           onChange={(e) => setBrief({ ...brief, audience: e.target.value })}
         />
-        <ReferencesBox refs={refs} onChange={setRefs} mode={mode} />
+        <ReferencesBox refs={refs} onChange={setRefs} mode={mode} kit={kitPics} onSave={saveToKit} />
       </section>
 
       <section className="g-step">
@@ -1866,7 +2052,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
         </div>
         <p className="muted small g-hint">
           {sceneCount(brief.seconds)} scenes of {SCENE_SECONDS} seconds and a {endCardSeconds(brief.seconds)}-second end card with your product name. A {brief.seconds}-second ad usually costs est.{" "}
-          {formatCost(sceneCount(brief.seconds) * (AD_PRICES.scene + AD_PRICES.picture) + (refs.length ? 0.06 : 0.1))} to make.
+          {formatCost(sceneCount(brief.seconds) * (AD_PRICES.scene + AD_PRICES.picture) + (refs.length ? 0.06 : 0.1) + checkCost(sceneCount(brief.seconds)))} to make.
         </p>
       </section>
 
@@ -2011,13 +2197,25 @@ export default function Studio({ mode }: { mode: AppMode }) {
       </section>
 
       <section className="g-step g-go">
+        <label className="check-toggle">
+          <input type="checkbox" checked={adCheck} onChange={(e) => setAdCheck(e.target.checked)} />
+          <span>
+            <strong>🔍 Quality check</strong> <span className="tag tag-rec">Recommended</span>
+            <br />
+            <span className="muted small">
+              An AI looks at every shot before it&apos;s filmed and at every finished scene, then fixes clearly wrong ones on its own (wrong product, broken hands,
+              impossible movement). It remakes at most {maxRedos(adPlan.scenes.length)} scene{maxRedos(adPlan.scenes.length) > 1 ? "s" : ""}, so it never costs more than
+              up to ${costRange(redoCap(adPlan.scenes.length))[1].toFixed(2)} extra, and only if something needs fixing. The check itself is included in the price.
+            </span>
+          </span>
+        </label>
         <button className="generate" onClick={buildPlannedAd} disabled={mode === "locked" || !!adBusy}>
           <span className="generate-label">🎬 Build my {adPlan.seconds}-second ad</span>
-          <span className="generate-cost">{mode === "demo" ? "Free" : `est. ${formatCost(adCost(adPlan, refs.length > 0))}`}</span>
+          <span className="generate-cost">{mode === "demo" ? "Free" : `est. ${formatCost(adCost(adPlan, refs.length > 0, adCheck))}`}</span>
         </button>
         <p className="hint">
           Makes every scene{refs.length ? " with your product" : ""}, the end card, the voiceover and the music, and gives you one finished video. Takes about{" "}
-          {Math.round(3 + adPlan.scenes.length * 1.6)} minutes. {mode === "demo" ? `Free in demo mode (live estimate ${formatCost(adCost(adPlan, refs.length > 0))}).` : ""} {COST_NOTE}
+          {Math.round(3 + adPlan.scenes.length * 1.6)} minutes. {mode === "demo" ? `Free in demo mode (live estimate ${formatCost(adCost(adPlan, refs.length > 0, adCheck))}).` : ""} {COST_NOTE}
         </p>
       </section>
     </div>
@@ -2074,6 +2272,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
             A finished ad with several scenes, a voiceover and music. You see the whole plan and can change it before anything is made.
           </p>
         )}
+        {brandChip}
       </section>
 
       {adMode ? (
@@ -2132,7 +2331,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
 
   const sideSettings = (
     <details className="side-settings">
-      <summary>✏️ Prompt and settings for a new {kind}</summary>
+      <summary>✏️ Prompt and settings for a new {adMode ? "ad" : kind}</summary>
       {kindTabs}
       <label className="sub-label" htmlFor="prompt">
         Describe your {kind}
@@ -2491,12 +2690,13 @@ export default function Studio({ mode }: { mode: AppMode }) {
             </button>
           ))}
           <div className="nav-divider" />
-          <span className="nav-item soon">
+          <button className={view === "brand" ? "nav-item active" : "nav-item"} onClick={() => go("brand")}>
             <span className="nav-icon" aria-hidden>
               <IconBrand />
             </span>
-            Brand kits <span className="soon-tag">Soon</span>
-          </span>
+            Brand kit
+            {hasBrand(brand) && <span className="brand-dot" style={{ background: brand.colors?.[0] ?? "var(--accent)" }} aria-hidden />}
+          </button>
           <span className="nav-item soon">
             <span className="nav-icon" aria-hidden>
               <IconFolder />
@@ -2540,6 +2740,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
         )}
         {view === "templates" && templatesView}
         {view === "gallery" && galleryView}
+        {view === "brand" && <BrandKit brand={brand} onChange={setBrand} mode={mode} />}
       </main>
 
       {askTerms && (
@@ -2920,6 +3121,20 @@ function AdSummary({ job }: { job: AdJob }) {
         </li>
       </ol>
       <p className="muted small">Music: {job.plan.music}</p>
+      {job.check?.on && (
+        <div className="check-log">
+          <strong>🔍 Quality check</strong>
+          {job.check.log.length ? (
+            <ul>
+              {job.check.log.map((l) => (
+                <li key={l}>{l}</li>
+              ))}
+            </ul>
+          ) : (
+            <p className="muted small">{job.clips.every((c) => c.checked) ? "Every scene passed, nothing needed remaking." : "Checks each scene as it's made."}</p>
+          )}
+        </div>
+      )}
     </details>
   );
 }

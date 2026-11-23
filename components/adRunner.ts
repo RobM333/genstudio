@@ -3,10 +3,21 @@
 // the end card, the voiceover lines and the music, then one join and one mix.
 // Progress is saved on the item, so a closed page carries on where it stopped.
 
-import { endCardPrompt, endCardSeconds, SCENE_SECONDS, scenePrompt, type AdBrief, type AdPlan } from "@/lib/adplan";
+import { endCardPrompt, endCardSeconds, maxRedos, SCENE_SECONDS, scenePrompt, type AdBrief, type AdPlan } from "@/lib/adplan";
+import type { Analysis } from "@/lib/analyze";
 import { post, waitFor, waitForResult } from "./storyRunner";
 
-export type AdClip = { url?: string; frame?: string; status: "waiting" | "working" | "done" | "failed"; error?: string };
+export type AdClip = {
+  url?: string;
+  frame?: string;
+  status: "waiting" | "working" | "done" | "failed";
+  error?: string;
+  frameChecked?: boolean; // the quality check looked at the first frame
+  checked?: boolean; // the quality check looked at the finished scene
+};
+
+/** The automatic quality check: it looks at every scene and remakes weak ones, up to a cap. */
+export type AdCheck = { on: boolean; redosLeft: number; log: string[] };
 
 export type AdJob = {
   brief: AdBrief;
@@ -26,13 +37,15 @@ export type AdJob = {
   step?: string;
   sceneModelId: string; // text-to-video
   animateModelId: string; // image-to-video, used with the product photo
+  check?: AdCheck;
 };
 
 export const AD_T2V = "fal-ai/kling-video/v2.5-turbo/pro/text-to-video";
 export const AD_I2V = "fal-ai/kling-video/v2.5-turbo/pro/image-to-video";
 
-export function newAdJob(brief: AdBrief, plan: AdPlan, refs?: AdJob["refs"]): AdJob {
+export function newAdJob(brief: AdBrief, plan: AdPlan, refs?: AdJob["refs"], check = true): AdJob {
   return {
+    check: check ? { on: true, redosLeft: maxRedos(plan.scenes.length), log: [] } : undefined,
     brief,
     plan,
     refs: refs?.length ? refs : undefined,
@@ -61,10 +74,10 @@ async function productPicture(job: AdJob, aspectRatio: string): Promise<{ url: s
 }
 
 /** A scene's first frame, showing the product from the user's photo or from our product picture. */
-async function sceneFrame(job: AdJob, i: number, aspectRatio: string): Promise<string> {
+async function sceneFrame(job: AdJob, i: number, aspectRatio: string, fix = ""): Promise<string> {
   const res = await post("/api/generate", {
     modelId: "fal-ai/nano-banana/edit",
-    prompt: `Opening frame of a video ad scene. The product must look exactly like the product in the reference picture. ${scenePrompt(job.plan, i)}`.slice(0, 1990),
+    prompt: `Opening frame of a video ad scene. The product must look exactly like the product in the reference picture. ${fix ? `Important: ${fix} ` : ""}${scenePrompt(job.plan, i)}`.slice(0, 1990),
     aspectRatio,
     enhance: false,
     purpose: "keyframe",
@@ -75,11 +88,11 @@ async function sceneFrame(job: AdJob, i: number, aspectRatio: string): Promise<s
   return waitFor(res.modelId ?? "fal-ai/nano-banana/edit", res);
 }
 
-async function sceneClip(job: AdJob, i: number, aspectRatio: string, frame?: string): Promise<string> {
+async function sceneClip(job: AdJob, i: number, aspectRatio: string, frame?: string, fix = ""): Promise<string> {
   const modelId = frame ? job.animateModelId : job.sceneModelId;
   const res = await post("/api/generate", {
     modelId,
-    prompt: scenePrompt(job.plan, i),
+    prompt: `${fix ? `Important: ${fix} ` : ""}${scenePrompt(job.plan, i)}`.slice(0, 1990),
     aspectRatio,
     duration: SCENE_SECONDS,
     sound: false,
@@ -90,12 +103,42 @@ async function sceneClip(job: AdJob, i: number, aspectRatio: string, frame?: str
   return waitFor(modelId, res);
 }
 
+/**
+ * Asks the checking AI to look at a frame or a scene. Returns null if the check
+ * itself fails, because a failed check should never stop the ad.
+ */
+async function checkPart(kind: "image" | "video", url: string, prompt: string, productUrl?: string): Promise<Analysis | null> {
+  try {
+    const res = await fetch("/api/analyze", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind, url, prompt, productUrl, auto: true }),
+    });
+    let data = await res.json().catch(() => ({}));
+    if (!res.ok) return null;
+    const started = Date.now();
+    while (data.status !== "COMPLETED") {
+      if (data.status === "FAILED" || Date.now() - started > 3 * 60 * 1000) return null;
+      await new Promise((r) => setTimeout(r, 2500));
+      const r = await fetch(`/api/analyze?kind=${kind}&requestId=${encodeURIComponent(data.requestId)}`);
+      const next = await r.json().catch(() => ({}));
+      data = { ...next, requestId: data.requestId };
+    }
+    return (data.analysis as Analysis) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+const fixText = (a: Analysis) => (a.fix || a.problems.join(" ")).slice(0, 400);
+const firstProblem = (a: Analysis) => (a.problems[0] ?? "a problem").replace(/\.$/, "");
+
 async function cardImage(job: AdJob, aspectRatio: string): Promise<string> {
   const withPicture = Boolean(job.refs?.length || job.productUrl);
   const modelId = withPicture ? "fal-ai/nano-banana/edit" : "fal-ai/nano-banana";
   const res = await post("/api/generate", {
     modelId,
-    prompt: endCardPrompt(job.plan, withPicture),
+    prompt: endCardPrompt(job.plan, withPicture, job.brief.brand),
     aspectRatio,
     enhance: false,
     refs: job.refs,
@@ -139,16 +182,50 @@ export async function buildAd(job: AdJob, aspectRatio: string, save: (j: AdJob, 
 
   for (let i = 0; i < n; i++) {
     const clip = job.clips[i] ?? (job.clips[i] = { status: "waiting" });
-    if (clip.url) continue;
+    if (clip.url && (clip.checked || !job.check?.on)) continue;
     clip.status = "working";
     clip.error = undefined;
     try {
+      const check = job.check?.on ? job.check : undefined;
+      const productRef = job.refs?.find((r) => r.kind === "product")?.url ?? job.productUrl;
       if (!clip.frame) {
         step(`Scene ${i + 1} of ${n}: setting up the shot`, "fal-ai/nano-banana/edit");
         clip.frame = await sceneFrame(job, i, aspectRatio);
+        save(job);
       }
-      step(`Scene ${i + 1} of ${n}`, job.animateModelId);
-      clip.url = await sceneClip(job, i, aspectRatio, clip.frame);
+      // A cheap look at the first frame before the expensive part: one new frame if it's clearly off.
+      if (check && !clip.frameChecked) {
+        step(`Scene ${i + 1} of ${n}: checking the shot`, "fal-ai/any-llm/vision");
+        const a = await checkPart("image", clip.frame, scenePrompt(job.plan, i), productRef);
+        if (a?.serious) {
+          step(`Scene ${i + 1} of ${n}: fixing the shot`, "fal-ai/nano-banana/edit");
+          clip.frame = await sceneFrame(job, i, aspectRatio, fixText(a));
+          check.log.push(`Scene ${i + 1}: fixed the opening shot before filming (${firstProblem(a)}).`);
+        }
+        clip.frameChecked = true;
+        save(job);
+      }
+      if (!clip.url) {
+        step(`Scene ${i + 1} of ${n}`, job.animateModelId);
+        clip.url = await sceneClip(job, i, aspectRatio, clip.frame);
+        save(job);
+      }
+      // Then the finished scene: remade once if it's clearly wrong, while the spending cap allows.
+      if (check && !clip.checked) {
+        step(`Scene ${i + 1} of ${n}: checking the scene`, "fal-ai/video-understanding");
+        const a = await checkPart("video", clip.url, scenePrompt(job.plan, i));
+        if (a?.serious && check.redosLeft > 0) {
+          check.redosLeft--;
+          clip.checked = true;
+          save(job);
+          step(`Scene ${i + 1} of ${n}: remaking it`, job.animateModelId);
+          clip.url = await sceneClip(job, i, aspectRatio, clip.frame, fixText(a));
+          check.log.push(`Scene ${i + 1}: remade it (${firstProblem(a)}).`);
+        } else if (a?.serious) {
+          check.log.push(`Scene ${i + 1}: ${firstProblem(a)}. Not remade, the automatic remakes were used up. Ask in the chat to fix it.`);
+        }
+        clip.checked = true;
+      }
       clip.status = "done";
     } catch (e) {
       clip.status = "failed";
@@ -239,6 +316,7 @@ export function changedAdJob(old: AdJob, plan: AdPlan): { job: AdJob; scenes: nu
     cardFor: card ? undefined : old.cardFor,
     joinedUrl: scenes > 0 || card ? undefined : old.joinedUrl,
     step: undefined,
+    check: old.check?.on ? { on: true, redosLeft: Math.min(maxRedos(plan.scenes.length), scenes), log: [] } : undefined,
   };
   return { job, scenes, card, voiceChars, music };
 }

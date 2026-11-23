@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 // POST starts an analysis and returns a job id; GET checks on it. Split like
 // this so slow video analysis never hits the hosting time limit.
 export async function POST(req: Request) {
-  let body: { kind?: string; url?: string; prompt?: string };
+  let body: { kind?: string; url?: string; prompt?: string; productUrl?: string; auto?: boolean };
   try {
     body = await req.json();
   } catch {
@@ -26,6 +26,13 @@ export async function POST(req: Request) {
   const mode = getMode();
   if (mode === "demo") {
     await new Promise((r) => setTimeout(r, 1200));
+    // The ad builder's automatic check: in demo mode it finds one example problem, so the remake step can be seen.
+    if (body.auto)
+      return NextResponse.json({
+        status: "COMPLETED",
+        demo: true,
+        analysis: { problems: ["Demo mode: an example problem. The product's label faces away from the camera."], fix: "Turn the product so its label faces the camera.", prompt, serious: true },
+      });
     return NextResponse.json({
       status: "COMPLETED",
       demo: true,
@@ -38,14 +45,16 @@ export async function POST(req: Request) {
   }
   if (mode === "locked") return NextResponse.json({ error: "Real generation is switched off." }, { status: 403 });
   if (!isFalMediaUrl(url)) return NextResponse.json({ error: "Only results made in GenStudio can be analyzed." }, { status: 400 });
+  // A picture's check can compare the product with its reference picture.
+  const productUrl = kind === "image" && body.productUrl && isFalMediaUrl(String(body.productUrl)) ? String(body.productUrl) : "";
 
   try {
-    const instructions = analysisInstructions(kind, prompt);
+    const instructions = analysisInstructions(kind, prompt, Boolean(productUrl));
     const { request_id } =
       kind === "video"
         ? await fal.queue.submit(VIDEO_ANALYZER, { input: { video_url: url, prompt: instructions } })
         : await fal.queue.submit(IMAGE_ANALYZER, {
-            input: { model: "google/gemini-2.5-flash", prompt: instructions, image_urls: [url] },
+            input: { model: "google/gemini-2.5-flash", prompt: instructions, image_urls: productUrl ? [url, productUrl] : [url] },
           });
     return NextResponse.json({ status: "IN_QUEUE", requestId: request_id, kind });
   } catch (err) {
