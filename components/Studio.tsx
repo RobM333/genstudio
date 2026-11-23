@@ -753,7 +753,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
     const withRefs = Boolean(old.refs?.length);
     return (
       c.scenes * (AD_PRICES.scene + AD_PRICES.picture) +
-      (c.card ? AD_PRICES.picture : 0) +
+      (c.card ? AD_PRICES.picture + endCardSeconds(plan.seconds) * AD_PRICES.cardPerSecond : 0) +
       (!withRefs && old.plan.look !== plan.look ? AD_PRICES.picture : 0) +
       (c.voiceChars / 1000) * AD_PRICES.voicePer1000Chars +
       (c.music ? AD_PRICES.musicPerMinute * Math.ceil(plan.seconds / 60) : 0) +

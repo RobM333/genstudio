@@ -3,7 +3,7 @@ import { getMode } from "@/lib/config";
 import { fal } from "@/lib/fal";
 import { checkPrompt } from "@/lib/safety";
 import { AD_VOICES } from "@/lib/adplan";
-import { COMPOSE_MODEL, isFalMediaUrl, LAST_FRAME_MODEL, MERGE_VIDEOS_MODEL, MUSIC_MODEL, VOICE_MODEL } from "@/lib/models";
+import { CARD_MOTION_MODEL, COMPOSE_MODEL, isFalMediaUrl, LAST_FRAME_MODEL, MERGE_VIDEOS_MODEL, MUSIC_MODEL, VOICE_MODEL } from "@/lib/models";
 
 export const dynamic = "force-dynamic";
 
@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 // - merge: join several videos into one
 // - voice: read a voiceover line
 // - music: make an instrumental music bed
-// - still: turn a picture into a short video (the ad's end card)
+// - card: turn the ad's end card picture into a short, nearly still video
 // - mix: put a video, voiceover clips and music together
 type Body = {
   tool?: string;
@@ -22,7 +22,6 @@ type Body = {
   prompt?: string;
   seconds?: number;
   imageUrl?: string;
-  audioUrl?: string;
   videoUrl?: string;
   voices?: { url?: string; at?: number; seconds?: number }[];
   musicUrl?: string;
@@ -72,15 +71,20 @@ export async function POST(req: Request) {
       input = { prompt: `${prompt}. Instrumental only, no vocals. A subtle background bed for a voiceover, gentle and not too loud.`, duration: Math.ceil(seconds) };
       break;
     }
-    case "still": {
+    case "card": {
+      // A picture on its own comes out of the mixer as a single frame, so the end card gets a gentle, nearly still move.
       const imageUrl = String(body.imageUrl ?? "");
       if (!imageUrl) return bad();
-      modelId = COMPOSE_MODEL.id;
-      const ms = Math.round(seconds * 1000);
-      // An audio track sets how long the still is shown (a picture on its own comes out as one frame).
-      const audio = body.audioUrl ? [{ id: "bed", type: "audio", keyframes: [{ url: String(body.audioUrl), timestamp: 0, duration: ms }] }] : [];
-      input = { tracks: [{ id: "card", type: "image", keyframes: [{ url: imageUrl, timestamp: 0, duration: ms }] }, ...audio] };
-      allUrls.push(imageUrl, ...(body.audioUrl ? [String(body.audioUrl)] : []));
+      modelId = CARD_MOTION_MODEL.id;
+      input = {
+        image_url: imageUrl,
+        prompt: "A completely still product end card. Very slow, subtle push-in. The text stays perfectly still, sharp and readable. Nothing else moves.",
+        negative_prompt: "moving text, warped letters, morphing, distorted, jittery, blurry, new objects",
+        num_frames: Math.min(241, Math.round(seconds * 24) + 1),
+        resolution: "720p",
+        aspect_ratio: "auto",
+      };
+      allUrls.push(imageUrl);
       demoUrl = imageUrl;
       break;
     }

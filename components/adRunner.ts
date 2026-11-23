@@ -105,41 +105,9 @@ async function cardImage(job: AdJob, aspectRatio: string): Promise<string> {
   return waitFor(res.modelId ?? modelId, res);
 }
 
-/** Holds the end card on screen: a still with the music under it, or a gentle animated shot if that fails. */
-async function cardClip(job: AdJob, aspectRatio: string): Promise<string> {
-  const seconds = endCardSeconds(job.plan.seconds);
-  const still = await tool({ tool: "still", imageUrl: job.cardImage, audioUrl: job.musicUrl, seconds }, "fal-ai/ffmpeg-api/compose");
-  const got = await videoSeconds(still);
-  if (got === null || got >= seconds - 0.6) return still;
-  const res = await post("/api/generate", {
-    modelId: job.animateModelId,
-    prompt: "Completely still product shot. The camera barely moves, a very slow gentle push-in. All text stays perfectly still, sharp and unchanged. Nothing else moves.",
-    aspectRatio,
-    duration: SCENE_SECONDS,
-    sound: false,
-    enhance: false,
-    sourceUrl: job.cardImage,
-    purpose: "animate",
-  });
-  return waitFor(job.animateModelId, res);
-}
-
-/** Length of a video in the browser; null when it can't be read (for example demo pictures). */
-function videoSeconds(url: string): Promise<number | null> {
-  if (!url || url.startsWith("data:") || typeof document === "undefined") return Promise.resolve(null);
-  return new Promise((resolve) => {
-    const v = document.createElement("video");
-    const done = (n: number | null) => {
-      clearTimeout(t);
-      resolve(n);
-    };
-    const t = setTimeout(() => done(null), 15000);
-    v.preload = "metadata";
-    v.muted = true;
-    v.onloadedmetadata = () => done(Number.isFinite(v.duration) ? v.duration : null);
-    v.onerror = () => done(null);
-    v.src = url;
-  });
+/** Holds the end card on screen with a gentle, nearly still move. */
+async function cardClip(job: AdJob): Promise<string> {
+  return tool({ tool: "card", imageUrl: job.cardImage, seconds: endCardSeconds(job.plan.seconds) }, "fal-ai/ltxv-13b-098-distilled/image-to-video");
 }
 
 async function tool(body: Record<string, unknown>, fallbackModel: string): Promise<string> {
@@ -207,7 +175,6 @@ export async function buildAd(job: AdJob, aspectRatio: string, save: (j: AdJob, 
     step("Making the music", "cassetteai/music-generator");
     job.musicUrl = (await tool({ tool: "music", prompt: plan.music, seconds: plan.seconds }, "cassetteai/music-generator")) || undefined;
     job.musicFor = plan.music;
-    job.cardClip = undefined; // the end card carries the music bed
     save(job);
   }
 
@@ -217,8 +184,8 @@ export async function buildAd(job: AdJob, aspectRatio: string, save: (j: AdJob, 
       step("Designing the end card", "fal-ai/nano-banana");
       job.cardImage = await cardImage(job, aspectRatio);
     }
-    step("Finishing the end card", "fal-ai/ffmpeg-api/compose");
-    job.cardClip = await cardClip(job, aspectRatio);
+    step("Finishing the end card", "fal-ai/ltxv-13b-098-distilled/image-to-video");
+    job.cardClip = await cardClip(job);
     job.cardFor = cardKey;
     job.joinedUrl = undefined;
     save(job);

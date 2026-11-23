@@ -334,7 +334,19 @@ export const COMPOSE_MODEL: ModelInfo = {
   buildInput: () => ({}),
 };
 
-const HIDDEN = [ADD_SOUND_MODEL, EDIT_IMAGE_MODEL, REFERENCE_IMAGE_MODEL, LAST_FRAME_MODEL, MERGE_VIDEOS_MODEL, VOICE_MODEL, MUSIC_MODEL, COMPOSE_MODEL, ...ANIMATE_MODELS];
+/** Brings the ad's end card to life with a gentle, nearly still move ($0.02 per second). */
+export const CARD_MOTION_MODEL: ModelInfo = {
+  id: "fal-ai/ltxv-13b-098-distilled/image-to-video",
+  typicalSeconds: 40,
+  name: "End card",
+  kind: "video",
+  tagline: "Holds the end card on screen with a gentle move.",
+  approxCost: "~$0.02 / second",
+  aspectRatios: ["1:1", "16:9", "9:16"],
+  buildInput: () => ({}),
+};
+
+const HIDDEN = [ADD_SOUND_MODEL, EDIT_IMAGE_MODEL, REFERENCE_IMAGE_MODEL, LAST_FRAME_MODEL, MERGE_VIDEOS_MODEL, VOICE_MODEL, MUSIC_MODEL, COMPOSE_MODEL, CARD_MOTION_MODEL, ...ANIMATE_MODELS];
 
 export function getModel(id: string): ModelInfo | undefined {
   return MODELS.find((m) => m.id === id) ?? HIDDEN.find((m) => m.id === id);
