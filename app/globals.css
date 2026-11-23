@@ -700,3 +700,63 @@ kbd {
 .fix-box .pill { margin-bottom: 8px; }
 .fix-box .label { display: block; margin-bottom: 8px; }
 .fix-mode { margin: 8px 0; }
+
+/* ---------- Your references (product, logo, person) ---------- */
+.refs-open {
+  display: block;
+  width: 100%;
+  margin-top: 10px;
+  padding: 10px 12px;
+  text-align: left;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+.refs-open:hover { border-color: var(--accent); }
+.refs-box {
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+}
+.refs-head { margin-bottom: 8px; }
+.refs-list { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.ref-thumb { position: relative; margin: 0; width: 84px; }
+.ref-thumb img {
+  width: 84px;
+  height: 84px;
+  object-fit: cover;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: #fff;
+}
+.ref-thumb figcaption { font-size: 11px; color: var(--muted); text-align: center; margin-top: 2px; }
+.ref-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid var(--line-strong);
+  background: var(--panel-solid);
+  color: var(--text);
+  font-size: 11px;
+  cursor: pointer;
+}
+.refs-kinds { margin-bottom: 4px; }
+.refs-hint { margin: 4px 0 8px; }
+.refs-consent { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; margin-bottom: 8px; }
+.refs-consent input { margin-top: 3px; }
+.refs-add {
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+.refs-add:disabled { opacity: 0.6; cursor: default; }

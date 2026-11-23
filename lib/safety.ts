@@ -56,3 +56,16 @@ export function checkPrompt(prompt: string): SafetyResult {
   }
   return { ok: true };
 }
+
+/**
+ * Extra rules when the user uploaded a real person's photo: nothing sexual,
+ * revealing or humiliating, even words that are fine for made-up people.
+ */
+export function checkWithPersonPhoto(prompt: string): SafetyResult {
+  const w = words(prompt);
+  if (SEXUAL.some((s) => w.has(s)) || SUGGESTIVE.some((s) => w.has(s)) || ["shirtless", "swimsuit", "bed", "drunk", "naked", "kissing"].some((s) => w.has(s)))
+    return { ok: false, reason: "With a real person's photo, GenStudio only makes everyday, fully clothed, respectful scenes." };
+  if (/\b(arrest(ed)?|mugshot|crime|prison|jail|blood|injur(ed|y)|dead|corpse|crying)\b/i.test(prompt))
+    return { ok: false, reason: "With a real person's photo, GenStudio doesn't make scenes that could embarrass or harm them." };
+  return { ok: true };
+}

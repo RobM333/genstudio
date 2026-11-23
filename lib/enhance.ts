@@ -86,7 +86,7 @@ ${JSON_REPLY}`;
         ? "End with one short sentence describing the sound (ambience, effects, music mood, any spoken line in quotes)."
         : "Do not describe sound.";
     return `${COMMON}
-The first frame of this video is already given as a picture, and the layout is already right. Describe only what moves: the one main action in order, how people move, and the camera movement. Keep everyone where they start and facing the way they face. Do not re-describe the whole scene.
+The first frame of this video is already given as a picture, and the layout is already right. Describe only what moves: the one main action in order, how people move, and the camera movement. Keep everyone where they start and facing the way they face. Do not re-describe the whole scene. You cannot see the picture, so never mention colours, clothes, looks or objects the user did not mention. Keep every step the user asked for (for example landing back on the floor).
 ${MOTION_PLAN}
  Keep it short, about 40 to 70 words. ${soundLine}
 ${JSON_REPLY}`;
@@ -107,6 +107,11 @@ This is for a short video clip (5 to 10 seconds, one shot).
 ${SHOT_RULES}
 Also describe the camera movement (for example slow push-in, orbit, tracking shot, handheld), lighting and mood, and the visual style. ${soundLine}
 ${JSON_REPLY}`;
+}
+
+function refNote(kinds: string[]): string {
+  if (kinds.length === 0) return "";
+  return `\nThe user also gives their own pictures of: ${kinds.join(", ")}. They are shown to the image model. Do not describe how those look (no colours, shapes, labels, faces or clothes for them); call them "the product", "the logo", "the person". Describe the new scene around them: setting, layout, camera, light.`;
 }
 
 /** Simple fallback used in demo mode or when the AI writer isn't available. */
@@ -166,12 +171,13 @@ async function enhanceWithAI(
   model: ModelInfo,
   sound: boolean,
   purpose: Purpose,
+  refKinds: string[] = [],
 ): Promise<{ prompt: string; note?: string }> {
   const { fal } = await import("./fal");
   const call = fal.run("fal-ai/any-llm", {
     input: {
       model: process.env.ENHANCER_MODEL || "google/gemini-2.5-flash",
-      system_prompt: systemPrompt(model, sound, purpose),
+      system_prompt: systemPrompt(model, sound, purpose) + refNote(refKinds),
       prompt: `User's description:\n${prompt}`,
     },
   });
@@ -193,14 +199,14 @@ async function enhanceWithAI(
 export async function enhancePrompt(
   prompt: string,
   model: ModelInfo,
-  opts: { live: boolean; sound?: boolean; purpose?: Purpose },
+  opts: { live: boolean; sound?: boolean; purpose?: Purpose; refKinds?: string[] },
 ): Promise<Enhanced> {
   if (model.needsSource) return { prompt, by: "none" };
   const sound = opts.sound !== false;
   const purpose = opts.purpose ?? "direct";
   if (opts.live) {
     try {
-      const r = await enhanceWithAI(prompt, model, sound, purpose);
+      const r = await enhanceWithAI(prompt, model, sound, purpose, opts.refKinds ?? []);
       return { prompt: r.prompt, note: r.note, by: "ai" };
     } catch (err) {
       console.warn("prompt enhancer fell back to rules:", (err as Error)?.message);
