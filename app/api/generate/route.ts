@@ -4,13 +4,14 @@ import { getModel, isFalMediaUrl, type AspectRatio } from "@/lib/models";
 import { makeDemoMedia } from "@/lib/demo";
 import { fal } from "@/lib/fal";
 import { checkPrompt } from "@/lib/safety";
+import { enhancePrompt } from "@/lib/enhance";
 
 export const dynamic = "force-dynamic";
 
 const MAX_PROMPT = 2000;
 
 export async function POST(req: Request) {
-  let body: { modelId?: string; prompt?: string; aspectRatio?: string; duration?: number; sourceUrl?: string; sound?: boolean };
+  let body: { modelId?: string; prompt?: string; aspectRatio?: string; duration?: number; sourceUrl?: string; sound?: boolean; enhance?: boolean };
   try {
     body = await req.json();
   } catch {
@@ -29,18 +30,38 @@ export async function POST(req: Request) {
   if (!safety.ok) return NextResponse.json({ error: safety.reason, blocked: true }, { status: 422 });
 
   const sourceUrl = model.needsSource ? String(body.sourceUrl ?? "") : undefined;
-  if (model.needsSource && !sourceUrl) return NextResponse.json({ error: "No video to add sound to." }, { status: 400 });
+  if (model.needsSource && !sourceUrl) return NextResponse.json({ error: "Nothing to change." }, { status: 400 });
 
   const aspectRatio = (model.aspectRatios.includes(body.aspectRatio as AspectRatio)
     ? body.aspectRatio
     : model.aspectRatios[0]) as AspectRatio;
-  const duration = model.needsSource
+  const duration = model.kind === "image"
+    ? undefined
+    : model.needsSource
     ? Math.min(Math.max(Number(body.duration) || 8, 1), 30)
     : model.durations && model.durations.includes(Number(body.duration))
       ? Number(body.duration)
       : model.durations?.[0];
 
   const mode = getMode();
+
+  if (mode === "locked") {
+    return NextResponse.json(
+      { error: "Real generation is switched off until an APP_PASSWORD is set. See the README." },
+      { status: 403 },
+    );
+  }
+
+  // Quietly improve the prompt for this model, then check the new prompt too.
+  let finalPrompt = prompt;
+  let enhancedPrompt: string | undefined;
+  if (body.enhance !== false && !model.needsSource) {
+    const e = await enhancePrompt(prompt, model, { live: mode === "live", sound: body.sound !== false });
+    if (e.by !== "none" && checkPrompt(e.prompt).ok) {
+      finalPrompt = e.prompt;
+      enhancedPrompt = e.prompt;
+    }
+  }
 
   if (mode === "demo") {
     // Pretend to work for a moment so the app feels like the real thing.
@@ -51,25 +72,19 @@ export async function POST(req: Request) {
       url: makeDemoMedia({ prompt, kind: model.kind, aspectRatio, modelName: model.name }),
       aspectRatio,
       duration,
+      enhancedPrompt,
     });
   }
 
   if (sourceUrl && !isFalMediaUrl(sourceUrl)) {
-    return NextResponse.json({ error: "Sound can only be added to videos made in GenStudio." }, { status: 400 });
-  }
-
-  if (mode === "locked") {
-    return NextResponse.json(
-      { error: "Real generation is switched off until an APP_PASSWORD is set. See the README." },
-      { status: 403 },
-    );
+    return NextResponse.json({ error: "Only results made in GenStudio can be changed." }, { status: 400 });
   }
 
   try {
     const { request_id } = await fal.queue.submit(model.id, {
-      input: model.buildInput({ prompt, aspectRatio, duration, sourceUrl, sound: body.sound !== false }),
+      input: model.buildInput({ prompt: finalPrompt, aspectRatio, duration, sourceUrl, sound: body.sound !== false }),
     });
-    return NextResponse.json({ status: "IN_QUEUE", requestId: request_id, aspectRatio, duration });
+    return NextResponse.json({ status: "IN_QUEUE", requestId: request_id, aspectRatio, duration, enhancedPrompt });
   } catch (err) {
     console.error("fal submit failed", err);
     return NextResponse.json({ error: friendlyError(err) }, { status: 502 });

@@ -17,6 +17,7 @@ export type ModelInfo = {
   silentApproxPrice?: number; // USD per second when its sound is switched off (if cheaper)
   aspectRatios: AspectRatio[];
   needsSource?: boolean; // works on an existing video (sourceUrl) instead of making a new one
+  typicalSeconds?: number; // rough time a job takes once it starts, for the progress bar
   buildInput: (opts: {
     prompt: string;
     aspectRatio: AspectRatio;
@@ -36,6 +37,7 @@ export const MODELS: ModelInfo[] = [
   // ---------- Images ----------
   {
     id: "fal-ai/flux/schnell",
+    typicalSeconds: 4,
     name: "FLUX Schnell",
     kind: "image",
     tagline: "Fast and very cheap. Great for drafts.",
@@ -49,6 +51,7 @@ export const MODELS: ModelInfo[] = [
   },
   {
     id: "fal-ai/flux-pro/v1.1-ultra",
+    typicalSeconds: 15,
     name: "FLUX 1.1 Pro Ultra",
     kind: "image",
     tagline: "High detail, photo-real results.",
@@ -61,11 +64,12 @@ export const MODELS: ModelInfo[] = [
     }),
   },
   {
-    id: "fal-ai/imagen4/preview",
-    name: "Google Imagen 4",
+    id: "fal-ai/nano-banana",
+    typicalSeconds: 12,
+    name: "Nano Banana (Google)",
     kind: "image",
-    tagline: "Strong at text in images and clean product shots.",
-    approxCost: "~$0.05 / image",
+    tagline: "Spells words correctly, great for thumbnails, ads and posters.",
+    approxCost: "~$0.04 / image",
     aspectRatios: ["1:1", "16:9", "9:16"],
     buildInput: ({ prompt, aspectRatio }) => ({
       prompt,
@@ -75,6 +79,7 @@ export const MODELS: ModelInfo[] = [
   },
   {
     id: "fal-ai/recraft/v3/text-to-image",
+    typicalSeconds: 15,
     name: "Recraft V3",
     kind: "image",
     tagline: "Design and brand style, logos, illustrations.",
@@ -89,6 +94,7 @@ export const MODELS: ModelInfo[] = [
   // ---------- Videos ----------
   {
     id: "fal-ai/minimax/hailuo-02/standard/text-to-video",
+    typicalSeconds: 180,
     name: "Hailuo 02",
     kind: "video",
     tagline: "Good quality for a low price.",
@@ -103,6 +109,7 @@ export const MODELS: ModelInfo[] = [
   },
   {
     id: "fal-ai/kling-video/v2.5-turbo/pro/text-to-video",
+    typicalSeconds: 100,
     name: "Kling 2.5 Turbo Pro",
     kind: "video",
     tagline: "Cinematic motion, strong prompt following.",
@@ -117,12 +124,13 @@ export const MODELS: ModelInfo[] = [
   },
   {
     id: "fal-ai/veo3/fast",
+    typicalSeconds: 75,
     audio: true,
-    silentApproxPrice: 0.25,
+    silentApproxPrice: 0.1,
     name: "Google Veo 3 Fast",
     kind: "video",
     tagline: "Top quality, with sound.",
-    approxCost: "~$0.40 / second",
+    approxCost: "~$0.15 / second",
     durations: [8],
     aspectRatios: ["16:9", "9:16"],
     buildInput: ({ prompt, aspectRatio, sound }) => ({
@@ -140,6 +148,7 @@ export const MODELS: ModelInfo[] = [
  */
 export const ADD_SOUND_MODEL: ModelInfo = {
   id: "fal-ai/mmaudio-v2",
+    typicalSeconds: 25,
   name: "MMAudio (add sound)",
   kind: "video",
   tagline: "Adds matching sound effects and ambience to a silent video.",
@@ -154,11 +163,34 @@ export const ADD_SOUND_MODEL: ModelInfo = {
   }),
 };
 
+/**
+ * Fixes part of an existing image from a plain instruction ("make the text say
+ * I TRIED IT"), keeping the rest. Not shown in the picker; used by "Fix this".
+ */
+export const EDIT_IMAGE_MODEL: ModelInfo = {
+  id: "fal-ai/flux-pro/kontext",
+    typicalSeconds: 12,
+  name: "FLUX Kontext (fix)",
+  kind: "image",
+  tagline: "Changes part of an image and keeps the rest.",
+  approxCost: "~$0.04 / image",
+  needsSource: true,
+  aspectRatios: ["1:1", "16:9", "9:16"],
+  buildInput: ({ prompt, aspectRatio, sourceUrl }) => ({
+    prompt,
+    image_url: sourceUrl,
+    aspect_ratio: aspectRatio,
+    output_format: "png",
+  }),
+};
+
+const HIDDEN = [ADD_SOUND_MODEL, EDIT_IMAGE_MODEL];
+
 export function getModel(id: string): ModelInfo | undefined {
-  return MODELS.find((m) => m.id === id) ?? (id === ADD_SOUND_MODEL.id ? ADD_SOUND_MODEL : undefined);
+  return MODELS.find((m) => m.id === id) ?? HIDDEN.find((m) => m.id === id);
 }
 
-/** Only accept result videos that fal.ai itself hosts, so the key can't be used on random URLs. */
+/** Only accept result images and videos that fal.ai itself hosts, so the key can't be used on random URLs. */
 export function isFalMediaUrl(url: string): boolean {
   try {
     const u = new URL(url);
