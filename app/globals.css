@@ -1031,3 +1031,28 @@ select.text-input { appearance: auto; }
 .pricing-foot { margin-top: 36px; }
 .shots-warning { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
 .shots-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* Template groups, sizes, and drawn previews for templates without an example picture */
+.tpl-cats { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 10px; }
+.page-head .tpl-cats { margin-top: 14px; }
+.chip.active { color: var(--text); border-color: var(--text); background: rgba(255,255,255,0.08); }
+.tpl-hint { margin: -6px 0 12px; }
+.tpl-size { margin: 2px 0 8px; }
+.tpl-mock-wrap .b1 { background: var(--b1, hsl(var(--hue) 95% 62%)); }
+.tpl-mock-wrap .b2 { background: var(--b2, hsl(calc(var(--hue) + 55) 95% 60%)); }
+.tpl-mock-wrap .b3 { background: var(--b3, hsl(calc(var(--hue) - 50) 90% 55%)); }
+.tpl-mock {
+  position: absolute; left: 50%; top: 40%; transform: translate(-50%, -50%); z-index: 1;
+  border-radius: 8px; border: 1.5px solid rgba(255,255,255,0.75); background: rgba(10,10,14,0.28);
+  box-shadow: 0 14px 30px -12px rgba(0,0,0,0.7); backdrop-filter: blur(2px); overflow: hidden;
+  display: flex; align-items: flex-start; justify-content: flex-start;
+}
+.tpl-mock.wide { width: 62%; }
+.tpl-mock.tall { height: 58%; }
+.tpl-mock-label { padding: 5px 7px; font-size: 11px; font-weight: 600; color: #fff; text-shadow: 0 1px 4px rgba(0,0,0,0.6); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.tpl-person {
+  position: absolute; left: 50%; bottom: -12%; transform: translateX(-50%); width: 34%; aspect-ratio: 1 / 1.1;
+  background: radial-gradient(circle at 50% 28%, rgba(255,255,255,0.55) 0 22%, transparent 23%), radial-gradient(ellipse at 50% 100%, rgba(255,255,255,0.45) 0 48%, transparent 49%);
+}
+.canvas.canvas-sized { min-height: 0; max-width: calc(62vh * var(--ar)); width: 100%; justify-self: center; }
+.canvas.canvas-sized img { object-fit: cover; }
