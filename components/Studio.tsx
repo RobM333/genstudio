@@ -1205,6 +1205,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
     if (it.quality) setQuality(it.quality);
     setAspectRatio(it.aspectRatio);
     setPrompt(basePrompt(it).split(BRAND_MARK)[0]);
+    setEnhance(it.enhance !== false);
     if (it.kind === "video") {
       if (it.story && (it.duration ?? 0) > 10) setStoryLen(LONG_LENGTHS.find((d) => d >= (it.duration ?? 0)) ?? MAX_STORY_SECONDS);
       else {
@@ -1215,6 +1216,14 @@ export default function Studio({ mode }: { mode: AppMode }) {
     setComposing(true);
     go("create");
     setTimeout(() => document.getElementById("prompt")?.focus(), 80);
+  }
+
+  /** Opens the Create form with the improved prompt in the box, ready to change and generate. It isn't improved again. */
+  function editEnhanced(it: Item) {
+    if (!it.enhancedPrompt) return;
+    reuse(it);
+    setPrompt(it.enhancedPrompt.slice(0, 2000));
+    setEnhance(false);
   }
 
   /** How many shots a linked-shot video was planned with. */
@@ -2643,11 +2652,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
               <p>{selected.enhancedPrompt}</p>
               <button
                 className="btn"
-                onClick={() => {
-                  setTemplate(null);
-                  setPrompt(selected.enhancedPrompt!);
-                  setEnhance(false);
-                }}
+                onClick={() => editEnhanced(selected)}
               >
                 Edit this prompt
               </button>
