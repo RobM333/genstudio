@@ -5,7 +5,7 @@ import { ADD_SOUND_MODEL, estimateCost, formatCost, getModel, MODELS, type Aspec
 import { autoAspectRatios, pickModel, type Quality } from "@/lib/router";
 import { fillTemplate, TEMPLATES, type Template } from "@/lib/templates";
 import type { AppMode } from "@/lib/config";
-import { HERO_MEDIA, INSPIRATION, TEMPLATE_MEDIA, type ShowcaseMedia } from "@/lib/showcase";
+import { INSPIRATION, TEMPLATE_MEDIA, type ShowcaseMedia } from "@/lib/showcase";
 import { checkPrompt } from "@/lib/safety";
 import AgreeModal, { hasAcceptedTerms } from "./AgreeModal";
 import Link from "next/link";
@@ -49,6 +49,7 @@ type JobSpec = {
 };
 
 const AUTO = "auto";
+type View = "home" | "create" | "templates" | "gallery";
 const STORAGE_KEY = "genstudio.gallery.v1";
 const MAX_ITEMS = 200;
 
@@ -97,7 +98,8 @@ export default function Studio({ mode }: { mode: AppMode }) {
   const [items, setItems] = useState<Item[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [filter, setFilter] = useState<"all" | MediaKind>("all");
-  const [open, setOpen] = useState<Item | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [view, setView] = useState<View>("home");
   const [formError, setFormError] = useState<string | null>(null);
   const polling = useRef(new Set<string>());
 
@@ -135,7 +137,6 @@ export default function Studio({ mode }: { mode: AppMode }) {
 
   const update = useCallback((id: string, patch: Partial<Item>) => {
     setItems((prev) => prev.map((it) => (it.id === id ? { ...it, ...patch } : it)));
-    setOpen((cur) => (cur && cur.id === id ? { ...cur, ...patch } : cur));
   }, []);
 
   function fail(item: Item, error: string) {
@@ -237,6 +238,8 @@ export default function Studio({ mode }: { mode: AppMode }) {
       stage: "video",
     };
     setItems((prev) => [item, ...prev]);
+    setSelectedId(item.id);
+    setView("create");
     submitStep(item, spec.modelId);
   }
 
@@ -245,7 +248,6 @@ export default function Studio({ mode }: { mode: AppMode }) {
     if (!it.url) return;
     const next: Item = { ...it, status: "pending", wantSound: true, stage: "sound", soundError: undefined };
     update(it.id, { status: "pending", wantSound: true, stage: "sound", soundError: undefined, requestId: undefined });
-    setOpen(null);
     submitStep(next, ADD_SOUND_MODEL.id, it.url);
   }
 
@@ -296,7 +298,6 @@ export default function Studio({ mode }: { mode: AppMode }) {
       sound: draft.kind === "video" ? draft.wantSound !== false : undefined,
       templateName: draft.templateName,
     });
-    setOpen(null);
   }
 
   function chooseTemplate(t: Template | null) {
@@ -320,71 +321,98 @@ export default function Studio({ mode }: { mode: AppMode }) {
 
   function remove(id: string) {
     setItems((prev) => prev.filter((it) => it.id !== id));
-    setOpen(null);
+    setSelectedId(null);
   }
 
   const shown = items.filter((it) => filter === "all" || it.kind === filter);
   const pendingCount = items.filter((it) => it.status === "pending").length;
   const kindTemplates = TEMPLATES.filter((t) => t.kind === kind);
+  const selected = items.find((it) => it.id === selectedId) ?? items[0] ?? null;
+  const recent = items.slice(0, 12);
 
-  return (
-    <div className="shell">
-      <div className="aurora" aria-hidden />
-      <header className="topbar">
-        <a className="brand" href="#top" aria-label="GenStudio home">
-          <LogoMark />
-          <span className="wordmark">GenStudio</span>
-        </a>
-        <nav className="nav" aria-label="Sections">
-          <a href="#create">Create</a>
-          <a href="#templates">Templates</a>
-          <a href="#gallery">Gallery</a>
-        </nav>
-        <div className="topbar-right">
-          {pendingCount > 0 && (
-            <span className="running">
-              <span className="pulse" aria-hidden /> {pendingCount} rendering
-            </span>
-          )}
-          <ModeBadge mode={mode} />
-        </div>
-      </header>
+  function go(v: View) {
+    setView(v);
+    if (typeof window !== "undefined") window.scrollTo({ top: 0 });
+  }
 
-      <section className="hero" id="top">
-        <div className="hero-copy">
-        <p className="eyebrow">AI image &amp; video studio</p>
-        <h1>
-          Ideas in. <em>Scroll-stoppers</em> out.
-        </h1>
-        <p className="hero-sub">
-          The best image and video models in one place. Auto picks the right one for every job, cheap drafts
-          first, and you only pay for finals you love.
-        </p>
-        <ul className="stats">
-          <li>
-            <strong>{MODELS.length}</strong> top models
-          </li>
-          <li>
-            <strong>{TEMPLATES.length}</strong> ad templates
-          </li>
-          <li>
-            Drafts from <strong>$0.003</strong>
-          </li>
-        </ul>
-        </div>
-        <div className="hero-stage" aria-hidden>
-          {[0, 1, 2].map((i) => (
-            <div key={i} className={`stage-card stage-${i}`} style={{ "--hue": String([195, 265, 20][i]) } as React.CSSProperties}>
-              <Showcase media={HERO_MEDIA[i]} />
-              <span className="stage-chip">{["Product hero", "Cinematic teaser", "Story ad"][i]}</span>
-            </div>
-          ))}
-          <div className="stage-prompt">
-            <span className="spark">✦</span> <span className="stage-text">a sneaker on a neon pedestal, rain outside</span>
-          </div>
-        </div>
-      </section>
+  function openItem(it: Item) {
+    setSelectedId(it.id);
+    go("create");
+  }
 
+  function startTemplate(t: Template) {
+    chooseTemplate(t);
+    go("create");
+  }
+
+  function reuse(it: Item) {
+    setTemplate(null);
+    setKind(it.kind);
+    setChoice(it.quality ? AUTO : it.modelId);
+    if (it.quality) setQuality(it.quality);
+    setAspectRatio(it.aspectRatio);
+    setPrompt(it.prompt);
+  }
+
+  function switchKind(k: MediaKind) {
+    setKind(k);
+    if (template && template.kind !== k) setTemplate(null);
+  }
+
+  // ---------- pieces shared by several views ----------
+
+  const kindTabs = (
+    <div className="tabs" role="tablist">
+      {(["image", "video"] as MediaKind[]).map((k) => (
+        <button
+          key={k}
+          role="tab"
+          aria-selected={kind === k}
+          className={kind === k ? "tab active" : "tab"}
+          onClick={() => switchKind(k)}
+        >
+          <span className="tab-icon" aria-hidden>
+            {k === "image" ? <IconImage /> : <IconVideo />}
+          </span>
+          {k === "image" ? "Image" : "Video"}
+        </button>
+      ))}
+    </div>
+  );
+
+  const templateCard = (t: Template) => (
+    <button
+      key={t.id}
+      className={template?.id === t.id ? "template active" : "template"}
+      onClick={() => (view === "create" ? chooseTemplate(template?.id === t.id ? null : t) : startTemplate(t))}
+      title={t.use}
+      style={{ "--hue": String((TEMPLATES.indexOf(t) * 47 + 190) % 360) } as React.CSSProperties}
+    >
+      <span className="template-art" aria-hidden>
+        <Showcase media={TEMPLATE_MEDIA[t.id]} />
+      </span>
+      <span className="template-ar">
+        {t.kind === "video" ? "Video · " : ""}
+        {t.aspectRatio}
+      </span>
+      <span className="template-meta">
+        <span className="template-name">{t.name}</span>
+        <span className="template-use">{t.use}</span>
+      </span>
+    </button>
+  );
+
+  const generateButton = (
+    <button className="generate" onClick={generate} disabled={mode === "locked"}>
+      <span className="generate-label">
+        {isAuto && quality === "draft" ? `Generate ${kind} draft` : `Generate ${kind}`}
+      </span>
+      <span className="generate-cost">{mode === "demo" ? "Free" : formatCost(cost)}</span>
+    </button>
+  );
+
+  const notices = (
+    <>
       {mode === "demo" && (
         <div className="notice">
           <span className="notice-dot" aria-hidden />
@@ -403,345 +431,639 @@ export default function Studio({ mode }: { mode: AppMode }) {
           </span>
         </div>
       )}
+    </>
+  );
 
-      <main className="layout">
-        <section className="panel" aria-label="Create" id="create">
-          <div className="tabs" role="tablist">
-            {(["image", "video"] as MediaKind[]).map((k) => (
-              <button
-                key={k}
-                role="tab"
-                aria-selected={kind === k}
-                className={kind === k ? "tab active" : "tab"}
-                onClick={() => {
-                  setKind(k);
-                  if (template && template.kind !== k) setTemplate(null);
-                }}
-              >
-                <span className="tab-icon" aria-hidden>
-                  {k === "image" ? <IconImage /> : <IconVideo />}
-                </span>
-                {k === "image" ? "Image" : "Video"}
+  const tile = (it: Item) => (
+    <button
+      key={it.id}
+      className={`tile tile-${it.aspectRatio.replace(":", "x")} tile-${it.status}`}
+      onClick={() => openItem(it)}
+      title={it.prompt}
+    >
+      {it.status === "pending" && (
+        <div className="tile-state">
+          <span className="shimmer" aria-hidden />
+          <span className="spinner" aria-hidden />
+          <span>
+            {it.stage === "sound"
+              ? "Adding sound..."
+              : `Creating ${it.quality === "draft" ? "draft" : it.quality === "final" ? "final" : it.kind}...`}
+          </span>
+        </div>
+      )}
+      {it.status === "failed" && (
+        <div className="tile-state failed">
+          <span>Failed</span>
+          <span className="muted small">{it.error}</span>
+        </div>
+      )}
+      {it.status === "done" && it.url && <Media item={it} thumb />}
+      {it.quality && <span className={`tile-quality q-${it.quality}`}>{it.quality === "draft" ? "Draft" : "Final"}</span>}
+      <span className="tile-overlay">
+        <span className="tile-prompt">{it.prompt}</span>
+        <span className="tile-label">
+          {it.kind === "video" ? (it.hasAudio ? "🔊 " : "▶ ") : ""}
+          {it.modelName}
+        </span>
+      </span>
+    </button>
+  );
+
+  const inspiration = (
+    <div className="inspo">
+      {INSPIRATION.map((ex, i) => (
+        <button
+          key={ex.prompt}
+          className="inspo-card"
+          style={{ "--hue": String((i * 61 + 200) % 360) } as React.CSSProperties}
+          onClick={() => {
+            setTemplate(null);
+            setKind(ex.kind);
+            setPrompt(ex.prompt);
+            go("home");
+            setTimeout(() => document.getElementById("home-prompt")?.focus(), 50);
+          }}
+        >
+          <Showcase media={ex.media} />
+          <span className="inspo-kind">{ex.kind === "image" ? "Image" : "Video"}</span>
+          <span className="inspo-text">{ex.prompt}</span>
+          <span className="inspo-cta">Use this prompt →</span>
+        </button>
+      ))}
+    </div>
+  );
+
+  // ---------- the full settings panel (Create workspace) ----------
+
+  const composer = (
+    <section className="panel" aria-label="Create">
+      {kindTabs}
+
+      <div className="step" id="templates">
+        <div className="step-head">
+          <span className="step-num">01</span> Start from a template
+          <span className="step-opt">optional</span>
+        </div>
+        <div className="templates">{kindTemplates.map(templateCard)}</div>
+
+        {template && (
+          <div className="fields">
+            <div className="fields-head">
+              {template.emoji} {template.name}
+              <span className="fields-actions">
+                <button
+                  className="link"
+                  onClick={() => {
+                    const example = Object.fromEntries(template.fields.map((f) => [f.key, f.placeholder]));
+                    setFields(example);
+                    setPrompt(fillTemplate(template, example));
+                  }}
+                >
+                  Use this example
+                </button>
+                <button className="link" onClick={() => chooseTemplate(null)}>
+                  Clear
+                </button>
+              </span>
+            </div>
+            {template.fields.map((f) => (
+              <label key={f.key} className="field">
+                <span>{f.label}</span>
+                <input
+                  value={fields[f.key] ?? ""}
+                  placeholder={`e.g. ${f.placeholder}`}
+                  onChange={(e) => setField(f.key, e.target.value)}
+                />
+              </label>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="step">
+        <label className="step-head" htmlFor="prompt">
+          <span className="step-num">02</span> {template ? "Your prompt (edit freely)" : `Describe your ${kind}`}
+        </label>
+        <div className="prompt-box">
+          <textarea
+            id="prompt"
+            className="prompt"
+            rows={template ? 4 : 5}
+            maxLength={2000}
+            placeholder={EXAMPLES[kind][0]}
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) generate();
+            }}
+          />
+          <span className="prompt-count">{prompt.length}/2000</span>
+        </div>
+        {!template && (
+          <div className="examples">
+            <span className="examples-label">Try:</span>
+            {EXAMPLES[kind].map((ex) => (
+              <button key={ex} className="chip" onClick={() => setPrompt(ex)}>
+                {ex.length > 42 ? ex.slice(0, 40) + "..." : ex}
               </button>
             ))}
           </div>
+        )}
+      </div>
 
-          <div className="step" id="templates">
-            <div className="step-head">
-              <span className="step-num">01</span> Start from a template
-              <span className="step-opt">optional</span>
-            </div>
-            <div className="templates">
-              {kindTemplates.map((t) => (
-                <button
-                  key={t.id}
-                  className={template?.id === t.id ? "template active" : "template"}
-                  onClick={() => chooseTemplate(template?.id === t.id ? null : t)}
-                  title={t.use}
-                  style={{ "--hue": String((TEMPLATES.indexOf(t) * 47 + 190) % 360) } as React.CSSProperties}
-                >
-                  <span className="template-art" aria-hidden>
-                    <Showcase media={TEMPLATE_MEDIA[t.id]} />
-                    {!TEMPLATE_MEDIA[t.id] && <span className="template-emoji">{t.emoji}</span>}
-                  </span>
-                  <span className="template-ar">{t.aspectRatio}</span>
-                  <span className="template-meta">
-                    <span className="template-name">{t.name}</span>
-                    <span className="template-use">{t.use}</span>
-                  </span>
-                </button>
-              ))}
-            </div>
-
-            {template && (
-              <div className="fields">
-                <div className="fields-head">
-                  {template.emoji} {template.name}
-                  <span className="fields-actions">
-                    <button
-                      className="link"
-                      onClick={() => {
-                        const example = Object.fromEntries(template.fields.map((f) => [f.key, f.placeholder]));
-                        setFields(example);
-                        setPrompt(fillTemplate(template, example));
-                      }}
-                    >
-                      Use this example
-                    </button>
-                    <button className="link" onClick={() => chooseTemplate(null)}>
-                      Clear
-                    </button>
-                  </span>
-                </div>
-                {template.fields.map((f) => (
-                  <label key={f.key} className="field">
-                    <span>{f.label}</span>
-                    <input
-                      value={fields[f.key] ?? ""}
-                      placeholder={`e.g. ${f.placeholder}`}
-                      onChange={(e) => setField(f.key, e.target.value)}
-                    />
-                  </label>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="step">
-            <label className="step-head" htmlFor="prompt">
-              <span className="step-num">02</span> {template ? "Your prompt (edit freely)" : `Describe your ${kind}`}
-            </label>
-            <div className="prompt-box">
-              <textarea
-                id="prompt"
-                className="prompt"
-                rows={template ? 4 : 5}
-                maxLength={2000}
-                placeholder={EXAMPLES[kind][0]}
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) generate();
-                }}
-              />
-              <span className="prompt-count">{prompt.length}/2000</span>
-            </div>
-            {!template && (
-              <div className="examples">
-                <span className="examples-label">Try:</span>
-                {EXAMPLES[kind].map((ex) => (
-                  <button key={ex} className="chip" onClick={() => setPrompt(ex)}>
-                    {ex.length > 42 ? ex.slice(0, 40) + "..." : ex}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="step">
-            <div className="step-head">
-              <span className="step-num">03</span> Model
-            </div>
-            <div className="models">
-              <button className={isAuto ? "model auto active" : "model auto"} onClick={() => setChoice(AUTO)}>
-                <span className="model-name">
-                  <span className="spark" aria-hidden>
-                    ✦
-                  </span>{" "}
-                  Auto <span className="tag tag-rec">Recommended</span>
-                </span>
-                <span className="model-tag">Picks the best model for each job, and saves money on drafts.</span>
-              </button>
-              {models.map((m) => (
-                <button
-                  key={m.id}
-                  className={!isAuto && m.id === model.id ? "model active" : "model"}
-                  onClick={() => setChoice(m.id)}
-                >
-                  <span className="model-name">
-                    {m.name}
-                    {m.kind === "video" && (
-                      <span className={m.audio ? "tag tag-sound" : "tag"}>{m.audio ? "🔊 Sound" : "🔇 Silent"}</span>
-                    )}
-                  </span>
-                  <span className="model-tag">
-                    {m.tagline}
-                    {m.kind === "video" && !m.audio && <span className="sound-tag"> Sound can be added.</span>}
-                  </span>
-                  <span className="model-cost">{m.approxCost}</span>
-                </button>
-              ))}
-            </div>
-
-            {isAuto && (
-              <>
-                <div className="sub-label">Quality</div>
-                <div className="segmented">
-                  <button className={quality === "draft" ? "seg active" : "seg"} onClick={() => setQuality("draft")}>
-                    <strong>Draft</strong>
-                    <span>Cheap preview</span>
-                  </button>
-                  <button className={quality === "final" ? "seg active" : "seg"} onClick={() => setQuality("final")}>
-                    <strong>Final</strong>
-                    <span>Best quality</span>
-                  </button>
-                </div>
-                <p className="auto-pick">
-                  <span className="spark" aria-hidden>
-                    ✦
-                  </span>{" "}
-                  Auto will use <strong>{model.name}</strong>: {auto.reason}.
-                </p>
-              </>
-            )}
-          </div>
-
-          <div className="step">
-            <div className="step-head">
-              <span className="step-num">04</span> Settings
-            </div>
-            <div className="row">
-              <div>
-                <div className="sub-label">Shape</div>
-                <div className="pills">
-                  {shapes.map((ar) => (
-                    <button
-                      key={ar}
-                      className={ar === aspectRatio ? "pill active" : "pill"}
-                      onClick={() => setAspectRatio(ar)}
-                    >
-                      <span className={`ar ar-${ar.replace(":", "x")}`} aria-hidden /> {ar}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              {model.durations && (
-                <div>
-                  <div className="sub-label">Length</div>
-                  <div className="pills">
-                    {model.durations.map((d) => (
-                      <button key={d} className={d === length ? "pill active" : "pill"} onClick={() => setDuration(d)}>
-                        {d}s
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {kind === "video" && (
-              <>
-                <div className="sub-label">Sound</div>
-                <div className="segmented">
-                  <button className={sound ? "seg active" : "seg"} onClick={() => setSound(true)}>
-                    <strong>🔊 With sound</strong>
-                    <span>{formatCost(costWith)}</span>
-                  </button>
-                  <button className={!sound ? "seg active" : "seg"} onClick={() => setSound(false)}>
-                    <strong>🔇 No sound</strong>
-                    <span>{formatCost(costWithout)}</span>
-                  </button>
-                </div>
-                {sound && (
-                  <p className="auto-pick">
-                    {model.audio
-                      ? `${model.name} makes its own sound, including speech.`
-                      : `${model.name} is silent, so we add matching sound effects and ambience after (not speech). For speech, use Google Veo 3.`}
-                  </p>
+      <div className="step">
+        <div className="step-head">
+          <span className="step-num">03</span> Model
+        </div>
+        <div className="models">
+          <button className={isAuto ? "model auto active" : "model auto"} onClick={() => setChoice(AUTO)}>
+            <span className="model-name">
+              <span className="spark" aria-hidden>
+                ✦
+              </span>{" "}
+              Auto <span className="tag tag-rec">Recommended</span>
+            </span>
+            <span className="model-tag">Picks the best model for each job, and saves money on drafts.</span>
+          </button>
+          {models.map((m) => (
+            <button
+              key={m.id}
+              className={!isAuto && m.id === model.id ? "model active" : "model"}
+              onClick={() => setChoice(m.id)}
+            >
+              <span className="model-name">
+                {m.name}
+                {m.kind === "video" && (
+                  <span className={m.audio ? "tag tag-sound" : "tag"}>{m.audio ? "🔊 Sound" : "🔇 Silent"}</span>
                 )}
-              </>
-            )}
-          </div>
-
-          <div className="generate-bar">
-            {formError && <p className="error">{formError}</p>}
-            <button className="generate" onClick={generate} disabled={mode === "locked"}>
-              <span className="generate-label">
-                {isAuto && quality === "draft" ? `Generate ${kind} draft` : `Generate ${kind}`}
               </span>
-              <span className="generate-cost">{mode === "demo" ? "Free" : formatCost(cost)}</span>
+              <span className="model-tag">
+                {m.tagline}
+                {m.kind === "video" && !m.audio && <span className="sound-tag"> Sound can be added.</span>}
+              </span>
+              <span className="model-cost">{m.approxCost}</span>
             </button>
-            <p className="hint">
-              {mode === "demo" ? `Free in demo mode (live cost ${formatCost(cost)}).` : `Estimated cost: ${formatCost(cost)}.`}{" "}
-              <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Enter</kbd> to generate.
-            </p>
-          </div>
-        </section>
+          ))}
+        </div>
 
-        <section className="gallery-wrap" aria-label="Gallery" id="gallery">
-          <div className="gallery-head">
-            <h2>
-              Your gallery <span className="gallery-count">{items.length}</span>
-            </h2>
-            <div className="filters">
-              {(["all", "image", "video"] as const).map((f) => (
-                <button key={f} className={filter === f ? "filter active" : "filter"} onClick={() => setFilter(f)}>
-                  {f === "all" ? "All" : f === "image" ? "Images" : "Videos"}
+        {isAuto && (
+          <>
+            <div className="sub-label">Quality</div>
+            <div className="segmented">
+              <button className={quality === "draft" ? "seg active" : "seg"} onClick={() => setQuality("draft")}>
+                <strong>Draft</strong>
+                <span>Cheap preview</span>
+              </button>
+              <button className={quality === "final" ? "seg active" : "seg"} onClick={() => setQuality("final")}>
+                <strong>Final</strong>
+                <span>Best quality</span>
+              </button>
+            </div>
+            <p className="auto-pick">
+              <span className="spark" aria-hidden>
+                ✦
+              </span>{" "}
+              Auto will use <strong>{model.name}</strong>: {auto.reason}.
+            </p>
+          </>
+        )}
+      </div>
+
+      <div className="step">
+        <div className="step-head">
+          <span className="step-num">04</span> Settings
+        </div>
+        <div className="row">
+          <div>
+            <div className="sub-label">Shape</div>
+            <div className="pills">
+              {shapes.map((ar) => (
+                <button key={ar} className={ar === aspectRatio ? "pill active" : "pill"} onClick={() => setAspectRatio(ar)}>
+                  <span className={`ar ar-${ar.replace(":", "x")}`} aria-hidden /> {ar}
                 </button>
               ))}
             </div>
           </div>
-
-          {loaded && shown.length === 0 && (
-            <div className="empty">
-              <div className="empty-art" aria-hidden>
-                <LogoMark size={44} />
-              </div>
-              <h3>Your first creation goes here</h3>
-              <p className="muted">
-                Pick a template or write a prompt, then press Generate. Start with a cheap draft, and make a final
-                version of the ones you like.
-              </p>
-              <div className="inspo">
-                {INSPIRATION.map((ex, i) => (
-                  <button
-                    key={ex.prompt}
-                    className="inspo-card"
-                    style={{ "--hue": String((i * 61 + 200) % 360) } as React.CSSProperties}
-                    onClick={() => {
-                      setTemplate(null);
-                      setKind(ex.kind);
-                      setPrompt(ex.prompt);
-                      document.getElementById("create")?.scrollIntoView({ behavior: "smooth" });
-                    }}
-                  >
-                    <Showcase media={ex.media} />
-                    <span className="inspo-kind">{ex.kind === "image" ? "Image" : "Video"}</span>
-                    <span className="inspo-text">{ex.prompt}</span>
-                    <span className="inspo-cta">Use this prompt →</span>
+          {model.durations && (
+            <div>
+              <div className="sub-label">Length</div>
+              <div className="pills">
+                {model.durations.map((d) => (
+                  <button key={d} className={d === length ? "pill active" : "pill"} onClick={() => setDuration(d)}>
+                    {d}s
                   </button>
                 ))}
               </div>
             </div>
           )}
+        </div>
 
-          <div className="grid">
-            {shown.map((it) => (
-              <button
-                key={it.id}
-                className={`tile tile-${it.aspectRatio.replace(":", "x")} tile-${it.status}`}
-                onClick={() => it.status !== "pending" && setOpen(it)}
-                title={it.prompt}
-              >
-                {it.status === "pending" && (
-                  <div className="tile-state">
-                    <span className="shimmer" aria-hidden />
-                    <span className="spinner" aria-hidden />
-                    <span>
-                      {it.stage === "sound"
-                        ? "Adding sound..."
-                        : `Creating ${it.quality === "draft" ? "draft" : it.quality === "final" ? "final" : it.kind}...`}
-                    </span>
-                  </div>
-                )}
-                {it.status === "failed" && (
-                  <div className="tile-state failed">
-                    <span>Failed</span>
-                    <span className="muted small">{it.error}</span>
-                  </div>
-                )}
-                {it.status === "done" && it.url && <Media item={it} thumb />}
-                {it.quality && <span className={`tile-quality q-${it.quality}`}>{it.quality === "draft" ? "Draft" : "Final"}</span>}
-                <span className="tile-overlay">
-                  <span className="tile-prompt">{it.prompt}</span>
-                  <span className="tile-label">
-                    {it.kind === "video" ? (it.hasAudio ? "🔊 " : "▶ ") : ""}
-                    {it.modelName}
-                  </span>
-                </span>
+        {kind === "video" && (
+          <>
+            <div className="sub-label">Sound</div>
+            <div className="segmented">
+              <button className={sound ? "seg active" : "seg"} onClick={() => setSound(true)}>
+                <strong>🔊 With sound</strong>
+                <span>{formatCost(costWith)}</span>
               </button>
-            ))}
-          </div>
-        </section>
-      </main>
+              <button className={!sound ? "seg active" : "seg"} onClick={() => setSound(false)}>
+                <strong>🔇 No sound</strong>
+                <span>{formatCost(costWithout)}</span>
+              </button>
+            </div>
+            {sound && (
+              <p className="auto-pick">
+                {model.audio
+                  ? `${model.name} makes its own sound, including speech.`
+                  : `${model.name} is silent, so we add matching sound effects and ambience after (not speech). For speech, use Google Veo 3.`}
+              </p>
+            )}
+          </>
+        )}
+      </div>
 
-      <footer className="site-footer">
-        <span>You are responsible for what you create with GenStudio.</span>
-        <span>
+      <div className="generate-bar">
+        {formError && <p className="error">{formError}</p>}
+        {generateButton}
+        <p className="hint">
+          {mode === "demo" ? `Free in demo mode (live cost ${formatCost(cost)}).` : `Estimated cost: ${formatCost(cost)}.`}{" "}
+          <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Enter</kbd> to generate.
+        </p>
+      </div>
+    </section>
+  );
+
+  // ---------- the selected result, shown large ----------
+
+  const filmstrip = recent.length > 1 && (
+    <div className="filmstrip" aria-label="History">
+      {recent.map((it) => (
+        <button
+          key={it.id}
+          className={selected?.id === it.id ? "film active" : "film"}
+          onClick={() => setSelectedId(it.id)}
+          title={it.prompt}
+        >
+          {it.status === "done" && it.url ? <Media item={it} thumb /> : <span className="film-state">{it.status === "failed" ? "!" : <span className="spinner small" />}</span>}
+        </button>
+      ))}
+    </div>
+  );
+
+  const stage = selected ? (
+    <div className="canvas-wrap">
+      <div className={`canvas canvas-${selected.aspectRatio.replace(":", "x")}`}>
+        {selected.status === "pending" && (
+          <div className="tile-state">
+            <span className="shimmer" aria-hidden />
+            <span className="spinner" aria-hidden />
+            <span>
+              {selected.stage === "sound"
+                ? "Adding sound..."
+                : `Creating your ${selected.quality === "draft" ? "draft" : selected.kind}... ${selected.kind === "video" ? "Videos take about a minute." : ""}`}
+            </span>
+          </div>
+        )}
+        {selected.status === "failed" && (
+          <div className="tile-state failed">
+            <span>Failed</span>
+            <span className="muted small">{selected.error}</span>
+          </div>
+        )}
+        {selected.status === "done" && selected.url && <Media item={selected} />}
+      </div>
+      {filmstrip}
+
+      <div className="details">
+        <p className="viewer-prompt">{selected.prompt}</p>
+        <dl className="meta">
+          <dt>Model</dt>
+          <dd>
+            {selected.modelName}
+            {selected.autoReason && <span className="muted small"> (Auto: {selected.autoReason})</span>}
+          </dd>
+          {selected.quality && (
+            <>
+              <dt>Quality</dt>
+              <dd>{selected.quality === "draft" ? "Draft" : "Final"}</dd>
+            </>
+          )}
+          {selected.templateName && (
+            <>
+              <dt>Template</dt>
+              <dd>{selected.templateName}</dd>
+            </>
+          )}
+          {selected.kind === "video" && (
+            <>
+              <dt>Sound</dt>
+              <dd>
+                {selected.hasAudio ? "Yes" : "No"}
+                {selected.soundError && <span className="muted small"> (couldn&apos;t add: {selected.soundError})</span>}
+              </dd>
+            </>
+          )}
+          <dt>Shape</dt>
+          <dd>{selected.aspectRatio}</dd>
+          {selected.duration && (
+            <>
+              <dt>Length</dt>
+              <dd>{selected.duration}s</dd>
+            </>
+          )}
+          <dt>Made</dt>
+          <dd>{new Date(selected.createdAt).toLocaleString()}</dd>
+        </dl>
+        {selected.quality === "draft" && selected.status === "done" && <FinalButton draft={selected} onClick={makeFinal} />}
+        {selected.kind === "video" && selected.status === "done" && !selected.hasAudio && selected.url && (
+          <div className="final-box">
+            <button className="btn" onClick={() => addSound(selected)}>
+              🔊 Add sound
+            </button>
+            <p className="hint">
+              Adds matching sound effects and ambience. About {formatCost(estimateCost(ADD_SOUND_MODEL, selected.duration))}.
+            </p>
+          </div>
+        )}
+        <div className="viewer-actions">
+          {selected.url && (
+            <button className="btn btn-light" onClick={() => download(selected)}>
+              Download
+            </button>
+          )}
+          <button className="btn" onClick={() => reuse(selected)}>
+            Reuse prompt
+          </button>
+          <button className="btn btn-danger" onClick={() => remove(selected.id)}>
+            Delete
+          </button>
+        </div>
+      </div>
+    </div>
+  ) : (
+    <div className="canvas-empty">
+      <LogoMark size={44} />
+      <h3>Your creation will appear here</h3>
+      <p className="muted">Pick a template or describe what you want on the right, then press Generate.</p>
+    </div>
+  );
+
+  // ---------- views ----------
+
+  const homeView = (
+    <div className="home">
+      <h1 className="home-title">
+        What will you <em>create</em> today?
+      </h1>
+
+      <div className="composer-lite">
+        <div className="prompt-box">
+          <textarea
+            id="home-prompt"
+            className="prompt"
+            rows={3}
+            maxLength={2000}
+            placeholder={`Describe an ${kind === "image" ? "image" : "video"}... e.g. ${EXAMPLES[kind][0]}`}
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) generate();
+            }}
+          />
+        </div>
+        <div className="lite-bar">
+          <div className="lite-left">
+            <div className="mini-tabs">
+              {(["image", "video"] as MediaKind[]).map((k) => (
+                <button key={k} className={kind === k ? "active" : ""} onClick={() => switchKind(k)}>
+                  {k === "image" ? <IconImage /> : <IconVideo />} {k === "image" ? "Image" : "Video"}
+                </button>
+              ))}
+            </div>
+            <select
+              className="mini-select"
+              aria-label="Model"
+              value={isAuto ? `auto:${quality}` : choice}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v.startsWith("auto:")) {
+                  setChoice(AUTO);
+                  setQuality(v.slice(5) as Quality);
+                } else setChoice(v);
+              }}
+            >
+              <option value="auto:draft">✦ Auto · Draft</option>
+              <option value="auto:final">✦ Auto · Final</option>
+              {models.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name}
+                </option>
+              ))}
+            </select>
+            <select
+              className="mini-select"
+              aria-label="Shape"
+              value={aspectRatio}
+              onChange={(e) => setAspectRatio(e.target.value as AspectRatio)}
+            >
+              {shapes.map((ar) => (
+                <option key={ar} value={ar}>
+                  {ar}
+                </option>
+              ))}
+            </select>
+            {kind === "video" && (
+              <button className={sound ? "mini-toggle on" : "mini-toggle"} onClick={() => setSound(!sound)}>
+                {sound ? "🔊 Sound on" : "🔇 Sound off"}
+              </button>
+            )}
+            <button className="link" onClick={() => go("create")}>
+              More settings
+            </button>
+          </div>
+          {generateButton}
+        </div>
+        {formError && <p className="error">{formError}</p>}
+      </div>
+
+      {notices}
+
+      <section className="home-section">
+        <div className="section-head">
+          <h2>Start from a template</h2>
+          <button className="link" onClick={() => go("templates")}>
+            See all {TEMPLATES.length}
+          </button>
+        </div>
+        <div className="template-row">{TEMPLATES.map(templateCard)}</div>
+      </section>
+
+      <section className="home-section">
+        <div className="section-head">
+          <h2>{items.length ? "Jump back in" : "Ideas to try"}</h2>
+          {items.length > 0 && (
+            <button className="link" onClick={() => go("gallery")}>
+              Open gallery
+            </button>
+          )}
+        </div>
+        {items.length ? <div className="recent-row">{items.slice(0, 8).map(tile)}</div> : inspiration}
+      </section>
+    </div>
+  );
+
+  const createView = (
+    <div className="workspace">
+      <div className="workspace-main">
+        {stage}
+      </div>
+      <div className="workspace-side">{composer}</div>
+    </div>
+  );
+
+  const templatesView = (
+    <div className="page">
+      <div className="page-head">
+        <h1>Templates</h1>
+        <p className="muted">Ready-made ads for stores, socials and YouTube. Pick one, fill in the blanks, and generate.</p>
+      </div>
+      {(["image", "video"] as MediaKind[]).map((k) => (
+        <section key={k} className="home-section">
+          <div className="section-head">
+            <h2>{k === "image" ? "Images" : "Videos"}</h2>
+          </div>
+          <div className="template-grid">{TEMPLATES.filter((t) => t.kind === k).map(templateCard)}</div>
+        </section>
+      ))}
+    </div>
+  );
+
+  const galleryView = (
+    <div className="page">
+      <div className="gallery-head">
+        <h1>
+          Gallery <span className="gallery-count">{items.length}</span>
+        </h1>
+        <div className="filters">
+          {(["all", "image", "video"] as const).map((f) => (
+            <button key={f} className={filter === f ? "filter active" : "filter"} onClick={() => setFilter(f)}>
+              {f === "all" ? "All" : f === "image" ? "Images" : "Videos"}
+            </button>
+          ))}
+        </div>
+      </div>
+      {loaded && shown.length === 0 && (
+        <div className="empty">
+          <div className="empty-art" aria-hidden>
+            <LogoMark size={44} />
+          </div>
+          <h3>Nothing here yet</h3>
+          <p className="muted">Everything you make is saved here. Try one of these to start.</p>
+          {inspiration}
+        </div>
+      )}
+      <div className="grid">{shown.map(tile)}</div>
+    </div>
+  );
+
+  const NAV: { id: View; label: string; icon: React.ReactNode }[] = [
+    { id: "home", label: "Home", icon: <IconHome /> },
+    { id: "create", label: "Create", icon: <IconSpark /> },
+    { id: "templates", label: "Templates", icon: <IconGrid /> },
+    { id: "gallery", label: "Gallery", icon: <IconImage /> },
+  ];
+
+  return (
+    <div className="app">
+      <div className="aurora" aria-hidden />
+
+      <aside className="sidebar">
+        <div className="sidebar-top">
+          <button className="brand" onClick={() => go("home")} aria-label="GenStudio home">
+            <LogoMark />
+            <span className="wordmark">GenStudio</span>
+          </button>
+          <ModeBadge mode={mode} />
+        </div>
+
+        <button
+          className="new-btn"
+          onClick={() => {
+            setTemplate(null);
+            setPrompt("");
+            go("home");
+            setTimeout(() => document.getElementById("home-prompt")?.focus(), 50);
+          }}
+        >
+          <span aria-hidden>+</span> New creation
+        </button>
+
+        <nav className="side-nav" aria-label="Main">
+          {NAV.map((n) => (
+            <button key={n.id} className={view === n.id ? "nav-item active" : "nav-item"} onClick={() => go(n.id)}>
+              <span className="nav-icon" aria-hidden>
+                {n.icon}
+              </span>
+              {n.label}
+              {n.id === "gallery" && pendingCount > 0 && (
+                <span className="nav-badge">
+                  <span className="pulse" aria-hidden /> {pendingCount}
+                </span>
+              )}
+            </button>
+          ))}
+          <div className="nav-divider" />
+          <span className="nav-item soon">
+            <span className="nav-icon" aria-hidden>
+              <IconBrand />
+            </span>
+            Brand kits <span className="soon-tag">Soon</span>
+          </span>
+          <span className="nav-item soon">
+            <span className="nav-icon" aria-hidden>
+              <IconFolder />
+            </span>
+            Projects <span className="soon-tag">Soon</span>
+          </span>
+        </nav>
+
+        <div className="recents">
+          <div className="recents-head">Recent</div>
+          {recent.length === 0 && <p className="recents-empty">Your latest creations will show up here.</p>}
+          {recent.map((it) => (
+            <button
+              key={it.id}
+              className={view === "create" && selected?.id === it.id ? "recent active" : "recent"}
+              onClick={() => openItem(it)}
+              title={it.prompt}
+            >
+              <span className="recent-thumb">
+                {it.status === "done" && it.url ? <Media item={it} thumb /> : <span className="spinner tiny" />}
+              </span>
+              <span className="recent-text">{it.prompt}</span>
+            </button>
+          ))}
+        </div>
+
+        <footer className="side-foot">
           <Link href="/terms">Terms</Link> · <Link href="/acceptable-use">Acceptable use</Link> ·{" "}
           <Link href="/privacy">Privacy</Link>
-        </span>
-      </footer>
+          <span className="side-foot-note">You are responsible for what you create with GenStudio.</span>
+        </footer>
+      </aside>
+
+      <main className="main" id="top">
+        {view === "home" && homeView}
+        {view === "create" && (
+          <>
+            {notices}
+            {createView}
+          </>
+        )}
+        {view === "templates" && templatesView}
+        {view === "gallery" && galleryView}
+      </main>
 
       {askTerms && (
         <AgreeModal
@@ -752,97 +1074,53 @@ export default function Studio({ mode }: { mode: AppMode }) {
           }}
         />
       )}
-
-      {open && (
-        <div className="overlay" onClick={() => setOpen(null)}>
-          <div className="viewer" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Preview">
-            <div className="viewer-media">
-              {open.url ? <Media item={open} /> : <div className="tile-state failed">{open.error}</div>}
-            </div>
-            <div className="viewer-side">
-              <p className="viewer-prompt">{open.prompt}</p>
-              <dl className="meta">
-                <dt>Model</dt>
-                <dd>
-                  {open.modelName}
-                  {open.autoReason && <span className="muted small"> (Auto: {open.autoReason})</span>}
-                </dd>
-                {open.quality && (
-                  <>
-                    <dt>Quality</dt>
-                    <dd>{open.quality === "draft" ? "Draft" : "Final"}</dd>
-                  </>
-                )}
-                {open.templateName && (
-                  <>
-                    <dt>Template</dt>
-                    <dd>{open.templateName}</dd>
-                  </>
-                )}
-                {open.kind === "video" && (
-                  <>
-                    <dt>Sound</dt>
-                    <dd>
-                      {open.hasAudio ? "Yes" : "No"}
-                      {open.soundError && <span className="muted small"> (couldn&apos;t add: {open.soundError})</span>}
-                    </dd>
-                  </>
-                )}
-                <dt>Shape</dt>
-                <dd>{open.aspectRatio}</dd>
-                {open.duration && (
-                  <>
-                    <dt>Length</dt>
-                    <dd>{open.duration}s</dd>
-                  </>
-                )}
-                <dt>Made</dt>
-                <dd>{new Date(open.createdAt).toLocaleString()}</dd>
-              </dl>
-              {open.quality === "draft" && open.status === "done" && <FinalButton draft={open} onClick={makeFinal} />}
-              {open.kind === "video" && open.status === "done" && !open.hasAudio && open.url && (
-                <div className="final-box">
-                  <button className="btn" onClick={() => addSound(open)}>
-                    🔊 Add sound
-                  </button>
-                  <p className="hint">
-                    Adds matching sound effects and ambience. About{" "}
-                    {formatCost(estimateCost(ADD_SOUND_MODEL, open.duration))}.
-                  </p>
-                </div>
-              )}
-              <div className="viewer-actions">
-                {open.url && (
-                  <button className="btn btn-light" onClick={() => download(open)}>
-                    Download
-                  </button>
-                )}
-                <button
-                  className="btn"
-                  onClick={() => {
-                    setTemplate(null);
-                    setKind(open.kind);
-                    setChoice(open.quality ? AUTO : open.modelId);
-                    if (open.quality) setQuality(open.quality);
-                    setAspectRatio(open.aspectRatio);
-                    setPrompt(open.prompt);
-                    setOpen(null);
-                  }}
-                >
-                  Reuse prompt
-                </button>
-                <button className="btn btn-danger" onClick={() => remove(open.id)}>
-                  Delete
-                </button>
-              </div>
-              <button className="close" onClick={() => setOpen(null)} aria-label="Close">
-                ×
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
+  );
+}
+
+function IconHome() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+      <path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z" />
+    </svg>
+  );
+}
+
+function IconSpark() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+      <path d="M12 3l2.2 5.8L20 11l-5.8 2.2L12 19l-2.2-5.8L4 11l5.8-2.2z" />
+    </svg>
+  );
+}
+
+function IconGrid() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+      <rect x="3" y="3" width="7" height="7" rx="2" />
+      <rect x="14" y="3" width="7" height="7" rx="2" />
+      <rect x="3" y="14" width="7" height="7" rx="2" />
+      <rect x="14" y="14" width="7" height="7" rx="2" />
+    </svg>
+  );
+}
+
+function IconBrand() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+      <circle cx="12" cy="12" r="9" />
+      <circle cx="8.5" cy="10" r="1.5" />
+      <circle cx="12" cy="7.5" r="1.5" />
+      <circle cx="15.5" cy="10" r="1.5" />
+    </svg>
+  );
+}
+
+function IconFolder() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+      <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+    </svg>
   );
 }
 
