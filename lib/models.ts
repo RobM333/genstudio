@@ -25,6 +25,7 @@ export type ModelInfo = {
     duration?: number;
     sourceUrl?: string;
     sound?: boolean;
+    refUrls?: string[]; // the user's own reference pictures (product, logo, person)
   }) => Record<string, unknown>;
 };
 
@@ -255,7 +256,28 @@ export function animateModelFor(videoModelId: string): ModelInfo {
 /** Makes the starting picture for picture-first videos: follows layout and directions closely. */
 export const KEYFRAME_MODEL_ID = "fal-ai/nano-banana";
 
-const HIDDEN = [ADD_SOUND_MODEL, EDIT_IMAGE_MODEL, ...ANIMATE_MODELS];
+/**
+ * Makes a new picture that uses the user's own reference pictures: their real
+ * product, logo or a person who agreed to it. Used automatically when references
+ * are attached; the first frame of a video can use it too, and then gets animated.
+ */
+export const REFERENCE_IMAGE_MODEL: ModelInfo = {
+  id: "fal-ai/nano-banana/edit",
+  typicalSeconds: 15,
+  name: "Nano Banana (with your references)",
+  kind: "image",
+  tagline: "Puts your real product, logo or person into the picture.",
+  approxCost: "~$0.04 / image",
+  aspectRatios: ["1:1", "16:9", "9:16"],
+  buildInput: ({ prompt, aspectRatio, refUrls }) => ({
+    prompt,
+    image_urls: refUrls ?? [],
+    aspect_ratio: aspectRatio,
+    num_images: 1,
+  }),
+};
+
+const HIDDEN = [ADD_SOUND_MODEL, EDIT_IMAGE_MODEL, REFERENCE_IMAGE_MODEL, ...ANIMATE_MODELS];
 
 export function getModel(id: string): ModelInfo | undefined {
   return MODELS.find((m) => m.id === id) ?? HIDDEN.find((m) => m.id === id);

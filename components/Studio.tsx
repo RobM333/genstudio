@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ADD_SOUND_MODEL, animateModelFor, EDIT_IMAGE_MODEL, estimateCost, KEYFRAME_MODEL_ID, formatCost, getModel, MODELS, type AspectRatio, type MediaKind } from "@/lib/models";
+import { ADD_SOUND_MODEL, animateModelFor, EDIT_IMAGE_MODEL, estimateCost, KEYFRAME_MODEL_ID, REFERENCE_IMAGE_MODEL, formatCost, getModel, MODELS, type AspectRatio, type MediaKind } from "@/lib/models";
 import { autoAspectRatios, pickModel, type Quality } from "@/lib/router";
 import { fillTemplate, TEMPLATES, type Template } from "@/lib/templates";
 import type { AppMode } from "@/lib/config";
@@ -10,6 +10,7 @@ import { checkPrompt } from "@/lib/safety";
 import AgreeModal, { hasAcceptedTerms } from "./AgreeModal";
 import Link from "next/link";
 import { progressView, type Phase } from "@/lib/progress";
+import ReferencesBox, { loadRefs, saveRefs, type RefItem } from "./ReferencesBox";
 
 type Item = {
   id: string;
@@ -45,6 +46,7 @@ type Item = {
   purpose?: "keyframe" | "animate" | "refix"; // picture-first video steps, or a remade fix
   keyframeFor?: KeyframePlan; // this picture is the first frame of a planned video
   enhanceNote?: string; // what the booster simplified, in plain words
+  refs?: RefItem[]; // the user's own reference pictures used for this picture
 };
 
 type KeyframePlan = { videoModelId: string; duration?: number; sound: boolean; quality?: Quality; autoReason?: string };
@@ -66,6 +68,7 @@ type JobSpec = {
   fixNote?: string;
   purpose?: "keyframe" | "animate" | "refix";
   keyframeFor?: KeyframePlan;
+  refs?: RefItem[];
 };
 
 const AUTO = "auto";
@@ -123,6 +126,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [view, setView] = useState<View>("home");
   const [formError, setFormError] = useState<string | null>(null);
+  const [refs, setRefs] = useState<RefItem[]>([]);
   const polling = useRef(new Set<string>());
 
   const isAuto = choice === AUTO;
@@ -135,13 +139,17 @@ export default function Studio({ mode }: { mode: AppMode }) {
   const costWith = estimateCost(model, length, true);
   const costWithout = estimateCost(model, length, false);
   const keyframeCost = estimateCost(getModel(KEYFRAME_MODEL_ID)!);
-  const nowCost = kind === "video" && pictureFirst ? keyframeCost : cost;
+  const nowCost = refs.length > 0 || (kind === "video" && pictureFirst) ? keyframeCost : cost;
 
   // Load the saved gallery once, in the browser.
   useEffect(() => {
     setItems(loadItems());
+    setRefs(loadRefs());
     setLoaded(true);
   }, []);
+  useEffect(() => {
+    if (loaded) saveRefs(refs);
+  }, [refs, loaded]);
   useEffect(() => {
     if (loaded) saveItems(items);
   }, [items, loaded]);
@@ -247,6 +255,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
           sourceUrl,
           enhance: item.stage !== "sound" && item.enhance !== false,
           purpose: item.stage !== "sound" ? item.purpose : undefined,
+          refs: item.stage !== "sound" && item.refs?.length ? item.refs.map(({ url, kind, token }) => ({ url, kind, token })) : undefined,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -322,11 +331,14 @@ export default function Studio({ mode }: { mode: AppMode }) {
       setAskTerms(true);
       return;
     }
-    if (kind === "video" && pictureFirst) {
+    const useRefs = refs.length > 0 ? refs : undefined;
+    if (kind === "video" && (pictureFirst || useRefs)) {
       // Picture first: make a cheap still to check the layout, then animate it.
+      // With reference pictures this is always the way, so your product is right before any video.
       runJob({
         kind: "image",
-        modelId: KEYFRAME_MODEL_ID,
+        modelId: useRefs ? REFERENCE_IMAGE_MODEL.id : KEYFRAME_MODEL_ID,
+        refs: useRefs,
         prompt: text,
         aspectRatio,
         enhance,
@@ -340,6 +352,19 @@ export default function Studio({ mode }: { mode: AppMode }) {
           quality: isAuto ? quality : undefined,
           autoReason: isAuto ? auto.reason : undefined,
         },
+      });
+      return;
+    }
+    if (useRefs) {
+      runJob({
+        kind: "image",
+        modelId: REFERENCE_IMAGE_MODEL.id,
+        refs: useRefs,
+        prompt: text,
+        aspectRatio,
+        enhance,
+        autoReason: "uses your own reference pictures",
+        templateName: template?.name,
       });
       return;
     }
@@ -381,7 +406,8 @@ export default function Studio({ mode }: { mode: AppMode }) {
       // from the original idea plus the correction, with the layout spelled out.
       runJob({
         ...common,
-        modelId: KEYFRAME_MODEL_ID,
+        modelId: it.refs?.length ? REFERENCE_IMAGE_MODEL.id : KEYFRAME_MODEL_ID,
+        refs: it.refs,
         autoReason: "remade with your fix, follows layout and camera directions closely",
         enhance: true,
         purpose: "refix",
@@ -452,6 +478,22 @@ export default function Studio({ mode }: { mode: AppMode }) {
         enhance: draft.enhance !== false,
         sourceUrl: draft.sourceUrl,
         purpose: "animate",
+      });
+      return;
+    }
+    if (draft.refs?.length) {
+      // Pictures made from your references stay on the model that can use them.
+      runJob({
+        kind: "image",
+        modelId: REFERENCE_IMAGE_MODEL.id,
+        refs: draft.refs,
+        prompt: draft.prompt,
+        aspectRatio: draft.aspectRatio,
+        quality: "final",
+        autoReason: "uses your own reference pictures",
+        parentId: draft.id,
+        enhance: draft.enhance !== false,
+        templateName: draft.templateName,
       });
       return;
     }
@@ -579,9 +621,11 @@ export default function Studio({ mode }: { mode: AppMode }) {
   const generateButton = (
     <button className="generate" onClick={generate} disabled={mode === "locked"}>
       <span className="generate-label">
-        {kind === "video" && pictureFirst
+        {kind === "video" && (pictureFirst || refs.length > 0)
           ? "Make the first frame"
-          : isAuto && quality === "draft"
+          : refs.length > 0
+            ? "Generate with your references"
+            : isAuto && quality === "draft"
             ? `Generate ${kind} draft`
             : `Generate ${kind}`}
       </span>
@@ -738,6 +782,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
             </span>
           </span>
         </label>
+        <ReferencesBox refs={refs} onChange={setRefs} mode={mode} />
         {!template && (
           <div className="examples">
             <span className="examples-label">Try:</span>

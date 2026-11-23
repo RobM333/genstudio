@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { getMode } from "@/lib/config";
-import { getModel, isFalMediaUrl, type AspectRatio } from "@/lib/models";
+import { getModel, isFalMediaUrl, REFERENCE_IMAGE_MODEL, type AspectRatio } from "@/lib/models";
 import { makeDemoMedia } from "@/lib/demo";
 import { fal } from "@/lib/fal";
-import { checkPrompt } from "@/lib/safety";
+import { checkPrompt, checkWithPersonPhoto } from "@/lib/safety";
+import { isRefKind, MAX_REFS, referenceInstructions, verify, type RefKind } from "@/lib/references";
 import { enhancePrompt } from "@/lib/enhance";
 
 export const dynamic = "force-dynamic";
@@ -11,15 +12,27 @@ export const dynamic = "force-dynamic";
 const MAX_PROMPT = 2000;
 
 export async function POST(req: Request) {
-  let body: { modelId?: string; prompt?: string; aspectRatio?: string; duration?: number; sourceUrl?: string; sound?: boolean; enhance?: boolean; purpose?: string };
+  let body: { modelId?: string; prompt?: string; aspectRatio?: string; duration?: number; sourceUrl?: string; sound?: boolean; enhance?: boolean; purpose?: string; refs?: { url?: string; kind?: string; token?: string }[] };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "Bad request." }, { status: 400 });
   }
 
-  const model = body.modelId ? getModel(body.modelId) : undefined;
+  let model = body.modelId ? getModel(body.modelId) : undefined;
   if (!model) return NextResponse.json({ error: "Unknown model." }, { status: 400 });
+
+  // The user's own reference pictures (product, logo, person). Only for new pictures.
+  const rawRefs = Array.isArray(body.refs) ? body.refs.slice(0, MAX_REFS + 1) : [];
+  if (rawRefs.length > MAX_REFS) return NextResponse.json({ error: `Use up to ${MAX_REFS} reference pictures.` }, { status: 400 });
+  const refs = rawRefs.map((r) => ({ url: String(r?.url ?? ""), kind: r?.kind, token: String(r?.token ?? "") }));
+  if (refs.some((r) => !isRefKind(r.kind))) return NextResponse.json({ error: "Bad reference picture." }, { status: 400 });
+  const refKinds = refs.map((r) => r.kind as RefKind);
+  if (refs.length > 0) {
+    if (model.kind !== "image" || model.needsSource)
+      return NextResponse.json({ error: "Reference pictures are used to make a picture first." }, { status: 400 });
+    model = REFERENCE_IMAGE_MODEL;
+  }
 
   const prompt = (body.prompt ?? "").trim();
   if (!prompt) return NextResponse.json({ error: "Please describe what you want to create." }, { status: 400 });
@@ -28,6 +41,10 @@ export async function POST(req: Request) {
 
   const safety = checkPrompt(prompt);
   if (!safety.ok) return NextResponse.json({ error: safety.reason, blocked: true }, { status: 422 });
+  if (refKinds.includes("person")) {
+    const personSafety = checkWithPersonPhoto(prompt);
+    if (!personSafety.ok) return NextResponse.json({ error: personSafety.reason, blocked: true }, { status: 422 });
+  }
 
   const usesSource = Boolean(model.needsSource || model.takesImage);
   const sourceUrl = usesSource ? String(body.sourceUrl ?? "") : undefined;
@@ -60,8 +77,8 @@ export async function POST(req: Request) {
   if (body.enhance !== false && !model.needsSource) {
     const purpose =
       body.purpose === "refix" ? "refix" : body.purpose === "keyframe" ? "keyframe" : model.takesImage ? "animate" : "direct";
-    const e = await enhancePrompt(prompt, model, { live: mode === "live", sound: body.sound !== false, purpose });
-    if (e.by !== "none" && checkPrompt(e.prompt).ok) {
+    const e = await enhancePrompt(prompt, model, { live: mode === "live", sound: body.sound !== false, purpose, refKinds });
+    if (e.by !== "none" && checkPrompt(e.prompt).ok && (!refKinds.includes("person") || checkWithPersonPhoto(e.prompt).ok)) {
       finalPrompt = e.prompt;
       enhancedPrompt = e.prompt;
       enhanceNote = e.note;
@@ -85,12 +102,17 @@ export async function POST(req: Request) {
   if (sourceUrl && !isFalMediaUrl(sourceUrl)) {
     return NextResponse.json({ error: "Only results made in GenStudio can be changed." }, { status: 400 });
   }
+  // Each reference must be one our safety check passed (signed by /api/reference).
+  if (refs.some((r) => !isFalMediaUrl(r.url) || !verify(r.token, "ref", r.url, r.kind as string)))
+    return NextResponse.json({ error: "Please upload your reference pictures again." }, { status: 400 });
+  const refUrls = refs.map((r) => r.url);
+  if (refs.length > 0) finalPrompt = `${referenceInstructions(refKinds)}\n${finalPrompt}`;
 
   try {
     const { request_id } = await fal.queue.submit(model.id, {
-      input: model.buildInput({ prompt: finalPrompt, aspectRatio, duration, sourceUrl, sound: body.sound !== false }),
+      input: model.buildInput({ prompt: finalPrompt, aspectRatio, duration, sourceUrl, sound: body.sound !== false, refUrls }),
     });
-    return NextResponse.json({ status: "IN_QUEUE", requestId: request_id, aspectRatio, duration, enhancedPrompt, enhanceNote });
+    return NextResponse.json({ status: "IN_QUEUE", requestId: request_id, modelId: model.id, aspectRatio, duration, enhancedPrompt, enhanceNote });
   } catch (err) {
     console.error("fal submit failed", err);
     return NextResponse.json({ error: friendlyError(err) }, { status: 502 });
