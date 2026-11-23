@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getMode } from "@/lib/config";
 import { checkPrompt } from "@/lib/safety";
 import { cleanBrand } from "@/lib/brand";
-import { AD_LENGTHS, AD_TONES, adPlanInstructions, adPlanWithRules, parseAdPlan, planTexts, revisePlanInstructions, type AdBrief, type AdPlan } from "@/lib/adplan";
+import { adLanguage, AD_LENGTHS, AD_TONES, adPlanInstructions, adPlanWithRules, parseAdPlan, planTexts, revisePlanInstructions, type AdBrief, type AdPlan } from "@/lib/adplan";
 
 export const dynamic = "force-dynamic";
 
@@ -25,6 +25,7 @@ export async function POST(req: Request) {
     tone: (AD_TONES as readonly string[]).includes(String(b.tone)) ? String(b.tone) : "Friendly",
     refKinds: Array.isArray(b.refKinds) ? b.refKinds.map(String).filter((k) => ["product", "logo", "person", "style"].includes(k)).slice(0, 4) : [],
     brand: cleanBrand(b.brand),
+    language: adLanguage(b.language),
   };
   if (!brief.product) return NextResponse.json({ error: "Tell us what you're advertising first." }, { status: 400 });
   const request = String(body.request ?? "").trim().slice(0, 600);

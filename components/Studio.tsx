@@ -13,10 +13,12 @@ import { progressView, type Phase } from "@/lib/progress";
 import ReferencesBox, { finishReference, loadRefs, saveRefs, type RefItem } from "./ReferencesBox";
 import BrandKit, { brandInfo, hasBrand, KIT_PICTURES, loadBrand, saveBrand, type Brand } from "./BrandKit";
 import { brandLine, colorName } from "@/lib/brand";
+import type { Direction, DirectorReply } from "@/lib/director";
+import { describesSeveralShots, firstShot } from "@/lib/shots";
 import { addSoundTo, animateShot, joinShots, lastFrame, planStory, startPicture, type Story } from "./storyRunner";
 import { lengthAdvice, LONG_LENGTHS, MAX_STORY_SECONDS, type ShotPlan } from "@/lib/storyboard";
 import { nextLength, readChat } from "@/lib/chat";
-import { AD_LENGTHS, AD_PRICES, AD_TONES, AD_VOICES, adCost, checkCost, endCardSeconds, maxRedos, maxVoiceWords, redoCap, SCENE_SECONDS, sceneCount, sceneRemakeCost, type AdBrief, type AdPlan } from "@/lib/adplan";
+import { AD_LANGUAGES, AD_LENGTHS, AD_PRICES, AD_TONES, AD_VOICES, adCost, languageFromLocale, maxVoiceChars, checkCost, endCardSeconds, maxRedos, maxVoiceWords, redoCap, SCENE_SECONDS, sceneCount, sceneRemakeCost, type AdBrief, type AdPlan } from "@/lib/adplan";
 import { AD_T2V, buildAd, changedAdJob, newAdJob, type AdJob } from "./adRunner";
 
 type Item = {
@@ -216,6 +218,12 @@ export default function Studio({ mode }: { mode: AppMode }) {
   const [productPics, setProductPics] = useState<string[]>([]);
   const [productPicked, setProductPicked] = useState<string[]>([]);
   const [productConsent, setProductConsent] = useState(false);
+  // The creative director: three directed ways to make the idea.
+  const [director, setDirector] = useState<(DirectorReply & { idea: string; kind: MediaKind }) | null>(null);
+  const [directorBusy, setDirectorBusy] = useState(false);
+  const [directorError, setDirectorError] = useState<string | null>(null);
+  const [directorAnswers, setDirectorAnswers] = useState("");
+  const [directorPicked, setDirectorPicked] = useState<number | null>(null);
   const polling = useRef(new Set<string>());
 
   const isAuto = choice === AUTO;
@@ -271,6 +279,8 @@ export default function Studio({ mode }: { mode: AppMode }) {
     setItems(loadItems());
     setRefs(loadRefs());
     setBrand(loadBrand());
+    // Voiceovers start in the browser's language (changeable in the ad's options).
+    setBrief((b) => (b.language ? b : { ...b, language: languageFromLocale(navigator.language) }));
     try {
       const raw = localStorage.getItem(CHAT_KEY);
       const list = raw ? (JSON.parse(raw) as ChatMsg[]) : [];
@@ -682,6 +692,71 @@ export default function Studio({ mode }: { mode: AppMode }) {
     setView("create");
     setComposing(false);
     runStory(item);
+  }
+
+  // ---------- Creative director ----------
+
+  async function callDirector(idea: string, k: MediaKind, answers = ""): Promise<DirectorReply> {
+    const res = await fetch("/api/director", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ idea, kind: k, answers, brand: brandOn ? brandInfo(brand) : undefined }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !Array.isArray(data.directions)) throw new Error(data.error ?? "The director is busy. Please try again.");
+    return data as DirectorReply;
+  }
+
+  /** Asks the director for three ways to make what's in the prompt box (or the idea it started from). */
+  async function askDirector(withAnswers = false) {
+    const idea = withAnswers && director ? director.idea : prompt.trim();
+    setDirectorError(null);
+    if (!idea) {
+      setDirectorError("Write your idea first, even a few words.");
+      return;
+    }
+    setDirectorBusy(true);
+    try {
+      const reply = await callDirector(idea, kind, withAnswers ? directorAnswers.trim() : "");
+      setDirector({ ...reply, idea, kind });
+      setDirectorPicked(null);
+      if (!withAnswers) setDirectorAnswers("");
+    } catch (e) {
+      setDirectorError((e as Error).message);
+    } finally {
+      setDirectorBusy(false);
+    }
+  }
+
+  /** Puts a direction into the form: its prompt, and its shape and length when they fit. */
+  function applyDirection(d: Direction, i: number) {
+    setPrompt(d.prompt);
+    setDirectorPicked(i);
+    if (shapes.includes(d.shape)) setAspectRatio(d.shape);
+    if (kind === "video" && d.seconds) {
+      if (d.seconds <= 10) {
+        setStoryLen(null);
+        const ds = model.durations ?? [];
+        if (ds.length) setDuration(ds.reduce((a, b) => (Math.abs(b - d.seconds) < Math.abs(a - d.seconds) ? b : a)));
+      } else setStoryLen(LONG_LENGTHS.reduce((a, b) => (Math.abs(b - d.seconds) < Math.abs(a - d.seconds) ? b : a)));
+    }
+  }
+
+  /** In the chat: the director watches a finished video and offers directed remakes. */
+  async function directorNotes(it: Item, thread: string) {
+    const id = say(thread, it.id, { text: "Thinking about how a director would shoot this...", state: "working" });
+    try {
+      const reply = await callDirector(basePrompt(it), it.kind);
+      patchMsg(id, { state: "done", text: `${reply.read || "Here's how I'd direct it."} Three ways I'd shoot it again (same shape and length):` });
+      const cost = fixCost(it, "remake");
+      say(thread, it.id, {
+        text: reply.directions.map((d, i) => `${i + 1}. ${d.name}: ${d.why}`).join("\n"),
+        offers: reply.directions.map((d) => ({ label: `🎬 ${d.name}`, cost, act: { type: "fix" as const, note: `Directed as "${d.name}"`, how: "remake" as const, newPrompt: d.prompt } })),
+        state: "open",
+      });
+    } catch (e) {
+      patchMsg(id, { state: "done", text: (e as Error).message });
+    }
   }
 
   // ---------- Full ad ----------
@@ -1112,7 +1187,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
     setAdError(null);
     if (it.ad) {
       setAdMode(true);
-      setBrief({ product: it.ad.brief.product, audience: it.ad.brief.audience, seconds: it.ad.brief.seconds, tone: it.ad.brief.tone });
+      setBrief({ product: it.ad.brief.product, audience: it.ad.brief.audience, seconds: it.ad.brief.seconds, tone: it.ad.brief.tone, language: it.ad.brief.language ?? "English" });
       setAdCheck(it.ad.check?.on ?? true);
       setAdShape(it.aspectRatio);
       setAdPlan(JSON.parse(JSON.stringify(it.ad.plan)) as AdPlan);
@@ -1438,6 +1513,11 @@ export default function Studio({ mode }: { mode: AppMode }) {
       reply({ text: "I'm still making this one. Ask me again once it's ready, or press ＋ New to start something else." });
       return;
     }
+    if (/^director'?s? notes?$|^(ask|call) the director$/i.test(text) && !it.ad) {
+      if (!it.url) reply({ text: "This one didn't finish. Tell me what you'd like and I'll make it again." });
+      else directorNotes(it, thread);
+      return;
+    }
     const intent = readChat(text, it.kind);
     if (intent.type === "check") {
       if (!it.url) reply({ text: "This one didn't finish, so there's nothing to check. Tell me what you'd like and I'll make it again." });
@@ -1573,6 +1653,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
       chips.push({ label: "🎙️ Change the voiceover", text: "Make the voiceover warmer and slower" });
       chips.push({ label: "🎵 Different music", text: "music: more upbeat" });
     } else if (selected.kind === "video") {
+      chips.push({ label: "🎬 Director's notes", text: "Director's notes" });
       const next = nextLength(selected.duration, LONG_LENGTHS);
       if ((selected.duration ?? 0) < MAX_STORY_SECONDS) chips.push({ label: `⏱️ Make it ${next}s`, text: `Make it ${next} seconds` });
       if (!selected.hasAudio) chips.push({ label: "🔊 Add sound", text: "Add sound" });
@@ -1662,6 +1743,84 @@ export default function Studio({ mode }: { mode: AppMode }) {
 
   // ---------- the pieces of the Create form ----------
 
+  const directorShown = director && director.kind === kind;
+  const directorPanel = (
+    <div className="director">
+      {!directorShown && (
+        <button className="director-ask" onClick={() => askDirector()} disabled={directorBusy || mode === "locked"}>
+          <span>
+            {kind === "image" ? "📸" : "🎬"} <strong>{directorBusy ? "The director is thinking..." : `Ask the creative director for your ${kind === "image" ? "picture" : "video"}`}</strong>
+            <span className="muted small">
+              {kind === "image"
+                ? " Get 3 ways to frame it as one still shot: angle, lens, light and composition. Pick one with a click."
+                : " Get 3 ways to film it: shots, camera moves, pacing, length and shape. Pick one with a click."}
+            </span>
+          </span>
+          <span className="tag">{mode === "demo" ? "Free" : "under 1 cent"}</span>
+        </button>
+      )}
+      {directorShown && (
+        <div className="director-box">
+          <div className="director-head">
+            <strong>{kind === "image" ? "📸 Directing your picture" : "🎬 Directing your video"}</strong>
+            <button className="link-btn" onClick={() => setDirector(null)}>
+              Close
+            </button>
+          </div>
+          <p className="muted small director-kind">
+            {kind === "image"
+              ? "A picture is one frame from one camera, so each direction is a single shot. Want several shots or movement? Switch to Video clip."
+              : "Each direction plans the shots, the camera moves and the timing. The length and shape fill in when you pick one."}
+          </p>
+          {director.read && <p className="muted small">{director.read}</p>}
+          <div className="director-cards">
+            {director.directions.map((d, i) => (
+              <div key={d.name + i} className={directorPicked === i ? "director-card picked" : "director-card"}>
+                <div className="director-card-head">
+                  <strong>{d.name}</strong>
+                  <span className="muted small">
+                    {kind === "video" && d.seconds ? `${d.seconds}s · ` : ""}
+                    {d.shape}
+                  </span>
+                </div>
+                <p className="small">{d.why}</p>
+                <details>
+                  <summary className="muted small">See the direction</summary>
+                  <p className="small">{d.prompt}</p>
+                </details>
+                <button className={directorPicked === i ? "pill active" : "pill"} onClick={() => applyDirection(d, i)}>
+                  {directorPicked === i ? "✓ Using this" : "Use this"}
+                </button>
+              </div>
+            ))}
+          </div>
+          {directorPicked !== null && (
+            <button className="link-btn" onClick={() => { setPrompt(director.idea); setDirectorPicked(null); }}>
+              ↩ Back to my own words
+            </button>
+          )}
+          {director.questions.length > 0 && (
+            <div className="director-qs">
+              <span className="small">To make it even better, tell me:</span>
+              <ul className="small">
+                {director.questions.map((q) => (
+                  <li key={q}>{q}</li>
+                ))}
+              </ul>
+              <div className="product-link-row">
+                <input className="text-input" maxLength={600} placeholder="Your answers, in a few words" value={directorAnswers} onChange={(e) => setDirectorAnswers(e.target.value)} />
+                <button className="pill" disabled={!directorAnswers.trim() || directorBusy} onClick={() => askDirector(true)}>
+                  {directorBusy ? "Thinking..." : "Direct it again"}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+      {directorError && <p className="error small">{directorError}</p>}
+    </div>
+  );
+
   const describeBlock = (
     <>
     <div className="prompt-box">
@@ -1679,6 +1838,20 @@ export default function Studio({ mode }: { mode: AppMode }) {
       />
       <span className="prompt-count">{prompt.length}/2000</span>
     </div>
+    {kind === "image" && describesSeveralShots(prompt) && (
+      <div className="notice warn small-notice shots-warning">
+        <span>⚠️ This describes more than one shot, with a cut. A picture can only show one shot, so the result would mix them up.</span>
+        <span className="shots-actions">
+          <button className="pill active" onClick={() => switchKind("video")}>
+            🎬 Make it a video
+          </button>
+          <button className="pill" onClick={() => setPrompt(firstShot(prompt))}>
+            Keep only the first shot
+          </button>
+        </span>
+      </div>
+    )}
+    {directorPanel}
     <label className="enhance-toggle">
       <input type="checkbox" checked={enhance} onChange={(e) => setEnhance(e.target.checked)} />
       <span>
@@ -2042,6 +2215,16 @@ export default function Studio({ mode }: { mode: AppMode }) {
             </div>
           </div>
         </div>
+        <label className="sub-label" htmlFor="ad-language">
+          Voiceover language
+        </label>
+        <select id="ad-language" className="text-input ad-language" value={brief.language ?? "English"} onChange={(e) => setBrief({ ...brief, language: e.target.value })}>
+          {AD_LANGUAGES.map((l) => (
+            <option key={l} value={l}>
+              {l}
+            </option>
+          ))}
+        </select>
         <div className="sub-label">Tone</div>
         <div className="pills">
           {AD_TONES.map((t) => (
@@ -2119,9 +2302,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
               </div>
               <label className="ad-label">
                 🎙️ Voiceover{" "}
-                <span className={sc.voice.split(/\s+/).filter(Boolean).length > maxVoiceWords(SCENE_SECONDS) ? "error-text" : "muted"}>
-                  ({sc.voice.split(/\s+/).filter(Boolean).length}/{maxVoiceWords(SCENE_SECONDS)} words)
-                </span>
+                <VoiceCount line={sc.voice} seconds={SCENE_SECONDS} language={brief.language} />
                 <input className="text-input" maxLength={200} value={sc.voice} onChange={(e) => editScene(i, { voice: e.target.value })} />
               </label>
             </li>
@@ -2697,6 +2878,12 @@ export default function Studio({ mode }: { mode: AppMode }) {
             Brand kit
             {hasBrand(brand) && <span className="brand-dot" style={{ background: brand.colors?.[0] ?? "var(--accent)" }} aria-hidden />}
           </button>
+          <Link href="/pricing" className="nav-item">
+            <span className="nav-icon" aria-hidden>
+              ◇
+            </span>
+            Pricing
+          </Link>
           <span className="nav-item soon">
             <span className="nav-icon" aria-hidden>
               <IconFolder />
@@ -3102,6 +3289,18 @@ function sceneWarning(prompt: string): string | null {
     return "This sounds like several moments. A 5 to 10 second clip can show about one, so we'll focus on the main moment, or pick a longer length to fit them all.";
   }
   return null;
+}
+
+/** How long a voice line is against what fits its seconds (characters for Japanese and Chinese). */
+function VoiceCount({ line, seconds, language }: { line: string; seconds: number; language?: string }) {
+  const chars = maxVoiceChars(seconds, language);
+  const n = chars ? line.length : line.split(/\s+/).filter(Boolean).length;
+  const max = chars ?? maxVoiceWords(seconds);
+  return (
+    <span className={n > max ? "error-text" : "muted"}>
+      ({n}/{max} {chars ? "characters" : "words"})
+    </span>
+  );
 }
 
 /** The ad's plan under the video, so people can say "scene 2: ..." in the chat. */
