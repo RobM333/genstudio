@@ -17,7 +17,8 @@ export type Template = {
   prompt: string; // with {key} blanks
 };
 
-const PRODUCT: TemplateField = { key: "product", label: "Product", placeholder: "a matte black water bottle" };
+// Each example matches the picture on that template's card.
+const product = (placeholder: string): TemplateField => ({ key: "product", label: "Product", placeholder });
 
 export const TEMPLATES: Template[] = [
   {
@@ -27,7 +28,7 @@ export const TEMPLATES: Template[] = [
     kind: "image",
     aspectRatio: "1:1",
     emoji: "📦",
-    fields: [PRODUCT, { key: "surface", label: "Standing on", placeholder: "polished white marble" }],
+    fields: [product("a frosted glass perfume bottle"), { key: "surface", label: "Standing on", placeholder: "wet black volcanic stone" }],
     prompt:
       "High-end commercial studio photo of {product} standing on {surface}, soft diffused key light, subtle reflections, clean seamless background, sharp focus, premium advertising look",
   },
@@ -38,7 +39,7 @@ export const TEMPLATES: Template[] = [
     kind: "image",
     aspectRatio: "1:1",
     emoji: "🌿",
-    fields: [PRODUCT, { key: "scene", label: "Scene", placeholder: "a sunny kitchen on a Sunday morning" }],
+    fields: [product("a latte in a ceramic cup"), { key: "scene", label: "Scene", placeholder: "a cozy coffee shop at golden hour" }],
     prompt:
       "Natural lifestyle photo of {product} being used in {scene}, warm natural light, candid feel, shallow depth of field, shot on 35mm film",
   },
@@ -49,7 +50,7 @@ export const TEMPLATES: Template[] = [
     kind: "image",
     aspectRatio: "9:16",
     emoji: "📱",
-    fields: [PRODUCT, { key: "headline", label: "Headline", placeholder: "Stay cold for 24 hours" }],
+    fields: [product("an oversized lilac jacket"), { key: "headline", label: "Headline", placeholder: "The new season drop" }],
     prompt:
       'Vertical social media ad featuring {product} in the center, bold clean headline text that says "{headline}" at the top, vibrant gradient background, modern minimal design',
   },
@@ -61,7 +62,7 @@ export const TEMPLATES: Template[] = [
     aspectRatio: "16:9",
     emoji: "▶️",
     fields: [
-      { key: "subject", label: "Main subject", placeholder: "a surprised chef holding a giant burger" },
+      { key: "subject", label: "Main subject", placeholder: "an excited creator holding a glowing camera" },
       { key: "title", label: "Big text", placeholder: "I TRIED IT" },
     ],
     prompt:
@@ -75,8 +76,8 @@ export const TEMPLATES: Template[] = [
     aspectRatio: "16:9",
     emoji: "🏷️",
     fields: [
-      { key: "offer", label: "Offer", placeholder: "30% OFF EVERYTHING" },
-      { key: "theme", label: "Theme", placeholder: "summer beach" },
+      { key: "offer", label: "Offer", placeholder: "30% OFF SNEAKERS" },
+      { key: "theme", label: "Theme", placeholder: "pastel coral and lilac" },
     ],
     prompt:
       'Wide promotional banner with {theme} theme, large bold text "{offer}", clean layout with space for a button, flat modern graphic design',
@@ -88,7 +89,7 @@ export const TEMPLATES: Template[] = [
     kind: "video",
     aspectRatio: "9:16",
     emoji: "✨",
-    fields: [PRODUCT],
+    fields: [product("a white sneaker")],
     prompt:
       "Vertical product reveal video: {product} slowly rotates on a pedestal while dramatic light sweeps across it, dark moody background, particles in the air, slow camera push in, premium commercial style",
   },
@@ -100,8 +101,8 @@ export const TEMPLATES: Template[] = [
     aspectRatio: "16:9",
     emoji: "🎬",
     fields: [
-      { key: "brand", label: "Brand feeling", placeholder: "outdoor adventure gear" },
-      { key: "place", label: "Location", placeholder: "misty mountain ridge at sunrise" },
+      { key: "brand", label: "Brand feeling", placeholder: "a luxury watch brand" },
+      { key: "place", label: "Location", placeholder: "a glittering city skyline at night" },
     ],
     prompt:
       "Cinematic brand film shot for {brand}: sweeping drone shot over {place}, golden light, slow motion, anamorphic lens flare, epic and inspiring mood",
@@ -113,7 +114,7 @@ export const TEMPLATES: Template[] = [
     kind: "video",
     aspectRatio: "9:16",
     emoji: "🗣️",
-    fields: [PRODUCT, { key: "line", label: "What they say", placeholder: "Honestly, this changed my mornings" }],
+    fields: [product("a matte black water bottle"), { key: "line", label: "What they say", placeholder: "Honestly, it keeps my water cold all day" }],
     prompt:
       'Handheld selfie-style vertical video of a friendly young person at home holding {product}, talking to the camera and saying: "{line}", natural daylight, authentic social media feel, with clear speech audio',
   },

@@ -457,16 +457,28 @@ export default function Studio({ mode }: { mode: AppMode }) {
               <div className="fields">
                 <div className="fields-head">
                   {template.emoji} {template.name}
-                  <button className="link" onClick={() => chooseTemplate(null)}>
-                    Clear
-                  </button>
+                  <span className="fields-actions">
+                    <button
+                      className="link"
+                      onClick={() => {
+                        const example = Object.fromEntries(template.fields.map((f) => [f.key, f.placeholder]));
+                        setFields(example);
+                        setPrompt(fillTemplate(template, example));
+                      }}
+                    >
+                      Use this example
+                    </button>
+                    <button className="link" onClick={() => chooseTemplate(null)}>
+                      Clear
+                    </button>
+                  </span>
                 </div>
                 {template.fields.map((f) => (
                   <label key={f.key} className="field">
                     <span>{f.label}</span>
                     <input
                       value={fields[f.key] ?? ""}
-                      placeholder={f.placeholder}
+                      placeholder={`e.g. ${f.placeholder}`}
                       onChange={(e) => setField(f.key, e.target.value)}
                     />
                   </label>
@@ -842,13 +854,12 @@ function Showcase({ media }: { media?: ShowcaseMedia }) {
       return (
         <video
           className="showcase"
-          src={`${media.src}#t=0.1`}
+          src={media.src}
+          autoPlay
           muted
           loop
           playsInline
           preload="auto"
-          onMouseEnter={(e) => e.currentTarget.play().catch(() => {})}
-          onMouseLeave={(e) => e.currentTarget.pause()}
           onError={() => setFailed(true)}
         />
       );
