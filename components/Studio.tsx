@@ -159,6 +159,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
   const [plan, setPlan] = useState<ShotPlan | null>(null);
   const [planFor, setPlanFor] = useState<string>("");
   const [storyLen, setStoryLen] = useState<number | null>(null); // null = one clip
+  const [showTemplates, setShowTemplates] = useState(false);
   const storyRuns = useRef(new Set<string>());
   const polling = useRef(new Set<string>());
 
@@ -924,50 +925,9 @@ export default function Studio({ mode }: { mode: AppMode }) {
     <section className="panel" aria-label="Create">
       {kindTabs}
 
-      <div className="step" id="templates">
-        <div className="step-head">
-          <span className="step-num">01</span> Start from a template
-          <span className="step-opt">optional</span>
-        </div>
-        <div className="templates">{kindTemplates.map(templateCard)}</div>
-
-        {template && (
-          <div className="fields">
-            <div className="fields-head">
-              {template.emoji} {template.name}
-              <span className="fields-actions">
-                <button
-                  className="link"
-                  onClick={() => {
-                    const example = Object.fromEntries(template.fields.map((f) => [f.key, f.placeholder]));
-                    setFields(example);
-                    setPrompt(fillTemplate(template, example));
-                  }}
-                >
-                  Use this example
-                </button>
-                <button className="link" onClick={() => chooseTemplate(null)}>
-                  Clear
-                </button>
-              </span>
-            </div>
-            {template.fields.map((f) => (
-              <label key={f.key} className="field">
-                <span>{f.label}</span>
-                <input
-                  value={fields[f.key] ?? ""}
-                  placeholder={`e.g. ${f.placeholder}`}
-                  onChange={(e) => setField(f.key, e.target.value)}
-                />
-              </label>
-            ))}
-          </div>
-        )}
-      </div>
-
       <div className="step">
         <label className="step-head" htmlFor="prompt">
-          <span className="step-num">02</span> {template ? "Your prompt (edit freely)" : `Describe your ${kind}`}
+          <span className="step-num">01</span> {template ? "Your prompt (edit freely)" : `Describe your ${kind}`}
         </label>
         <div className="prompt-box">
           <textarea
@@ -1002,6 +962,47 @@ export default function Studio({ mode }: { mode: AppMode }) {
               <button key={ex} className="chip" onClick={() => setPrompt(ex)}>
                 {ex.length > 42 ? ex.slice(0, 40) + "..." : ex}
               </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="step" id="templates">
+        <button className="step-head step-toggle" onClick={() => setShowTemplates(!showTemplates)} aria-expanded={showTemplates || !!template}>
+          <span className="step-num">02</span> Use a template
+          <span className="step-opt">{showTemplates || template ? "▲ hide" : "optional ▼"}</span>
+        </button>
+        {(showTemplates || template) && <div className="templates">{kindTemplates.map(templateCard)}</div>}
+
+        {template && (
+          <div className="fields">
+            <div className="fields-head">
+              {template.emoji} {template.name}
+              <span className="fields-actions">
+                <button
+                  className="link"
+                  onClick={() => {
+                    const example = Object.fromEntries(template.fields.map((f) => [f.key, f.placeholder]));
+                    setFields(example);
+                    setPrompt(fillTemplate(template, example));
+                  }}
+                >
+                  Use this example
+                </button>
+                <button className="link" onClick={() => chooseTemplate(null)}>
+                  Clear
+                </button>
+              </span>
+            </div>
+            {template.fields.map((f) => (
+              <label key={f.key} className="field">
+                <span>{f.label}</span>
+                <input
+                  value={fields[f.key] ?? ""}
+                  placeholder={`e.g. ${f.placeholder}`}
+                  onChange={(e) => setField(f.key, e.target.value)}
+                />
+              </label>
             ))}
           </div>
         )}

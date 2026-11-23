@@ -814,3 +814,4 @@ kbd {
   padding: 8px;
   font: inherit;
 }
+.step-toggle { width: 100%; background: none; border: 0; color: inherit; cursor: pointer; padding: 0; text-align: left; font: inherit; }
