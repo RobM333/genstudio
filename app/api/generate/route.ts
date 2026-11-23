@@ -58,7 +58,8 @@ export async function POST(req: Request) {
   let enhancedPrompt: string | undefined;
   let enhanceNote: string | undefined;
   if (body.enhance !== false && !model.needsSource) {
-    const purpose = body.purpose === "keyframe" ? "keyframe" : model.takesImage ? "animate" : "direct";
+    const purpose =
+      body.purpose === "refix" ? "refix" : body.purpose === "keyframe" ? "keyframe" : model.takesImage ? "animate" : "direct";
     const e = await enhancePrompt(prompt, model, { live: mode === "live", sound: body.sound !== false, purpose });
     if (e.by !== "none" && checkPrompt(e.prompt).ok) {
       finalPrompt = e.prompt;

@@ -42,7 +42,7 @@ type Item = {
   stepStartedAt?: number; // when the current step started (or joined the queue)
   phase?: Phase; // waiting in line, or being made
   queuePosition?: number;
-  purpose?: "keyframe" | "animate"; // picture-first video steps
+  purpose?: "keyframe" | "animate" | "refix"; // picture-first video steps, or a remade fix
   keyframeFor?: KeyframePlan; // this picture is the first frame of a planned video
   enhanceNote?: string; // what the booster simplified, in plain words
 };
@@ -64,7 +64,7 @@ type JobSpec = {
   sourceUrl?: string;
   editPrompt?: string;
   fixNote?: string;
-  purpose?: "keyframe" | "animate";
+  purpose?: "keyframe" | "animate" | "refix";
   keyframeFor?: KeyframePlan;
 };
 
@@ -358,7 +358,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
   }
 
   /** Fixes what the user didn't like. Images are edited in place; videos are re-made with the note added. */
-  function fixItem(it: Item, note: string, newPrompt?: string): string | null {
+  function fixItem(it: Item, note: string, newPrompt?: string, how: FixMode = "edit"): string | null {
     const text = note.trim();
     if (!text) return "Say what you'd like changed.";
     const safety = checkPrompt(text);
@@ -376,7 +376,17 @@ export default function Studio({ mode }: { mode: AppMode }) {
       fixNote: text,
       keyframeFor: it.keyframeFor,
     };
-    if (it.kind === "image" && it.url) {
+    if (it.kind === "image" && how === "remake") {
+      // Camera, angle or layout changes can't be done by editing: make a fresh picture
+      // from the original idea plus the correction, with the layout spelled out.
+      runJob({
+        ...common,
+        modelId: KEYFRAME_MODEL_ID,
+        autoReason: "remade with your fix, follows layout and camera directions closely",
+        enhance: true,
+        purpose: "refix",
+      });
+    } else if (it.kind === "image" && it.url) {
       runJob({
         ...common,
         modelId: EDIT_IMAGE_MODEL.id,
@@ -1467,14 +1477,39 @@ function AnimateBox({ pic, onAnimate }: { pic: Item; onAnimate: (p: Item) => voi
 
 type Analysis = { problems: string[]; fix: string; prompt: string };
 
-function FixBox({ item, onFix }: { item: Item; onFix: (it: Item, note: string, newPrompt?: string) => string | null }) {
+type FixMode = "edit" | "remake";
+
+/** Camera, angle and layout changes need a fresh picture; small changes can be edited in place. */
+function suggestFixMode(note: string): FixMode {
+  return /\b(angle|camera|view|viewpoint|perspective|shot from|from the (side|back|front|top|left|right|other)|side of|behind|overhead|facing|faces|face (the|away|towards?)|turn(ed)? around|looking at|layout|position|where|wide shot|close.?up|zoom|realistic|wouldn'?t|couldn'?t|can'?t see|other side|opposite|rearrange|move (the|him|her|them)|swap)\b/i.test(
+    note,
+  )
+    ? "remake"
+    : "edit";
+}
+
+function FixBox({
+  item,
+  onFix,
+}: {
+  item: Item;
+  onFix: (it: Item, note: string, newPrompt?: string, how?: FixMode) => string | null;
+}) {
   const [note, setNote] = useState("");
+  const [picked, setPicked] = useState<FixMode | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const m = getModel(item.modelId);
   const isImage = item.kind === "image";
-  const cost = isImage ? estimateCost(EDIT_IMAGE_MODEL) : m ? estimateCost(m, item.duration, item.wantSound !== false) : 0;
+  const how: FixMode = picked ?? suggestFixMode(note);
+  const cost = isImage
+    ? how === "remake"
+      ? estimateCost(getModel(KEYFRAME_MODEL_ID)!)
+      : estimateCost(EDIT_IMAGE_MODEL)
+    : m
+      ? estimateCost(m, item.duration, item.wantSound !== false)
+      : 0;
   const analyzeCost = isImage ? 0.01 : 0.01 * Math.ceil((item.duration ?? 5) / 5);
 
   async function analyze() {
@@ -1532,16 +1567,32 @@ function FixBox({ item, onFix }: { item: Item; onFix: (it: Item, note: string, n
         value={note}
         onChange={(e) => setNote(e.target.value)}
       />
+      {isImage && (
+        <div className="segmented fix-mode">
+          <button className={how === "edit" ? "seg active" : "seg"} onClick={() => setPicked("edit")}>
+            <strong>✏️ Change one part</strong>
+            <span>keeps the rest</span>
+          </button>
+          <button className={how === "remake" ? "seg active" : "seg"} onClick={() => setPicked("remake")}>
+            <strong>🔄 Remake with fix</strong>
+            <span>new angle or layout</span>
+          </button>
+        </div>
+      )}
       {error && <p className="error">{error}</p>}
       <button
         className="pill active"
-        onClick={() => setError(onFix(item, note, !isImage && analysis?.prompt ? analysis.prompt : undefined))}
+        onClick={() =>
+          setError(onFix(item, note, !isImage && analysis?.prompt ? analysis.prompt : undefined, isImage ? how : "edit"))
+        }
       >
         🔧 Fix this
       </button>
       <p className="hint">
         {isImage
-          ? "Changes just what you describe and keeps the rest. "
+          ? how === "remake"
+            ? "Makes a fresh picture from your original idea plus your fix, so the camera angle and who stands where can change. "
+            : "Changes just what you describe and keeps everything else, including the camera angle. "
           : item.purpose === "animate"
             ? "Makes the video again from the same picture, with your note. "
             : "Videos can't be edited in place, so we make it again with your note. "}

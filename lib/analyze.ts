@@ -13,10 +13,13 @@ export function analysisInstructions(kind: "image" | "video", userPrompt: string
 The user asked for:
 """${userPrompt.slice(0, 1500)}"""
 
-Look closely at the ${kind}. Find up to 4 concrete things that don't match the request or look physically wrong: who is where, which way people face, the camera position, missing or extra people or objects, misspelled or wrong text, the wrong action or wrong order of events${kind === "video" ? ", unnatural motion" : ""}. Ignore small style differences. Do not name or identify real people.
+Look closely at the ${kind}. Find up to 4 concrete problems, most important first. Check two things:
+1. Does it match the request? Who and what is there, where each one is, which way they face, the camera position, the action${kind === "video" ? " and the order of events" : ""}, and any words (spelled exactly as asked, no extra words).
+2. Does it make physical sense? Sightlines (people look at what they are paying attention to), gravity (nothing floats that should rest or be held), light and shadows coming from one consistent direction, reflections that match, hands and bodies (finger count, natural grip), sizes that fit next to each other, perspective and objects placed where they would really be${kind === "video" ? ", and natural motion with no morphing" : ""}.
+Ignore small style differences. Do not name or identify real people.
 
 Reply with JSON only:
-{"problems": ["short plain sentence", ...], "fix": "one instruction for an image editor that fixes the problems, e.g. Turn the boy so he faces the court", "prompt": "a complete improved prompt (60 to 110 words) that keeps the user's idea and states camera position, where each person is, which way they face, and the one main action, so the problems don't happen again"}
+{"problems": ["short plain sentence", ...], "fix": "one instruction for an image editor that fixes the problems, e.g. Make the shadow of the bottle fall to the right, like the others", "prompt": "a complete improved prompt (60 to 110 words) that keeps the user's idea and states the camera position and angle, what is in the foreground and background, where each person or object is and which way it faces, where the light comes from${kind === "video" ? ", and the one main action" : ""}, so the problems don't happen again"}
 If nothing is wrong, return an empty problems list.`;
 }
 

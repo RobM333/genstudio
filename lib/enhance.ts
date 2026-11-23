@@ -11,7 +11,7 @@ import type { ModelInfo } from "./models";
 const TIMEOUT_MS = 6000;
 const MAX_LEN = 1500;
 
-export type Purpose = "direct" | "keyframe" | "animate";
+export type Purpose = "direct" | "keyframe" | "animate" | "refix";
 export type Enhanced = { prompt: string; by: "ai" | "rules" | "none"; note?: string };
 
 const COMMON = `You rewrite short prompts for an AI image and video generator used by creators and marketers.
@@ -29,19 +29,43 @@ const PLAIN_REPLY = "Reply with the prompt only. No title, no explanation, no qu
 const JSON_REPLY = `Reply with JSON only, like {"prompt": "...", "note": "..."}.
 "note" is one short, friendly sentence to the user ONLY if you had to simplify or change their idea (for example "Your idea has three moments; a short clip can show one, so we focused on the dunk."). Otherwise "note" is "".`;
 
+// AI generators often get the *layout* wrong: who is where, which way they face,
+// where the camera is, where the light comes from. So for any scene (a product
+// shot, a street, a car ad, a kitchen, a sports game) we ask the writer to plan
+// the layout first, then describe it in plain words.
+const LAYOUT_PLAN = `Before writing, plan the layout of the scene so it is physically real, then describe it clearly:
+- Camera: where it stands, its height (eye level, low, high, overhead), the angle and the shot size (wide, medium, close-up), and the lens feel.
+- Depth: what is in the foreground, the middle and the background.
+- Subjects: where each person, animal or main object is in the frame (left, centre, right) and which way each one faces. People look at what they are paying attention to; a crowd watching something faces it.
+- Light: where the main light comes from (for example window on the left, low sun behind), so shadows and reflections fall the same way.
+- Scale and physics: sizes make sense next to each other; things rest on surfaces or are held, not floating; reflections match the scene; hands hold objects naturally; text and signs face the camera if they must be read.
+- Keep left/right and facing consistent with the camera position you chose.
+- For logos, icons or flat graphics, skip camera and light: describe the layout and colours instead.`;
+
 // Story-like prompts confuse video models: they mix up who is where and what happens when.
-const SHOT_RULES = `Video models get confused by stories. Turn the description into ONE clear shot:
-- Say where the camera is and what it looks at (for example "wide shot from courtside, behind the crowd, looking at the hoop").
-- Place every person: where they are in the frame (left, right, foreground, background) and which way they face.
-- Keep left/right and facing directions consistent and physically sensible (people watching something face it).
+const SHOT_RULES = `${LAYOUT_PLAN}
+Video models get confused by stories. Make it ONE clear shot:
 - Describe what happens in order, using only what fits in 5 to 10 seconds: one main action.
 - If the user describes several moments or a story, keep only the single most important moment and mention this in the note.`;
 
+const STILL_RULES = `${LAYOUT_PLAN}
+Describe one frozen moment.`;
+
 function systemPrompt(model: ModelInfo, sound: boolean, purpose: Purpose): string {
+  if (purpose === "refix") {
+    return `${COMMON}
+The user's message has their ORIGINAL description, then "Fix:" and a CORRECTION they wrote after seeing a result they didn't like. Write a new prompt for a fresh ${model.kind === "video" ? "video" : "picture"}:
+- Apply the correction fully, even if it changes the camera angle or the layout.
+- Keep everything else from the original: the same people, products and objects, their ages and roles (someone watching stays someone watching), the mood, the brand-free look and the setting.
+- If the correction says something isn't realistic, work out what would really be seen from that camera position and describe that.
+${model.kind === "video" ? SHOT_RULES : STILL_RULES}
+${model.kind === "video" ? "Also describe the camera movement and the one main action." : "Describe one frozen moment. Do not describe sound or motion over time."}
+${JSON_REPLY}`;
+  }
   if (purpose === "keyframe") {
     return `${COMMON}
 This still image is the FIRST FRAME of a short video, so get the layout exactly right before anything moves.
-${SHOT_RULES}
+${STILL_RULES}
 Describe the frozen moment just before the main action starts, with lighting, lens and style. Do not describe sound or motion over time.
 ${JSON_REPLY}`;
   }
@@ -59,7 +83,7 @@ ${JSON_REPLY}`;
       model.id.includes("nano-banana") || model.id.includes("recraft")
         ? "This model is good at text and graphic design. Keep any wording exact, describe layout, typography style and colour palette."
         : "Describe the subject first, then composition and framing, lighting, lens or camera (for photos) or art style (for illustrations), colour palette and mood.";
-    return `${COMMON}\nThis is for a still image. ${extra}\n${PLAIN_REPLY}`;
+    return `${COMMON}\nThis is for a still image. ${extra}\n${STILL_RULES}\n${PLAIN_REPLY}`;
   }
   const soundLine =
     model.audio && sound

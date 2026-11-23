@@ -699,3 +699,4 @@ kbd {
 .problems li { margin-bottom: 4px; }
 .fix-box .pill { margin-bottom: 8px; }
 .fix-box .label { display: block; margin-bottom: 8px; }
+.fix-mode { margin: 8px 0; }
