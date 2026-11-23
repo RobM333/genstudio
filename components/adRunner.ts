@@ -4,7 +4,7 @@
 // Progress is saved on the item, so a closed page carries on where it stopped.
 
 import { endCardPrompt, endCardSeconds, SCENE_SECONDS, scenePrompt, type AdBrief, type AdPlan } from "@/lib/adplan";
-import { post, waitFor } from "./storyRunner";
+import { post, waitFor, waitForResult } from "./storyRunner";
 
 export type AdClip = { url?: string; frame?: string; status: "waiting" | "working" | "done" | "failed"; error?: string };
 
@@ -15,6 +15,8 @@ export type AdJob = {
   clips: AdClip[]; // one per scene
   voices: (string | undefined)[]; // one per scene, then the end card's
   voiceFor: string[]; // the line each voice clip was made from, so changed lines are re-read
+  productUrl?: string; // our product picture (when the user gave no photo), reused in every scene
+  productToken?: string;
   cardImage?: string;
   cardClip?: string;
   cardFor?: string; // headline|tagline the card was made with
@@ -47,14 +49,28 @@ export function voiceLines(plan: AdPlan): string[] {
   return [...plan.scenes.map((s) => s.voice), plan.endCard.voice];
 }
 
+/** The product's look, made once and reused in every scene so it never changes design. */
+async function productPicture(job: AdJob, aspectRatio: string): Promise<{ url: string; token: string }> {
+  const res = await post("/api/generate", {
+    modelId: "fal-ai/nano-banana",
+    prompt: `Clean product photo of ${job.brief.product}. ${job.plan.look}. The whole product, centred, on a plain light background, soft studio light. No text, no logos, no people.`.slice(0, 1990),
+    aspectRatio,
+    enhance: false,
+  });
+  return waitForResult(res.modelId ?? "fal-ai/nano-banana", res);
+}
+
+/** A scene's first frame, showing the product from the user's photo or from our product picture. */
 async function sceneFrame(job: AdJob, i: number, aspectRatio: string): Promise<string> {
   const res = await post("/api/generate", {
     modelId: "fal-ai/nano-banana/edit",
-    prompt: `Opening frame of a video ad scene. ${scenePrompt(job.plan, i)}`.slice(0, 1990),
+    prompt: `Opening frame of a video ad scene. The product must look exactly like the product in the reference picture. ${scenePrompt(job.plan, i)}`.slice(0, 1990),
     aspectRatio,
     enhance: false,
     purpose: "keyframe",
     refs: job.refs,
+    productUrl: job.productUrl,
+    productToken: job.productToken,
   });
   return waitFor(res.modelId ?? "fal-ai/nano-banana/edit", res);
 }
@@ -75,16 +91,55 @@ async function sceneClip(job: AdJob, i: number, aspectRatio: string, frame?: str
 }
 
 async function cardImage(job: AdJob, aspectRatio: string): Promise<string> {
-  const withRefs = Boolean(job.refs?.length);
-  const modelId = withRefs ? "fal-ai/nano-banana/edit" : "fal-ai/nano-banana";
+  const withPicture = Boolean(job.refs?.length || job.productUrl);
+  const modelId = withPicture ? "fal-ai/nano-banana/edit" : "fal-ai/nano-banana";
   const res = await post("/api/generate", {
     modelId,
-    prompt: endCardPrompt(job.plan, withRefs),
+    prompt: endCardPrompt(job.plan, withPicture),
     aspectRatio,
     enhance: false,
-    refs: withRefs ? job.refs : undefined,
+    refs: job.refs,
+    productUrl: job.productUrl,
+    productToken: job.productToken,
   });
   return waitFor(res.modelId ?? modelId, res);
+}
+
+/** Holds the end card on screen: a still with the music under it, or a gentle animated shot if that fails. */
+async function cardClip(job: AdJob, aspectRatio: string): Promise<string> {
+  const seconds = endCardSeconds(job.plan.seconds);
+  const still = await tool({ tool: "still", imageUrl: job.cardImage, audioUrl: job.musicUrl, seconds }, "fal-ai/ffmpeg-api/compose");
+  const got = await videoSeconds(still);
+  if (got === null || got >= seconds - 0.6) return still;
+  const res = await post("/api/generate", {
+    modelId: job.animateModelId,
+    prompt: "Completely still product shot. The camera barely moves, a very slow gentle push-in. All text stays perfectly still, sharp and unchanged. Nothing else moves.",
+    aspectRatio,
+    duration: SCENE_SECONDS,
+    sound: false,
+    enhance: false,
+    sourceUrl: job.cardImage,
+    purpose: "animate",
+  });
+  return waitFor(job.animateModelId, res);
+}
+
+/** Length of a video in the browser; null when it can't be read (for example demo pictures). */
+function videoSeconds(url: string): Promise<number | null> {
+  if (!url || url.startsWith("data:") || typeof document === "undefined") return Promise.resolve(null);
+  return new Promise((resolve) => {
+    const v = document.createElement("video");
+    const done = (n: number | null) => {
+      clearTimeout(t);
+      resolve(n);
+    };
+    const t = setTimeout(() => done(null), 15000);
+    v.preload = "metadata";
+    v.muted = true;
+    v.onloadedmetadata = () => done(Number.isFinite(v.duration) ? v.duration : null);
+    v.onerror = () => done(null);
+    v.src = url;
+  });
 }
 
 async function tool(body: Record<string, unknown>, fallbackModel: string): Promise<string> {
@@ -105,17 +160,26 @@ export async function buildAd(job: AdJob, aspectRatio: string, save: (j: AdJob, 
     save(job, { stepStartedAt: Date.now(), jobModelId: modelId });
   };
 
+  // Without the user's own photo, design the product once so every scene shows the same one.
+  if (!job.refs?.length && !job.productUrl) {
+    step("Designing your product", "fal-ai/nano-banana");
+    const pic = await productPicture(job, aspectRatio);
+    job.productUrl = pic.url;
+    job.productToken = pic.token;
+    save(job);
+  }
+
   for (let i = 0; i < n; i++) {
     const clip = job.clips[i] ?? (job.clips[i] = { status: "waiting" });
     if (clip.url) continue;
     clip.status = "working";
     clip.error = undefined;
     try {
-      if (job.refs?.length && !clip.frame) {
-        step(`Scene ${i + 1} of ${n}: placing your product`, "fal-ai/nano-banana/edit");
+      if (!clip.frame) {
+        step(`Scene ${i + 1} of ${n}: setting up the shot`, "fal-ai/nano-banana/edit");
         clip.frame = await sceneFrame(job, i, aspectRatio);
       }
-      step(`Scene ${i + 1} of ${n}`, clip.frame ? job.animateModelId : job.sceneModelId);
+      step(`Scene ${i + 1} of ${n}`, job.animateModelId);
       clip.url = await sceneClip(job, i, aspectRatio, clip.frame);
       clip.status = "done";
     } catch (e) {
@@ -124,25 +188,6 @@ export async function buildAd(job: AdJob, aspectRatio: string, save: (j: AdJob, 
       save(job);
       throw e;
     }
-    save(job);
-  }
-
-  const cardKey = `${plan.endCard.headline}|${plan.endCard.tagline}`;
-  if (!job.cardClip || job.cardFor !== cardKey) {
-    if (!job.cardImage || job.cardFor !== cardKey) {
-      step("Designing the end card", "fal-ai/nano-banana");
-      job.cardImage = await cardImage(job, aspectRatio);
-    }
-    step("Finishing the end card", "fal-ai/ffmpeg-api/compose");
-    job.cardClip = await tool({ tool: "still", imageUrl: job.cardImage, seconds: endCardSeconds(plan.seconds) }, "fal-ai/ffmpeg-api/compose");
-    job.cardFor = cardKey;
-    job.joinedUrl = undefined;
-    save(job);
-  }
-
-  if (!job.joinedUrl) {
-    step("Joining the scenes", "fal-ai/ffmpeg-api/merge-videos");
-    job.joinedUrl = await tool({ tool: "merge", urls: [...job.clips.map((c) => c.url!), job.cardClip] }, "fal-ai/ffmpeg-api/merge-videos");
     save(job);
   }
 
@@ -162,6 +207,26 @@ export async function buildAd(job: AdJob, aspectRatio: string, save: (j: AdJob, 
     step("Making the music", "cassetteai/music-generator");
     job.musicUrl = (await tool({ tool: "music", prompt: plan.music, seconds: plan.seconds }, "cassetteai/music-generator")) || undefined;
     job.musicFor = plan.music;
+    job.cardClip = undefined; // the end card carries the music bed
+    save(job);
+  }
+
+  const cardKey = `${plan.endCard.headline}|${plan.endCard.tagline}`;
+  if (!job.cardClip || job.cardFor !== cardKey) {
+    if (!job.cardImage || job.cardFor !== cardKey) {
+      step("Designing the end card", "fal-ai/nano-banana");
+      job.cardImage = await cardImage(job, aspectRatio);
+    }
+    step("Finishing the end card", "fal-ai/ffmpeg-api/compose");
+    job.cardClip = await cardClip(job, aspectRatio);
+    job.cardFor = cardKey;
+    job.joinedUrl = undefined;
+    save(job);
+  }
+
+  if (!job.joinedUrl) {
+    step("Joining the scenes", "fal-ai/ffmpeg-api/merge-videos");
+    job.joinedUrl = await tool({ tool: "merge", urls: [...job.clips.map((c) => c.url!), job.cardClip] }, "fal-ai/ffmpeg-api/merge-videos");
     save(job);
   }
 
@@ -200,6 +265,8 @@ export function changedAdJob(old: AdJob, plan: AdPlan): { job: AdJob; scenes: nu
     clips,
     voices: [...old.voices],
     voiceFor: [...old.voiceFor],
+    productUrl: lookSame ? old.productUrl : undefined,
+    productToken: lookSame ? old.productToken : undefined,
     cardImage: card ? undefined : old.cardImage,
     cardClip: card ? undefined : old.cardClip,
     cardFor: card ? undefined : old.cardFor,

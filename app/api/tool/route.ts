@@ -22,6 +22,7 @@ type Body = {
   prompt?: string;
   seconds?: number;
   imageUrl?: string;
+  audioUrl?: string;
   videoUrl?: string;
   voices?: { url?: string; at?: number; seconds?: number }[];
   musicUrl?: string;
@@ -75,8 +76,11 @@ export async function POST(req: Request) {
       const imageUrl = String(body.imageUrl ?? "");
       if (!imageUrl) return bad();
       modelId = COMPOSE_MODEL.id;
-      input = { tracks: [{ id: "card", type: "image", keyframes: [{ url: imageUrl, timestamp: 0, duration: Math.round(seconds * 1000) }] }] };
-      allUrls.push(imageUrl);
+      const ms = Math.round(seconds * 1000);
+      // An audio track sets how long the still is shown (a picture on its own comes out as one frame).
+      const audio = body.audioUrl ? [{ id: "bed", type: "audio", keyframes: [{ url: String(body.audioUrl), timestamp: 0, duration: ms }] }] : [];
+      input = { tracks: [{ id: "card", type: "image", keyframes: [{ url: imageUrl, timestamp: 0, duration: ms }] }, ...audio] };
+      allUrls.push(imageUrl, ...(body.audioUrl ? [String(body.audioUrl)] : []));
       demoUrl = imageUrl;
       break;
     }

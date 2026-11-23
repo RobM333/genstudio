@@ -151,7 +151,7 @@ export function adPlanWithRules(brief: AdBrief): AdPlan {
 
 export const AD_PRICES = {
   scene: 0.35, // Kling 2.5 Turbo Pro, 5 seconds
-  picture: 0.04, // Nano Banana: a scene's first frame from your product photo, or the end card
+  picture: 0.04, // Nano Banana: the product picture, each scene's first frame, the end card
   voicePer1000Chars: 0.05,
   musicPerMinute: 0.02,
   editPerSecond: 0.0006, // joining and mixing
@@ -165,8 +165,9 @@ export function adCost(plan: AdPlan, withRefs: boolean): number {
   const n = plan.scenes.length;
   return (
     n * AD_PRICES.scene +
-    (withRefs ? n * AD_PRICES.picture : 0) +
-    AD_PRICES.picture +
+    n * AD_PRICES.picture + // each scene's first frame, showing the same product
+    (withRefs ? 0 : AD_PRICES.picture) + // our product picture when there is no photo
+    AD_PRICES.picture + // end card
     (voiceChars(plan) / 1000) * AD_PRICES.voicePer1000Chars +
     Math.ceil(plan.seconds / 60) * AD_PRICES.musicPerMinute +
     plan.seconds * AD_PRICES.editPerSecond * 3
@@ -175,7 +176,8 @@ export function adCost(plan: AdPlan, withRefs: boolean): number {
 
 /** One scene remade from the chat, plus the re-join and re-mix. */
 export function sceneRemakeCost(plan: AdPlan, withRefs: boolean): number {
-  return AD_PRICES.scene + (withRefs ? AD_PRICES.picture : 0) + plan.seconds * AD_PRICES.editPerSecond * 2 + 0.01;
+  void withRefs;
+  return AD_PRICES.scene + AD_PRICES.picture + plan.seconds * AD_PRICES.editPerSecond * 2 + 0.01;
 }
 
 /** Every bit of text in a plan, for the safety check. */

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getMode } from "@/lib/config";
 import { extractMediaUrl, getModel } from "@/lib/models";
 import { fal } from "@/lib/fal";
+import { sign } from "@/lib/references";
 
 export const dynamic = "force-dynamic";
 
@@ -26,7 +27,8 @@ export async function GET(req: Request) {
     const result = await fal.queue.result(model.id, { requestId });
     const mediaUrl = extractMediaUrl(result.data);
     if (!mediaUrl) return NextResponse.json({ status: "FAILED", error: "The model returned no result." });
-    return NextResponse.json({ status: "COMPLETED", url: mediaUrl });
+    // The signature proves this result was made here, so it can be reused safely (for example an ad's product picture).
+    return NextResponse.json({ status: "COMPLETED", url: mediaUrl, resultToken: sign("result", mediaUrl) });
   } catch (err) {
     console.error("fal status failed", err);
     return NextResponse.json({ status: "FAILED", error: jobError(err) });

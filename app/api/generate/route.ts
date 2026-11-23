@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 const MAX_PROMPT = 2000;
 
 export async function POST(req: Request) {
-  let body: { modelId?: string; prompt?: string; aspectRatio?: string; duration?: number; sourceUrl?: string; sound?: boolean; enhance?: boolean; purpose?: string; refs?: { url?: string; kind?: string; token?: string }[] };
+  let body: { modelId?: string; prompt?: string; aspectRatio?: string; duration?: number; sourceUrl?: string; sound?: boolean; enhance?: boolean; purpose?: string; refs?: { url?: string; kind?: string; token?: string }[]; productUrl?: string; productToken?: string };
   try {
     body = await req.json();
   } catch {
@@ -28,7 +28,9 @@ export async function POST(req: Request) {
   const refs = rawRefs.map((r) => ({ url: String(r?.url ?? ""), kind: r?.kind, token: String(r?.token ?? "") }));
   if (refs.some((r) => !isRefKind(r.kind))) return NextResponse.json({ error: "Bad reference picture." }, { status: 400 });
   const refKinds = refs.map((r) => r.kind as RefKind);
-  if (refs.length > 0) {
+  // A product picture GenStudio made earlier (signed when it finished), reused so every scene of an ad shows the same product.
+  const productUrl = body.productUrl ? String(body.productUrl) : "";
+  if (refs.length > 0 || productUrl) {
     if (model.kind !== "image" || model.needsSource)
       return NextResponse.json({ error: "Reference pictures are used to make a picture first." }, { status: 400 });
     model = REFERENCE_IMAGE_MODEL;
@@ -94,6 +96,7 @@ export async function POST(req: Request) {
       status: "COMPLETED",
       demo: true,
       url: makeDemoMedia({ prompt, kind: model.kind, aspectRatio, modelName: model.name }),
+      resultToken: "demo",
       aspectRatio,
       duration,
       enhancedPrompt,
@@ -107,7 +110,9 @@ export async function POST(req: Request) {
   // Each reference must be one our safety check passed (signed by /api/reference).
   if (refs.some((r) => !isFalMediaUrl(r.url) || !verify(r.token, "ref", r.url, r.kind as string)))
     return NextResponse.json({ error: "Please upload your reference pictures again." }, { status: 400 });
-  const refUrls = refs.map((r) => r.url);
+  if (productUrl && (!isFalMediaUrl(productUrl) || !verify(String(body.productToken ?? ""), "result", productUrl)))
+    return NextResponse.json({ error: "That product picture can't be used." }, { status: 400 });
+  const refUrls = [...(productUrl ? [productUrl] : []), ...refs.map((r) => r.url)];
   if (refs.length > 0) finalPrompt = `${referenceInstructions(refKinds)}\n${finalPrompt}`;
 
   try {

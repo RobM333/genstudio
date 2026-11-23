@@ -26,7 +26,7 @@ assert.equal(plan.voice, "Brian");
 assert.equal(parseAdPlan("nope", brief), null);
 assert.equal(adPlanWithRules(brief).scenes.length, 2);
 const c = adCost(plan, false);
-assert.ok(c > 0.7 && c < 0.85, String(c));
+assert.ok(c > 0.85 && c < 0.95, String(c));
 
 // Changing one scene keeps the other scene's clip.
 const job = newAdJob(brief, plan);

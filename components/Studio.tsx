@@ -752,8 +752,9 @@ export default function Studio({ mode }: { mode: AppMode }) {
     const c = changedAdJob(old, plan);
     const withRefs = Boolean(old.refs?.length);
     return (
-      c.scenes * (AD_PRICES.scene + (withRefs ? AD_PRICES.picture : 0)) +
+      c.scenes * (AD_PRICES.scene + AD_PRICES.picture) +
       (c.card ? AD_PRICES.picture : 0) +
+      (!withRefs && old.plan.look !== plan.look ? AD_PRICES.picture : 0) +
       (c.voiceChars / 1000) * AD_PRICES.voicePer1000Chars +
       (c.music ? AD_PRICES.musicPerMinute * Math.ceil(plan.seconds / 60) : 0) +
       plan.seconds * AD_PRICES.editPerSecond * 2
@@ -1839,7 +1840,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
         </div>
         <p className="muted small g-hint">
           {sceneCount(brief.seconds)} scenes of {SCENE_SECONDS} seconds and a {endCardSeconds(brief.seconds)}-second end card with your product name. A {brief.seconds}-second ad usually costs est.{" "}
-          {formatCost(sceneCount(brief.seconds) * (AD_PRICES.scene + (refs.length ? AD_PRICES.picture : 0)) + 0.08)} to make.
+          {formatCost(sceneCount(brief.seconds) * (AD_PRICES.scene + AD_PRICES.picture) + (refs.length ? 0.06 : 0.1))} to make.
         </p>
       </section>
 
