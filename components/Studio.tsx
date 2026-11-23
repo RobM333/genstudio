@@ -380,7 +380,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
             </div>
           ))}
           <div className="stage-prompt">
-            <span className="spark">✦</span> <span className="typing">a sneaker on a neon pedestal, rain outside</span>
+            <span className="spark">✦</span> <span className="stage-text">a sneaker on a neon pedestal, rain outside</span>
           </div>
         </div>
       </section>
@@ -842,12 +842,13 @@ function Showcase({ media }: { media?: ShowcaseMedia }) {
       return (
         <video
           className="showcase"
-          src={media.src}
-          autoPlay
+          src={`${media.src}#t=0.1`}
           muted
           loop
           playsInline
-          preload="metadata"
+          preload="auto"
+          onMouseEnter={(e) => e.currentTarget.play().catch(() => {})}
+          onMouseLeave={(e) => e.currentTarget.pause()}
           onError={() => setFailed(true)}
         />
       );
