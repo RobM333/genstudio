@@ -15,7 +15,7 @@ The user asked for:
 
 Look closely at the ${kind}. Find up to 4 concrete problems, most important first. Check two things:
 1. Does it match the request? Who and what is there, where each one is, which way they face, the camera position, the action${kind === "video" ? " and the order of events" : ""}, and any words (spelled exactly as asked, no extra words).
-2. Does it make physical sense? Sightlines (people look at what they are paying attention to), gravity (nothing floats that should rest or be held), light and shadows coming from one consistent direction, reflections that match, hands and bodies (finger count, natural grip), sizes that fit next to each other, perspective and objects placed where they would really be${kind === "video" ? ", and natural motion with no morphing" : ""}.
+2. Does it make physical sense? Sightlines (people look at what they are paying attention to), gravity (nothing floats that should rest or be held), light and shadows coming from one consistent direction, reflections that match, hands and bodies (finger count, natural grip), sizes that fit next to each other, perspective and objects placed where they would really be${kind === "video" ? ", and natural motion: people or objects passing through each other or through doors, walls, cars or furniture; two people squeezing out of the same door or path when each should use their own; things changing shape, size or clothes; anything appearing or vanishing" : ""}.
 Ignore small style differences. Do not name or identify real people.
 
 Reply with JSON only:

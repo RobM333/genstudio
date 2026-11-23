@@ -42,9 +42,19 @@ const LAYOUT_PLAN = `Before writing, plan the layout of the scene so it is physi
 - Keep left/right and facing consistent with the camera position you chose.
 - For logos, icons or flat graphics, skip camera and light: describe the layout and colours instead.`;
 
+
+// Motion has its own layout problems: two people getting out of the same car door,
+// someone walking through a table. So every moving thing gets its own path.
+const MOTION_PLAN = `Plan the movement too:
+- Give each person or moving object its own path: where it starts, which way it goes, and where it ends (for example "the driver gets out through the driver's door on the left; the passenger gets out through the passenger door on the right").
+- Use the real exit or entry for each one: each person uses their own door, gap or path, never the same one at the same time.
+- Say the order: who moves first, then who. Doors open before anyone goes through them.
+- Nothing passes through anything else: people don't walk through doors, walls, cars, furniture or each other, and they keep the same size, clothes and look the whole time.`;
+
 // Story-like prompts confuse video models: they mix up who is where and what happens when.
 const SHOT_RULES = `${LAYOUT_PLAN}
 Video models get confused by stories. Make it ONE clear shot:
+${MOTION_PLAN}
 - Describe what happens in order, using only what fits in 5 to 10 seconds: one main action.
 - If the user describes several moments or a story, keep only the single most important moment and mention this in the note.`;
 
@@ -75,7 +85,9 @@ ${JSON_REPLY}`;
         ? "End with one short sentence describing the sound (ambience, effects, music mood, any spoken line in quotes)."
         : "Do not describe sound.";
     return `${COMMON}
-The first frame of this video is already given as a picture, and the layout is already right. Describe only what moves: the one main action in order, how people move, and the camera movement. Keep everyone where they are and facing the way they face. Do not re-describe the whole scene. Keep it short, about 40 to 70 words. ${soundLine}
+The first frame of this video is already given as a picture, and the layout is already right. Describe only what moves: the one main action in order, how people move, and the camera movement. Keep everyone where they start and facing the way they face. Do not re-describe the whole scene.
+${MOTION_PLAN}
+ Keep it short, about 40 to 70 words. ${soundLine}
 ${JSON_REPLY}`;
   }
   if (model.kind === "image") {
@@ -113,6 +125,8 @@ export function enhanceWithRules(prompt: string, model: ModelInfo, sound = true)
   } else {
     if (!has("camera", "dolly", "pan", "orbit", "tracking", "push", "zoom", "drone")) add.push("smooth cinematic camera movement");
     if (!has("light")) add.push("natural, flattering light");
+    if (has("people", "two ", "couple", "friends", "and her", "and his", "car", "door"))
+      add.push("each person moves along their own path and uses their own door, nobody passes through objects or each other");
     add.push("realistic motion, one continuous shot, high detail, cinematic colour grading");
     if (model.audio && sound && !has("sound", "music", "audio", "voice", "says")) add.push("with matching ambient sound");
   }

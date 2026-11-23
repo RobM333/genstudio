@@ -18,6 +18,7 @@ const kling = getModel("fal-ai/kling-video/v2.5-turbo/pro/text-to-video")!;
 const a = enhanceWithRules("a red sneaker on a table", flux);
 check("image keeps the user's words", a.startsWith("a red sneaker on a table"));
 check("image adds lighting", a.includes("lighting"));
+check("video with two people in a car gets separate exits", enhanceWithRules("two friends get out of a car", kling).includes("their own door"));
 check("illustration skips camera words", !enhanceWithRules("flat illustration of a fox", flux).includes("camera"));
 check("video adds camera movement", enhanceWithRules("a dog runs on the beach", kling).includes("camera movement"));
 check("veo with sound adds ambient sound", enhanceWithRules("rain on a window", veo, true).includes("sound"));
