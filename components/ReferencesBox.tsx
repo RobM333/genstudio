@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { AppMode } from "@/lib/config";
 
 // Lets people add their own pictures (product, logo, a person who agreed) so
@@ -84,6 +84,7 @@ export default function ReferencesBox({
   kit,
   onSave,
   library,
+  openSignal,
 }: {
   refs: RefItem[];
   onChange: (refs: RefItem[]) => void;
@@ -92,6 +93,7 @@ export default function ReferencesBox({
   kit?: RefItem[]; // the brand kit's pictures, one click to add
   onSave?: (r: RefItem) => void; // saves a picture into the brand kit
   library?: boolean; // shown on the brand kit page: names can be edited
+  openSignal?: number; // changes when the Reference button on the prompt box is pressed
 }) {
   const [open, setOpen] = useState(refs.length > 0 || !!library || (kit?.length ?? 0) > 0);
   const [kind, setKind] = useState<RefKindClient>("product");
@@ -99,6 +101,14 @@ export default function ReferencesBox({
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (openSignal) setOpen(true);
+  }, [openSignal]);
+  useEffect(() => {
+    // After the box has opened, bring it into view so people see where to add the photo.
+    if (openSignal && open) boxRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [openSignal, open]);
   const full = refs.length >= max;
   const fromKit = (kit ?? []).filter((k) => !refs.some((r) => r.url === k.url));
 
@@ -137,14 +147,14 @@ export default function ReferencesBox({
   if (!open) {
     return (
       <button className="refs-open" onClick={() => setOpen(true)}>
-        📎 Use your own product, logo or person
-        <span className="muted small"> so the ad shows the real thing</span>
+        📎 Add a reference photo
+        <span className="muted small"> (your product, logo, a person or a style) to guide the result</span>
       </button>
     );
   }
 
   return (
-    <div className="refs-box">
+    <div className="refs-box" ref={boxRef}>
       <div className="refs-head">
         <strong>{library ? "🖼️ Your pictures" : "📎 Your references"}</strong>
         <span className="muted small">
