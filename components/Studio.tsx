@@ -34,6 +34,7 @@ import { ADVERTISE_PROMISE, asksForSpeech, decide, MONTHLY_CAP, promiseNote, typ
 import type { Analysis } from "@/lib/analyze";
 import { creditsFor } from "@/lib/pricing";
 import { logFreeRemake, logReturned, logUsed, usedThisMonth } from "./creditLog";
+import AccountChip from "./account/AccountChip";
 import { loadTalk, saveTalk, TalkForm, type TalkSetup } from "./TalkingVideo";
 import { buildTalk, type TalkJob } from "./talkRunner";
 import { MAX_TALK_SECONDS, talkCost, talkSeconds, TALK_VIDEO_MODEL_ID } from "@/lib/talk";
@@ -3814,6 +3815,8 @@ export default function Studio({ mode }: { mode: AppMode }) {
           </button>
           <ModeBadge mode={mode} />
         </div>
+
+        <AccountChip />
 
         <button
           className="new-btn"
