@@ -28,11 +28,11 @@ assert.equal(spotsLine(73), "73 of 100 founding spots left");
 assert.equal(spotsLine(1), "1 of 100 founding spots left");
 assert.equal(spotsLine(0), "All 100 founding spots are taken");
 
-// Only the sign-up page and what it needs skip the app password
-for (const p of ["/founding", "/founding/", "/api/founding", "/privacy", "/terms", "/acceptable-use", "/__forms.html"]) {
+// Only the landing page, the sign-up page and what they need skip the app password
+for (const p of ["/", "/founding", "/founding/", "/api/founding", "/privacy", "/terms", "/acceptable-use", "/__forms.html"]) {
   assert.equal(isPublicPath(p), true, p);
 }
-for (const p of ["/", "/pricing", "/api/founding/list", "/api/generate", "/foundingx", "/founding/list", "/api/founding/../generate"]) {
+for (const p of ["/studio", "/studio/", "/pricing", "/api/founding/list", "/api/generate", "/foundingx", "/founding/list", "/api/founding/../generate"]) {
   assert.equal(isPublicPath(p), false, p);
 }
 

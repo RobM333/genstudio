@@ -119,12 +119,14 @@ export default function Founding() {
     <div className="founding">
       <div className="aurora" aria-hidden />
       <header className="founding-top">
-        {BRAND_LOGO ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img className="founding-logo" src={BRAND_LOGO} alt={BRAND_NAME} width={300} height={315} />
-        ) : (
-          <span className="founding-brand">{BRAND_NAME}</span>
-        )}
+        <Link href="/" aria-label={`${BRAND_NAME}: see examples`}>
+          {BRAND_LOGO ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img className="founding-logo" src={BRAND_LOGO} alt={BRAND_NAME} width={300} height={315} />
+          ) : (
+            <span className="founding-brand">{BRAND_NAME}</span>
+          )}
+        </Link>
         <span className="badge badge-live">
           <span className="badge-dot" /> Opening soon
         </span>

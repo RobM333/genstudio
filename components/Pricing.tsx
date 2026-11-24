@@ -24,7 +24,7 @@ export default function Pricing() {
   }, []);
   return (
     <div className="pricing">
-      <Link href="/" className="legal-back">
+      <Link href="/studio" className="legal-back">
         ← Back to GenStudio
       </Link>
       <div className="notice warn">
