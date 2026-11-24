@@ -22,6 +22,7 @@ export type AdPlan = {
 };
 
 import { brandLine, type BrandInfo } from "./brand";
+import { isOwnVoice } from "./elevenlabs";
 
 export type AdBrief = { product: string; audience: string; seconds: number; tone: string; refKinds?: string[]; brand?: BrandInfo; language?: string };
 
@@ -114,7 +115,8 @@ const fitLine = (s: string, seconds: number, language?: string) => {
 };
 
 /** Reads the planner's JSON reply and fits it to the length; null if it is unusable. */
-export function parseAdPlan(raw: string, brief: AdBrief): AdPlan | null {
+/** keepVoice: the user's own ElevenLabs voice in the plan being changed, which the planner may keep. */
+export function parseAdPlan(raw: string, brief: AdBrief, keepVoice?: string): AdPlan | null {
   const start = raw.indexOf("{");
   const end = raw.lastIndexOf("}");
   if (start === -1 || end <= start) return null;
@@ -135,7 +137,8 @@ export function parseAdPlan(raw: string, brief: AdBrief): AdPlan | null {
       .slice(0, n);
     if (scenes.length < n) return null;
     const ec = (j.endCard ?? {}) as Record<string, unknown>;
-    const voice = AD_VOICES.some((v) => v.id === j.voice) ? String(j.voice) : "Rachel";
+    // A built-in voice the planner picked, else the user's own voice they already chose, else Rachel.
+    const voice = AD_VOICES.some((v) => v.id === j.voice) ? String(j.voice) : isOwnVoice(keepVoice) ? keepVoice : "Rachel";
     return {
       title: clip(j.title, 80) || "Your ad",
       concept: clip(j.concept, 400),
@@ -220,7 +223,7 @@ export function adCost(plan: AdPlan, withRefs: boolean, check = false): number {
     (withRefs ? 0 : AD_PRICES.picture) + // our product picture when there is no photo
     AD_PRICES.picture + // end card
     endCardSeconds(plan.seconds) * AD_PRICES.cardPerSecond +
-    (voiceChars(plan) / 1000) * AD_PRICES.voicePer1000Chars +
+    (isOwnVoice(plan.voice) ? 0 : (voiceChars(plan) / 1000) * AD_PRICES.voicePer1000Chars) + // a connected ElevenLabs voice is billed to the user's ElevenLabs
     Math.ceil(plan.seconds / 60) * AD_PRICES.musicPerMinute +
     plan.seconds * AD_PRICES.editPerSecond * 3
   );

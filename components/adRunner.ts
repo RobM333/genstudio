@@ -7,6 +7,8 @@ import { endCardPrompt, endCardSeconds, maxRedos, SCENE_SECONDS, scenePrompt, ty
 import type { Analysis } from "@/lib/analyze";
 import { faultText, type FaultCode } from "@/lib/promise";
 import { post, waitFor, waitForResult } from "./storyRunner";
+import { isOwnVoice } from "@/lib/elevenlabs";
+import { loadEleven, speakOwn, usableVoices } from "./elevenConnect";
 
 export type AdClip = {
   url?: string;
@@ -170,13 +172,43 @@ async function tool(body: Record<string, unknown>, fallbackModel: string): Promi
  * Makes whatever is still missing, in order, saving after each step.
  * Pieces that are already made (and still match the plan) are never paid for again.
  */
-export async function buildAd(job: AdJob, aspectRatio: string, save: (j: AdJob, patch?: { stepStartedAt?: number; jobModelId?: string }) => void): Promise<{ url: string; hasAudio: boolean }> {
+export async function buildAd(
+  job: AdJob,
+  aspectRatio: string,
+  save: (j: AdJob, patch?: { stepStartedAt?: number; jobModelId?: string }) => void,
+  opts: { live: boolean } = { live: true },
+): Promise<{ url: string; hasAudio: boolean }> {
   const plan = job.plan;
   const n = plan.scenes.length;
   const step = (label: string, modelId: string) => {
     job.step = label;
     save(job, { stepStartedAt: Date.now(), jobModelId: modelId });
   };
+
+  // Voiceover: one clip per line, so each lands on its own scene.
+  const lines = voiceLines(plan);
+  // The user's own ElevenLabs voice is recorded first, so a key or account problem
+  // shows up before anything is paid for. Demo mode skips voiceovers, so it never uses their characters.
+  const ownVoice = isOwnVoice(plan.voice);
+  const conn = ownVoice && opts.live ? loadEleven() : null;
+  if (ownVoice && opts.live && !usableVoices(conn).some((v) => `el:${v.id}` === plan.voice))
+    throw new Error("This ad uses your ElevenLabs voice, but that voice isn't connected in this browser. Connect it in the Brand kit, or pick one of our voices in the plan.");
+  async function recordVoices() {
+    for (let i = 0; i < lines.length; i++) {
+      if (!lines[i]) continue;
+      const key = `${plan.voice}|${lines[i]}`;
+      if (job.voices[i] && job.voiceFor[i] === key) continue;
+      if (ownVoice && !opts.live) continue;
+      step(`Recording the voiceover (${i + 1} of ${lines.length})`, "fal-ai/elevenlabs/tts/turbo-v2.5");
+      job.voices[i] =
+        (ownVoice
+          ? await speakOwn(conn!, plan.voice, lines[i], job.brief.language)
+          : await tool({ tool: "voice", text: lines[i], voice: plan.voice }, "fal-ai/elevenlabs/tts/turbo-v2.5")) || undefined;
+      job.voiceFor[i] = key;
+      save(job);
+    }
+  }
+  if (ownVoice) await recordVoices();
 
   // Without the user's own photo, design the product once so every scene shows the same one.
   if (!job.refs?.length && !job.productUrl) {
@@ -249,17 +281,7 @@ export async function buildAd(job: AdJob, aspectRatio: string, save: (j: AdJob, 
     save(job);
   }
 
-  // Voiceover: one clip per line, so each lands on its own scene.
-  const lines = voiceLines(plan);
-  for (let i = 0; i < lines.length; i++) {
-    if (!lines[i]) continue;
-    const key = `${plan.voice}|${lines[i]}`;
-    if (job.voices[i] && job.voiceFor[i] === key) continue;
-    step(`Recording the voiceover (${i + 1} of ${lines.length})`, "fal-ai/elevenlabs/tts/turbo-v2.5");
-    job.voices[i] = (await tool({ tool: "voice", text: lines[i], voice: plan.voice }, "fal-ai/elevenlabs/tts/turbo-v2.5")) || undefined;
-    job.voiceFor[i] = key;
-    save(job);
-  }
+  if (!ownVoice) await recordVoices();
 
   if (!job.musicUrl || job.musicFor !== plan.music) {
     step("Making the music", "cassetteai/music-generator");
