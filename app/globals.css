@@ -1115,3 +1115,15 @@ select.text-input { appearance: auto; }
 .kind-note { margin: 2px 8px 8px; font-size: 13px; color: var(--muted); }
 .kind-note .link { font-size: 13px; }
 .composer-lite .refs-box { margin: 0 6px 8px; }
+
+/* ---------- Bring in from Canva ---------- */
+.canva-box { margin-top: 10px; }
+.composer-lite .canva-box { margin: 0 6px 8px; }
+.canva-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.canva-steps { margin: 0 0 10px; padding-left: 20px; font-size: 13px; line-height: 1.55; }
+.canva-drop {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+  padding: 14px; border: 1.5px dashed var(--line-strong); border-radius: var(--radius-sm); font-size: 14px; color: var(--muted);
+}
+.canva-drop.over { border-color: var(--accent); color: var(--text); }
+.canva-after { margin: 8px 0 0; }
