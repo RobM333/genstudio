@@ -3,7 +3,8 @@
 // the cheapest credits (the Studio plan, paid yearly).
 
 import { adCost, adPlanWithRules, AD_PRICES } from "./adplan";
-import { estimateCost, getModel } from "./models";
+import { getModel } from "./models";
+import { jobCost } from "./quality";
 
 export type Feature = { text: string; soon?: boolean };
 export type Plan = { id: string; name: string; monthly: number; credits: number; for: string; popular?: boolean; features: Feature[] };
@@ -96,13 +97,16 @@ export function creditExamples(): { what: string; usd: number; credits: number }
   const m = (id: string) => getModel(id)!;
   const ad = (seconds: number) => adCost(adPlanWithRules({ product: "A product", audience: "", seconds, tone: "Friendly" }), false, true);
   const rows: { what: string; usd: number }[] = [
-    { what: "Fast image (FLUX Schnell)", usd: estimateCost(m("fal-ai/flux/schnell")) },
-    { what: "Standard image (Nano Banana)", usd: estimateCost(m("fal-ai/nano-banana")) },
-    { what: "Premium image (FLUX Ultra)", usd: estimateCost(m("fal-ai/flux-pro/v1.1-ultra")) },
-    { what: "Short video, 6s (Hailuo 02)", usd: estimateCost(m("fal-ai/minimax/hailuo-02/standard/text-to-video"), 6, false) },
-    { what: "Short video with sound, 5s (Kling 2.5)", usd: estimateCost(m("fal-ai/kling-video/v2.5-turbo/pro/text-to-video"), 5, true) },
-    { what: "Longer video with sound, 10s (Kling 2.5)", usd: estimateCost(m("fal-ai/kling-video/v2.5-turbo/pro/text-to-video"), 10, true) },
-    { what: "Premium video with speech, 8s (Veo 3 Fast)", usd: estimateCost(m("fal-ai/veo3/fast"), 8, true) },
+    // jobCost includes the work behind the scenes: a checked first picture for every video, and two takes on premium jobs.
+    { what: "Fast image (FLUX Schnell)", usd: jobCost(m("fal-ai/flux/schnell")) },
+    { what: "Standard image (Nano Banana)", usd: jobCost(m("fal-ai/nano-banana")) },
+    { what: "Premium image, best of 2 (FLUX Ultra)", usd: jobCost(m("fal-ai/flux-pro/v1.1-ultra")) },
+    { what: "Short video, 6s (Hailuo 02)", usd: jobCost(m("fal-ai/minimax/hailuo-02/standard/text-to-video"), 6, false) },
+    { what: "Short video with sound, 5s (Kling 2.5)", usd: jobCost(m("fal-ai/kling-video/v2.5-turbo/pro/text-to-video"), 5, true) },
+    { what: "Longer video with sound, 10s (Kling 2.5)", usd: jobCost(m("fal-ai/kling-video/v2.5-turbo/pro/text-to-video"), 10, true) },
+    { what: "Premium video with speech, 8s (Veo 3 Fast)", usd: jobCost(m("fal-ai/veo3/fast"), 8, true) },
+    { what: "Premium video with sound, 10s (Kling 4)", usd: jobCost(m("kling/v4/text-to-video"), 10, true) },
+    { what: "Sharpen a video to HD, 10s", usd: 10 * 0.02 },
     { what: "Character set (4 pictures of one person)", usd: 4 * AD_PRICES.picture + 0.01 },
     { what: "Voiceover line (about 100 characters)", usd: (100 / 1000) * AD_PRICES.voicePer1000Chars },
     { what: "Full ad, 15 seconds", usd: ad(15) },

@@ -6,6 +6,8 @@ export type StoryShot = {
   prompt: string;
   url?: string; // the finished shot
   lastFrame?: string; // where the next shot starts
+  lastFrameToken?: string; // the server's signature for that frame
+  lockedFrame?: string; // the next shot's start, with the product corrected against the user's pictures
   status: "waiting" | "working" | "done" | "failed";
   error?: string;
 };
@@ -77,8 +79,37 @@ export async function startPicture(story: Story, prompt: string, aspectRatio: st
   return waitFor(job.modelId ?? "fal-ai/nano-banana/edit", job);
 }
 
+/**
+ * Lock the product: before a later shot starts, its starting frame is corrected
+ * so the product (and logo or person) still looks exactly like the user's own
+ * pictures. Without this, small changes add up from shot to shot.
+ * Returns the frame unchanged if there are no pictures or the correction fails.
+ */
+export async function lockFrame(story: Story, i: number, aspectRatio: string): Promise<string | undefined> {
+  const prev = story.shots[i - 1];
+  if (!prev?.lastFrame) return undefined;
+  if (!story.refs?.length || !prev.lastFrameToken) return prev.lastFrame;
+  if (prev.lockedFrame) return prev.lockedFrame;
+  try {
+    const job = await post("/api/generate", {
+      modelId: "fal-ai/nano-banana/edit",
+      prompt: `Next moment: ${story.shots[i]?.prompt ?? ""}`.slice(0, 1990),
+      aspectRatio,
+      enhance: false,
+      purpose: "lock",
+      refs: story.refs,
+      productUrl: prev.lastFrame,
+      productToken: prev.lastFrameToken,
+    });
+    prev.lockedFrame = await waitFor(job.modelId ?? "fal-ai/nano-banana/edit", job);
+    return prev.lockedFrame;
+  } catch {
+    return prev.lastFrame;
+  }
+}
+
 export async function animateShot(story: Story, i: number, aspectRatio: string): Promise<string> {
-  const start = i === 0 ? story.startUrl : story.shots[i - 1].lastFrame;
+  const start = i === 0 ? story.startUrl : (story.shots[i - 1].lockedFrame ?? story.shots[i - 1].lastFrame);
   if (i === 0 && !start) {
     // No starting picture: shot 1 is made straight from the words.
     const job = await post("/api/generate", {
@@ -105,9 +136,9 @@ export async function animateShot(story: Story, i: number, aspectRatio: string):
   return waitFor(story.shotModelId, job);
 }
 
-export async function lastFrame(url: string): Promise<string> {
+export async function lastFrame(url: string): Promise<{ url: string; token: string }> {
   const job = await post("/api/tool", { tool: "last-frame", urls: [url] });
-  return waitFor(job.modelId ?? "fal-ai/ffmpeg-api/extract-frame", job);
+  return waitForResult(job.modelId ?? "fal-ai/ffmpeg-api/extract-frame", job);
 }
 
 export async function joinShots(urls: string[]): Promise<string> {

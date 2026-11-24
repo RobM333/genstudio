@@ -114,7 +114,7 @@ async function sceneClip(job: AdJob, i: number, aspectRatio: string, frame?: str
  * Asks the checking AI to look at a frame or a scene. Returns null if the check
  * itself fails, because a failed check should never stop the ad.
  */
-async function checkPart(kind: "image" | "video", url: string, prompt: string, productUrl?: string, productNote?: string): Promise<Analysis | null> {
+export async function checkPart(kind: "image" | "video", url: string, prompt: string, productUrl?: string, productNote?: string): Promise<Analysis | null> {
   try {
     const res = await fetch("/api/analyze", {
       method: "POST",
