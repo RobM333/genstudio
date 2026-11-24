@@ -8,6 +8,7 @@
 
 import type { ModelInfo } from "./models";
 import { firstShot } from "./shots";
+import { lessonsBlock, mergeAvoid, type ActiveLesson } from "./learn";
 
 const TIMEOUT_MS = 8000;
 export const DEFAULT_AVOID = "blur, distortion, morphing, changing faces or clothes, extra limbs, people passing through objects, smoke or dust clouds, broken things repairing themselves, glass reassembling, text, logos";
@@ -145,7 +146,7 @@ function refNote(kinds: string[]): string {
 }
 
 /** Simple fallback used in demo mode or when the AI writer isn't available. */
-export function enhanceWithRules(prompt: string, model: ModelInfo, sound = true): string {
+export function enhanceWithRules(prompt: string, model: ModelInfo, sound = true, lessons: ActiveLesson[] = []): string {
   const p = (model.kind === "image" ? firstShot(prompt) : prompt).trim().replace(/[.\s]+$/, "");
   const lower = p.toLowerCase();
   const has = (...w: string[]) => w.some((x) => lower.includes(x));
@@ -166,6 +167,8 @@ export function enhanceWithRules(prompt: string, model: ModelInfo, sound = true)
     add.push("realistic motion, one continuous shot, high detail, cinematic colour grading");
     if (model.audio && sound && !has("sound", "music", "audio", "voice", "says")) add.push("with matching ambient sound");
   }
+  // Lessons learned from past fixes, in a few words each.
+  for (const l of lessons) if (l.hint && !add.includes(l.hint)) add.push(l.hint);
   return `${p}, ${add.join(", ")}.`;
 }
 
@@ -204,12 +207,13 @@ async function enhanceWithAI(
   purpose: Purpose,
   refKinds: string[] = [],
   seconds = 5,
+  lessons: ActiveLesson[] = [],
 ): Promise<{ prompt: string; note?: string; avoid?: string }> {
   const { fal } = await import("./fal");
   const call = fal.run("fal-ai/any-llm", {
     input: {
       model: process.env.ENHANCER_MODEL || "google/gemini-2.5-flash",
-      system_prompt: systemPrompt(model, sound, purpose, seconds) + refNote(refKinds),
+      system_prompt: systemPrompt(model, sound, purpose, seconds) + refNote(refKinds) + lessonsBlock(lessons),
       prompt: `User's description:\n${prompt}`,
     },
   });
@@ -231,22 +235,25 @@ async function enhanceWithAI(
 export async function enhancePrompt(
   prompt: string,
   model: ModelInfo,
-  opts: { live: boolean; sound?: boolean; purpose?: Purpose; refKinds?: string[]; seconds?: number },
+  opts: { live: boolean; sound?: boolean; purpose?: Purpose; refKinds?: string[]; seconds?: number; lessons?: ActiveLesson[] },
 ): Promise<Enhanced> {
   if (model.needsSource) return { prompt, by: "none" };
   const sound = opts.sound !== false;
   const purpose = opts.purpose ?? "direct";
+  // Rules learned from what people had to fix (switched on by the owner). Never a user's own words.
+  const lessons = opts.lessons ?? [];
+  const avoidWith = (a: string | undefined) => (model.kind === "video" ? mergeAvoid(a, lessons) : a);
   if (opts.live) {
     try {
-      const r = await enhanceWithAI(prompt, model, sound, purpose, opts.refKinds ?? [], opts.seconds ?? 5);
-      return { prompt: r.prompt, note: r.note, avoid: r.avoid, by: "ai" };
+      const r = await enhanceWithAI(prompt, model, sound, purpose, opts.refKinds ?? [], opts.seconds ?? 5, lessons);
+      return { prompt: r.prompt, note: r.note, avoid: avoidWith(r.avoid), by: "ai" };
     } catch (err) {
       console.warn("prompt enhancer fell back to rules:", (err as Error)?.message);
     }
   }
   return {
-    prompt: enhanceWithRules(prompt, model, sound),
-    avoid: model.kind === "video" ? DEFAULT_AVOID : undefined,
+    prompt: enhanceWithRules(prompt, model, sound, lessons),
+    avoid: model.kind === "video" ? avoidWith(DEFAULT_AVOID) : undefined,
     by: "rules",
   };
 }
