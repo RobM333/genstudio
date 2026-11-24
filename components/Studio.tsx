@@ -1267,7 +1267,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
     >
       <span className="template-art" aria-hidden>
         {TEMPLATE_MEDIA[t.id] ? (
-          <Showcase media={TEMPLATE_MEDIA[t.id]} />
+          <Showcase media={TEMPLATE_MEDIA[t.id]} fit={!!t.size && t.size.w / t.size.h > 1.2} />
         ) : (
           <TemplateMock t={t} colors={t.category === "business" && brandOn ? brand.colors : undefined} name={t.category === "business" && brandOn ? brand.name : undefined} />
         )}
@@ -3051,7 +3051,8 @@ function IconFolder() {
 }
 
 /** Real example media when we have it, otherwise a moving colour field. */
-function Showcase({ media }: { media?: ShowcaseMedia }) {
+/** fit: show the whole picture (wide banners and backgrounds) instead of filling the card. */
+function Showcase({ media, fit }: { media?: ShowcaseMedia; fit?: boolean }) {
   const [failed, setFailed] = useState(false);
   if (media && !failed) {
     if (media.kind === "video")
@@ -3068,7 +3069,7 @@ function Showcase({ media }: { media?: ShowcaseMedia }) {
         />
       );
     // eslint-disable-next-line @next/next/no-img-element
-    return <img className="showcase" src={media.src} alt="" loading="lazy" onError={() => setFailed(true)} />;
+    return <img className={fit ? "showcase showcase-fit" : "showcase"} src={media.src} alt="" loading="lazy" onError={() => setFailed(true)} />;
   }
   return (
     <span className="mesh">

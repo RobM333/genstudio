@@ -1056,3 +1056,11 @@ select.text-input { appearance: auto; }
 }
 .canvas.canvas-sized { min-height: 0; max-width: calc(62vh * var(--ar)); width: 100%; justify-self: center; }
 .canvas.canvas-sized img { object-fit: cover; }
+/* Without brand colours, drawn previews stay calm and neutral (no rainbow) */
+.tpl-mock-wrap { background: linear-gradient(160deg, #1b1b22, #0c0c10 70%); }
+.tpl-mock-wrap .blob { opacity: 0.35; }
+.tpl-mock-wrap .b1 { background: var(--b1, #3a3a46); }
+.tpl-mock-wrap .b2 { background: var(--b2, #2a2a33); }
+.tpl-mock-wrap .b3 { background: var(--b3, #23232b); }
+/* Wide examples (banners, call backgrounds) show whole, a little above the card title */
+.showcase.showcase-fit { object-fit: contain; object-position: center 38%; padding: 0 10px; background: radial-gradient(120% 80% at 50% 35%, #202028, #0b0b10 75%); }
