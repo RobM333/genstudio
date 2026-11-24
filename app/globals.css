@@ -1091,3 +1091,19 @@ select.text-input { appearance: auto; }
 .adapt-open { display: block; margin: 0 0 10px; text-align: left; }
 .adapt-box { margin-bottom: 12px; }
 .home-ideas { display: block; margin: 12px auto 0; }
+
+/* ---------- Prompt box tools: Reference photo and Speak ---------- */
+.prompt-tools { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.composer-lite .prompt-tools { margin: 2px 6px 6px; }
+.tool-btn {
+  display: inline-flex; align-items: center; gap: 6px; font: inherit; font-size: 13px; font-weight: 600; color: var(--text);
+  background: rgba(255,255,255,0.04); border: 1px solid var(--line-strong); border-radius: 999px; padding: 6px 12px; cursor: pointer;
+}
+.tool-btn:hover { border-color: var(--accent); }
+.tool-btn.on { color: var(--ok); border-color: rgba(79,227,161,0.35); }
+.tool-btn.listening { color: #ff8a8a; border-color: rgba(255,120,120,0.55); animation: listen-pulse 1.4s ease-in-out infinite; }
+@keyframes listen-pulse { 50% { box-shadow: 0 0 0 4px rgba(255,120,120,0.12); } }
+@media (prefers-reduced-motion: reduce) { .tool-btn.listening { animation: none; } }
+.kind-note { margin: 2px 8px 8px; font-size: 13px; color: var(--muted); }
+.kind-note .link { font-size: 13px; }
+.composer-lite .refs-box { margin: 0 6px 8px; }
