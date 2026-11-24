@@ -5,6 +5,7 @@
 
 import { endCardPrompt, endCardSeconds, maxRedos, SCENE_SECONDS, scenePrompt, type AdBrief, type AdPlan } from "@/lib/adplan";
 import type { Analysis } from "@/lib/analyze";
+import { faultText, type FaultCode } from "@/lib/promise";
 import { post, waitFor, waitForResult } from "./storyRunner";
 
 export type AdClip = {
@@ -17,7 +18,13 @@ export type AdClip = {
 };
 
 /** The automatic quality check: it looks at every scene and remakes weak ones, up to a cap. */
-export type AdCheck = { on: boolean; redosLeft: number; log: string[] };
+export type AdCheck = {
+  on: boolean;
+  redosLeft: number;
+  log: string[];
+  /** Scenes that still had a clear fault when the remakes ran out: their credits come back under the promise. */
+  faultsLeft?: { scene: number; fault: FaultCode; reason: string }[];
+};
 
 export type AdJob = {
   brief: AdBrief;
@@ -107,12 +114,12 @@ async function sceneClip(job: AdJob, i: number, aspectRatio: string, frame?: str
  * Asks the checking AI to look at a frame or a scene. Returns null if the check
  * itself fails, because a failed check should never stop the ad.
  */
-async function checkPart(kind: "image" | "video", url: string, prompt: string, productUrl?: string): Promise<Analysis | null> {
+export async function checkPart(kind: "image" | "video", url: string, prompt: string, productUrl?: string, productNote?: string): Promise<Analysis | null> {
   try {
     const res = await fetch("/api/analyze", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ kind, url, prompt, productUrl, auto: true }),
+      body: JSON.stringify({ kind, url, prompt, productUrl, productNote, auto: true }),
     });
     let data = await res.json().catch(() => ({}));
     if (!res.ok) return null;
@@ -213,7 +220,9 @@ export async function buildAd(job: AdJob, aspectRatio: string, save: (j: AdJob, 
       // Then the finished scene: remade once if it's clearly wrong, while the spending cap allows.
       if (check && !clip.checked) {
         step(`Scene ${i + 1} of ${n}: checking the scene`, "fal-ai/video-understanding");
-        const a = await checkPart("video", clip.url, scenePrompt(job.plan, i));
+        // The scene is checked against the product's description too, so a product that changes on the way through is caught.
+        const productNote = `${job.brief.product}. ${job.plan.look}`;
+        const a = await checkPart("video", clip.url, scenePrompt(job.plan, i), undefined, productNote);
         if (a?.serious && check.redosLeft > 0) {
           check.redosLeft--;
           clip.checked = true;
@@ -222,7 +231,11 @@ export async function buildAd(job: AdJob, aspectRatio: string, save: (j: AdJob, 
           clip.url = await sceneClip(job, i, aspectRatio, clip.frame, fixText(a));
           check.log.push(`Scene ${i + 1}: remade it (${firstProblem(a)}).`);
         } else if (a?.serious) {
-          check.log.push(`Scene ${i + 1}: ${firstProblem(a)}. Not remade, the automatic remakes were used up. Ask in the chat to fix it.`);
+          const fault = a.faults?.[0];
+          if (fault) {
+            (check.faultsLeft ??= []).push({ scene: i, fault, reason: faultText(fault) });
+            check.log.push(`Scene ${i + 1}: ${firstProblem(a)}. Not remade, the automatic remakes were used up. It's a clear fault, so the credits for this scene come back. Ask in the chat to fix it.`);
+          } else check.log.push(`Scene ${i + 1}: ${firstProblem(a)}. Not remade, the automatic remakes were used up. Ask in the chat to fix it.`);
         }
         clip.checked = true;
       }

@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { creditExamples, PLANS, planPrice, YEARLY_DISCOUNT } from "@/lib/pricing";
+import { ADVERTISE_PROMISE, FAULTS, MONTHLY_CAP, NOT_COVERED } from "@/lib/promise";
 
 // The proposed plans. Nothing can be bought yet: there are no accounts or
 // payments, so the buttons only say so.
@@ -16,6 +17,11 @@ const PACKAGES = [
 export default function Pricing() {
   const [yearly, setYearly] = useState(false);
   const examples = creditExamples();
+  // The promise is only shown once its checks are tested; until then it can be previewed with ?preview=promise.
+  const [showPromise, setShowPromise] = useState(ADVERTISE_PROMISE);
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("preview") === "promise") setShowPromise(true);
+  }, []);
   return (
     <div className="pricing">
       <Link href="/" className="legal-back">
@@ -97,6 +103,32 @@ export default function Pricing() {
           </tbody>
         </table>
       </section>
+
+      {showPromise && (
+        <section className="pricing-section promise" id="promise">
+          {!ADVERTISE_PROMISE && <p className="notice warn small">Preview only. This isn&apos;t shown to visitors until the checks are tested.</p>}
+          <h2>🛡️ Pay only for videos that work</h2>
+          <p className="muted small">
+            If a job doesn&apos;t finish, it uses no credits. Every finished video is checked automatically, and if the check finds one of these clear faults, the
+            credits for it come back by themselves. You don&apos;t have to ask.
+          </p>
+          <ul className="promise-list">
+            {FAULTS.map((f) => (
+              <li key={f.code}>
+                <strong>{f.text}.</strong> <span className="muted">{f.example}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="muted small">
+            Spotted one the check missed? Press <strong>Find what&apos;s wrong</strong> on the result for a closer look. If the check spots a serious problem that
+            isn&apos;t on the list, you get one remake on us instead.
+          </p>
+          <p className="muted small">
+            <strong>Not covered:</strong> {NOT_COVERED.join("; ").toLowerCase()}. Refunds for faults and free remakes are limited to {MONTHLY_CAP} a month per
+            account. Failed jobs are always free and don&apos;t count toward that.
+          </p>
+        </section>
+      )}
 
       <section className="pricing-section">
         <h2>Done for you</h2>

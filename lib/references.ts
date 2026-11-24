@@ -74,7 +74,7 @@ const LABEL: Record<RefKind, string> = {
 };
 
 /** Tells the picture model how to use each reference picture, in order. */
-export function referenceInstructions(kinds: RefKind[]): string {
+export function referenceInstructions(kinds: RefKind[], offset = 0): string {
   const lines = kinds.map((k, i) => {
     const what = LABEL[k];
     const how =
@@ -85,7 +85,17 @@ export function referenceInstructions(kinds: RefKind[]): string {
           : k === "person"
             ? "keep the same face and identity; same age; dressed appropriately; no change to body shape"
             : "match its colours, lighting and mood, but not its content";
-    return `Image ${i + 1} is ${what}: ${how}.`;
+    return `Image ${i + 1 + offset} is ${what}: ${how}.`;
   });
   return `${lines.join(" ")} Build a new, realistic scene around them as described next. Lighting, shadows, reflections and perspective on them must match the new scene.`;
+}
+
+/**
+ * "Lock the product": the next shot of a longer video starts from the last frame
+ * of the one before. Over several shots the product can slowly change, so that
+ * frame is corrected against the user's own pictures before it is animated.
+ * Image 1 is the frame; the user's pictures follow.
+ */
+export function lockInstructions(kinds: RefKind[]): string {
+  return `Image 1 is a frame from a video. Return the same frame: the same scene, camera position, framing, people, poses, background and lighting. Change only what is needed so the items below look exactly like their reference pictures. ${referenceInstructions(kinds, 1).replace(/ Build a new, realistic scene.*$/, "")} Do not add anything new.`;
 }

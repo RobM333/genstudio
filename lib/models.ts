@@ -19,6 +19,7 @@ export type ModelInfo = {
   needsSource?: boolean; // works on an existing video (sourceUrl) instead of making a new one
   typicalSeconds?: number; // rough time a job takes once it starts, for the progress bar
   takesImage?: boolean; // animates a starting picture (sourceUrl) into a video
+  hd?: boolean; // already comes out sharp (1080p video, or a large picture), so "Sharpen to HD" isn't offered
   buildInput: (opts: {
     prompt: string;
     aspectRatio: AspectRatio;
@@ -26,6 +27,7 @@ export type ModelInfo = {
     sourceUrl?: string;
     sound?: boolean;
     refUrls?: string[]; // the user's own reference pictures (product, logo, person)
+    scale?: number; // how much bigger "Sharpen to HD" makes it
     avoid?: string; // things that must not appear (sent as a negative prompt where the model supports it)
   }) => Record<string, unknown>;
 };
@@ -55,6 +57,7 @@ export const MODELS: ModelInfo[] = [
   {
     id: "fal-ai/flux-pro/v1.1-ultra",
     typicalSeconds: 15,
+    hd: true,
     name: "FLUX 1.1 Pro Ultra",
     kind: "image",
     tagline: "High detail, photo-real results.",
@@ -113,6 +116,7 @@ export const MODELS: ModelInfo[] = [
   {
     id: "fal-ai/kling-video/v2.5-turbo/pro/text-to-video",
     typicalSeconds: 100,
+    hd: true,
     name: "Kling 2.5 Turbo Pro",
     kind: "video",
     tagline: "Cinematic motion, strong prompt following.",
@@ -124,6 +128,25 @@ export const MODELS: ModelInfo[] = [
       duration: String(duration ?? 5),
       aspect_ratio: aspectRatio,
       ...(avoid ? { negative_prompt: avoid } : {}),
+    }),
+  },
+  {
+    // Checked on fal.ai 2026-11-24: $0.157/s at 720p, $0.235/s at 1080p, 3 to 30 seconds.
+    // It makes no sound of its own, so sound is added afterwards like the other silent models.
+    id: "kling/v4/text-to-video",
+    typicalSeconds: 200,
+    hd: true,
+    name: "Kling 4 (premium)",
+    kind: "video",
+    tagline: "Our sharpest, most lifelike video, in full HD.",
+    approxCost: "~$0.235 / second",
+    durations: [5, 10, 15],
+    aspectRatios: ["16:9", "9:16", "1:1"],
+    buildInput: ({ prompt, aspectRatio, duration }) => ({
+      prompt,
+      duration: duration ?? 5,
+      resolution: "1080p",
+      aspect_ratio: aspectRatio,
     }),
   },
   {
@@ -214,6 +237,7 @@ export const ANIMATE_MODELS: ModelInfo[] = [
   {
     id: "fal-ai/kling-video/v2.5-turbo/pro/image-to-video",
     typicalSeconds: 100,
+    hd: true,
     name: "Kling 2.5 Turbo Pro (animate)",
     kind: "video",
     tagline: "Cinematic motion from your picture.",
@@ -226,6 +250,24 @@ export const ANIMATE_MODELS: ModelInfo[] = [
       image_url: sourceUrl,
       duration: String(duration ?? 5),
       ...(avoid ? { negative_prompt: avoid } : {}),
+    }),
+  },
+  {
+    id: "kling/v4/image-to-video",
+    typicalSeconds: 200,
+    hd: true,
+    name: "Kling 4 (animate)",
+    kind: "video",
+    tagline: "Our sharpest video, from your picture.",
+    approxCost: "~$0.235 / second",
+    durations: [5, 10, 15],
+    aspectRatios: ["16:9", "9:16", "1:1"],
+    takesImage: true,
+    buildInput: ({ prompt, duration, sourceUrl }) => ({
+      prompt,
+      start_image_url: sourceUrl,
+      duration: duration ?? 5,
+      resolution: "1080p",
     }),
   },
   {
@@ -252,7 +294,13 @@ export const ANIMATE_MODELS: ModelInfo[] = [
 
 /** The "animate a picture" model that matches a text-to-video model. */
 export function animateModelFor(videoModelId: string): ModelInfo {
-  const key = videoModelId.includes("veo3") ? "veo3" : videoModelId.includes("kling") ? "kling" : "hailuo";
+  const key = videoModelId.includes("veo3")
+    ? "veo3"
+    : videoModelId.includes("kling/v4")
+      ? "kling/v4"
+      : videoModelId.includes("kling")
+        ? "kling-video"
+        : "hailuo";
   return ANIMATE_MODELS.find((m) => m.id.includes(key))!;
 }
 
@@ -346,7 +394,57 @@ export const CARD_MOTION_MODEL: ModelInfo = {
   buildInput: () => ({}),
 };
 
-const HIDDEN = [ADD_SOUND_MODEL, EDIT_IMAGE_MODEL, REFERENCE_IMAGE_MODEL, LAST_FRAME_MODEL, MERGE_VIDEOS_MODEL, VOICE_MODEL, MUSIC_MODEL, COMPOSE_MODEL, CARD_MOTION_MODEL, ...ANIMATE_MODELS];
+/**
+ * "Sharpen to HD": makes a finished picture or video bigger and crisper at the end.
+ * Checked on fal.ai 2026-11-24. Pictures: SeedVR at $0.001 per megapixel (a few
+ * tenths of a cent). Videos: Topaz at $0.02 per second up to 1080p.
+ */
+export const HD_IMAGE_MODEL: ModelInfo = {
+  id: "fal-ai/seedvr/upscale/image",
+  typicalSeconds: 15,
+  name: "Sharpen to HD",
+  kind: "image",
+  tagline: "Makes the picture twice as big and crisper.",
+  approxCost: "~$0.01 / image",
+  needsSource: true,
+  hd: true,
+  aspectRatios: ["1:1", "16:9", "9:16"],
+  buildInput: ({ sourceUrl }) => ({
+    image_url: sourceUrl,
+    upscale_mode: "factor",
+    upscale_factor: 2,
+    output_format: "png",
+  }),
+};
+export const HD_VIDEO_MODEL: ModelInfo = {
+  id: "fal-ai/topaz/upscale/video",
+  typicalSeconds: 90,
+  name: "Sharpen to HD",
+  kind: "video",
+  tagline: "Makes the video full HD (1080p) and crisper.",
+  approxCost: "~$0.02 / second",
+  needsSource: true,
+  hd: true,
+  aspectRatios: ["1:1", "16:9", "9:16"],
+  buildInput: ({ sourceUrl, scale }) => ({
+    video_url: sourceUrl,
+    model: "Proteus",
+    // Kept at or under 1080p, which is the cheaper price band.
+    upscale_factor: Math.min(Math.max(scale ?? 1.5, 1), 1.5),
+    // Browsers can't all play the default H.265, so ask for H.264.
+    H264_output: true,
+  }),
+};
+
+/** How much "Sharpen to HD" enlarges a video from this model to reach about 1080p (0 = already HD). */
+export function hdScaleFor(modelId: string): number {
+  const m = getModel(modelId);
+  if (!m || m.hd) return 0;
+  if (modelId.includes("hailuo") || modelId.includes("minimax")) return 1.4; // 768p to about 1075p
+  return 1.5; // 720p to 1080p
+}
+
+const HIDDEN = [HD_IMAGE_MODEL, HD_VIDEO_MODEL, ADD_SOUND_MODEL, EDIT_IMAGE_MODEL, REFERENCE_IMAGE_MODEL, LAST_FRAME_MODEL, MERGE_VIDEOS_MODEL, VOICE_MODEL, MUSIC_MODEL, COMPOSE_MODEL, CARD_MOTION_MODEL, ...ANIMATE_MODELS];
 
 export function getModel(id: string): ModelInfo | undefined {
   return MODELS.find((m) => m.id === id) ?? HIDDEN.find((m) => m.id === id);
