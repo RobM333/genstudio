@@ -10,9 +10,9 @@ export type TemplateField = { key: string; label: string; placeholder: string; f
 export type TemplateCategory = "business" | "social" | "ads";
 
 export const TEMPLATE_CATEGORIES: { id: TemplateCategory; label: string; hint: string }[] = [
-  { id: "business", label: "For your business", hint: "Call backgrounds, banners and headers that use your brand kit: your name, colours and logo." },
-  { id: "social", label: "Social media sizes", hint: "Already the right size and shape for TikTok, Instagram and YouTube." },
   { id: "ads", label: "Ads and products", hint: "Product shots, sale banners and short video ads." },
+  { id: "social", label: "Social media sizes", hint: "Already the right size and shape for TikTok, Instagram and YouTube." },
+  { id: "business", label: "For your business", hint: "Call backgrounds, banners and headers that use your brand kit: your name, colours and logo." },
 ];
 
 /** An exact picture size in pixels. Pictures are made in the nearest shape, then the download is trimmed and resized to this. */
@@ -36,7 +36,7 @@ export type Template = {
 const product = (placeholder: string): TemplateField => ({ key: "product", label: "Product", placeholder });
 const business: TemplateField = { key: "name", label: "Business name", placeholder: "Bloom Studio", fromBrand: "name" };
 
-export const TEMPLATES: Template[] = [
+const ALL_TEMPLATES: Template[] = [
   // ---------- For your business: these use the brand kit ----------
   {
     id: "teams-background",
@@ -310,6 +310,11 @@ export const TEMPLATES: Template[] = [
       'Handheld selfie-style vertical video of a friendly young person at home holding {product}, talking to the camera and saying: "{line}", natural daylight, authentic social media feel, with clear speech audio',
   },
 ];
+
+// The order people see: the most eye-catching examples first, plain banners and headers at the back.
+const ORDER = ["product-hero", "product-reveal", "lifestyle", "story-ad", "brand-teaser", "thumbnail", "instagram-post", "vertical-video", "ugc-testimonial", "instagram-portrait", "youtube-intro", "youtube-banner", "sale-banner", "teams-background", "zoom-background", "brand-announcement", "profile-picture", "facebook-cover", "linkedin-banner", "email-header"];
+const rank = (id: string) => (ORDER.indexOf(id) === -1 ? ORDER.length : ORDER.indexOf(id));
+export const TEMPLATES: Template[] = [...ALL_TEMPLATES].sort((a, b) => rank(a.id) - rank(b.id));
 
 /** Templates for one category, or all of them. */
 export function templatesIn(category: TemplateCategory | "all", list: Template[] = TEMPLATES): Template[] {
