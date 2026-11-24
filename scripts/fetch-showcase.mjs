@@ -15,6 +15,19 @@ const FILES = {
   "rocket.jpg": "0ab390ef/WjWBrylNaOpGyujhVnN6Q_736a0a30070b41f1bba60bd6752528d8.jpg",
   "watch.jpg": "0ab390f0/BGG5mOu-kosrK8wgXNhd4_54ca1ae140274727b9e532e8a360da91.jpg",
   "reveal.mp4": "0ab390f5/LntyFhFHJLokAW7CpMvSR_NijmZr9r.mp4",
+  // Business and social size templates (made-up brand "Bloom Studio").
+  "teams-background.jpg": "0ab3afc8/mcbnM0IETH_e__D570MtL_WydgMS45.png",
+  "youtube-intro.jpg": "0ab3afc8/cfTcwiP8fuYq2ZvUpKhVU_do3zdYkY.png",
+  "brand-announcement.jpg": "0ab3afc8/QB2tt1GSdrKTYaW4W9P93_3toQyTpz.png",
+  "youtube-banner.jpg": "0ab3afc8/-z26qi5pAIjW-N_s_GtJb_m1pHK2ky.png",
+  "linkedin-banner.jpg": "0ab3afc8/HA1ESuJxa2f34tXkWfILx_LfbZjGLl.png",
+  "instagram-portrait.jpg": "0ab3afc8/M3ha_Eeas4dp4jedkb3Bw_1Jm6SAg2.png",
+  "facebook-cover.jpg": "0ab3afc8/fuK2E7GTzyKgi3uWXCKmd_dWBZH6PK.png",
+  "email-header.jpg": "0ab3afc9/8VDW_XTfG7xlOabw2hiNW_5iySnyco.png",
+  "instagram-post.jpg": "0ab3afc8/BN8wDEYLGQVFu1Dhq-j9a_uGrvLBIn.png",
+  "zoom-background.jpg": "0ab3afc9/zzDI42CY0X42iADuN-v7h_isAmj2Hs.png",
+  "profile-picture.jpg": "0ab3afc9/EUS7OBbh4FlxR9fEYWGUK_GQwECs7Q.png",
+  "vertical-video.jpg": "0ab3afc9/yh28FGueKm8d923VGvs9B_NsVkgamO.png",
 };
 
 const dir = path.join(process.cwd(), "public", "showcase");
