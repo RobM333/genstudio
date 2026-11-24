@@ -39,19 +39,19 @@ export function checkPrompt(prompt: string): SafetyResult {
   const suggestive = SUGGESTIVE.some((s) => w.has(s));
   // "Undressing" requests are how non-consensual fake nudes are made, so they're always refused.
   if (w.has("undress") || w.has("undressed") || w.has("undressing") || /\b(take|remove|taking|removing) (off )?(her|his|their) clothes\b/i.test(prompt)) {
-    return { ok: false, reason: "GenStudio doesn't create undressed or nude versions of people." };
+    return { ok: false, reason: "ToastyFly doesn't create undressed or nude versions of people." };
   }
   if (!sexual && !suggestive) return { ok: true };
 
 
   if (MINOR.some((m) => w.has(m)) || AGES_UNDER_18.test(prompt)) {
-    return { ok: false, reason: "GenStudio never creates sexual content involving minors." };
+    return { ok: false, reason: "ToastyFly never creates sexual content involving minors." };
   }
   const realPerson = REAL_PERSON_WORDS.some((p) => lower.includes(p));
   if (realPerson || (sexual && NAME_LIKE.test(prompt))) {
     return {
       ok: false,
-      reason: "GenStudio doesn't create sexual or revealing content of real people. See the Acceptable Use Policy.",
+      reason: "ToastyFly doesn't create sexual or revealing content of real people. See the Acceptable Use Policy.",
     };
   }
   return { ok: true };
@@ -64,8 +64,8 @@ export function checkPrompt(prompt: string): SafetyResult {
 export function checkWithPersonPhoto(prompt: string): SafetyResult {
   const w = words(prompt);
   if (SEXUAL.some((s) => w.has(s)) || SUGGESTIVE.some((s) => w.has(s)) || ["shirtless", "swimsuit", "bed", "drunk", "naked", "kissing"].some((s) => w.has(s)))
-    return { ok: false, reason: "With a real person's photo, GenStudio only makes everyday, fully clothed, respectful scenes." };
+    return { ok: false, reason: "With a real person's photo, ToastyFly only makes everyday, fully clothed, respectful scenes." };
   if (/\b(arrest(ed)?|mugshot|crime|prison|jail|blood|injur(ed|y)|dead|corpse|crying)\b/i.test(prompt))
-    return { ok: false, reason: "With a real person's photo, GenStudio doesn't make scenes that could embarrass or harm them." };
+    return { ok: false, reason: "With a real person's photo, ToastyFly doesn't make scenes that could embarrass or harm them." };
   return { ok: true };
 }

@@ -26,11 +26,11 @@ export const MAX_TALK_CHARS = 900;
 /** A consent code is good for 30 minutes after it is shown. */
 export const CODE_MINUTES = 30;
 /** The short line read in the new voice straight after setup, so the user can hear it (and the copy is kept). */
-export const SAMPLE_LINE = "Hi! This is my own voice, made with GenStudio. Pretty close, right?";
+export const SAMPLE_LINE = "Hi! This is my own voice, made with ToastyFly. Pretty close, right?";
 
 /** The consent sentence the user reads aloud first. The code proves it was said just now. */
 export function consentSentence(code: string): string {
-  return `I am recording my own voice for GenStudio, and I agree to it making a copy of my voice. My code is ${code.split("").join(" ")}.`;
+  return `I am recording my own voice for ToastyFly, and I agree to it making a copy of my voice. My code is ${code.split("").join(" ")}.`;
 }
 
 /** Something natural to keep reading after the consent sentence, so the copy has enough of the voice. */

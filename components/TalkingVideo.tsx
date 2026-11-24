@@ -235,7 +235,7 @@ export function VoiceSetup({ mode, onDone, onCancel }: { mode: AppMode; onDone: 
           <audio src={clipUrl} controls className="talk-audio" />
           <label className="refs-consent">
             <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
-            <span>This is my own voice. I agree to GenStudio making a copy of it that only I use, and I won&apos;t use it to pretend to be anyone else.</span>
+            <span>This is my own voice. I agree to ToastyFly making a copy of it that only I use, and I won&apos;t use it to pretend to be anyone else.</span>
           </label>
           <button className="btn btn-light" onClick={send} disabled={!!busy}>
             {busy ?? `Make my voice copy · ${mode === "demo" ? "free in demo" : `est. ${formatCost(setupCost())}`}`}

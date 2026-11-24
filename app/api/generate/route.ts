@@ -28,7 +28,7 @@ export async function POST(req: Request) {
   const refs = rawRefs.map((r) => ({ url: String(r?.url ?? ""), kind: r?.kind, token: String(r?.token ?? "") }));
   if (refs.some((r) => !isRefKind(r.kind))) return NextResponse.json({ error: "Bad reference picture." }, { status: 400 });
   const refKinds = refs.map((r) => r.kind as RefKind);
-  // A product picture GenStudio made earlier (signed when it finished), reused so every scene of an ad shows the same product.
+  // A product picture ToastyFly made earlier (signed when it finished), reused so every scene of an ad shows the same product.
   const productUrl = body.productUrl ? String(body.productUrl) : "";
   if (refs.length > 0 || productUrl) {
     if (model.kind !== "image" || model.needsSource)
@@ -105,7 +105,7 @@ export async function POST(req: Request) {
   }
 
   if (sourceUrl && !isFalMediaUrl(sourceUrl)) {
-    return NextResponse.json({ error: "Only results made in GenStudio can be changed." }, { status: 400 });
+    return NextResponse.json({ error: "Only results made in ToastyFly can be changed." }, { status: 400 });
   }
   // Each reference must be one our safety check passed (signed by /api/reference).
   if (refs.some((r) => !isFalMediaUrl(r.url) || !verify(r.token, "ref", r.url, r.kind as string)))

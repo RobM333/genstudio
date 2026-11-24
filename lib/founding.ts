@@ -1,11 +1,8 @@
 // The "Founding 100" sign-up page: one place for the brand name and the offer,
 // plus the small rules the page and its API share.
 
-/** The name shown on the public sign-up page. Change it here to rename the page. */
-export const BRAND_NAME = "ToastyFly";
-
-/** The logo shown on the sign-up page (a file in public/). Swap the file or this path to change it; "" shows the name as text. */
-export const BRAND_LOGO = "/brand/toastyfly-logo.png";
+// Name and logo come from lib/appBrand.ts (one place for the whole app).
+export { BRAND_NAME, BRAND_LOGO, LOGO_HAS_NAME } from "./appBrand";
 
 /** How many founding spots there are. */
 export const TOTAL_SPOTS = 100;

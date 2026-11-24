@@ -1,4 +1,4 @@
-// Downloads the showcase pictures and clip (made with GenStudio itself) into
+// Downloads the showcase pictures and clip (made with ToastyFly itself) into
 // public/showcase/ before each build, shrinking pictures so cards load fast.
 // Never fails the build: if a file can't be fetched, the app shows drawn art.
 import { mkdir, writeFile, access } from "node:fs/promises";

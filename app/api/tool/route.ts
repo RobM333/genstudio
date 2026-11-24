@@ -111,7 +111,7 @@ export async function POST(req: Request) {
 
   // Demo mode has no AI service: pictures and videos pass straight through, sound is skipped.
   if (mode === "demo") return NextResponse.json({ status: "COMPLETED", demo: true, url: demoUrl });
-  if (!allUrls.every(isFalMediaUrl)) return NextResponse.json({ error: "Only results made in GenStudio can be used." }, { status: 400 });
+  if (!allUrls.every(isFalMediaUrl)) return NextResponse.json({ error: "Only results made in ToastyFly can be used." }, { status: 400 });
 
   try {
     const { request_id } = await fal.queue.submit(modelId, { input });

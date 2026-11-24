@@ -1,5 +1,5 @@
 // Real example media shown on template cards, the hero and the empty gallery.
-// Made with GenStudio itself; scripts/fetch-showcase.mjs puts the files in
+// Made with ToastyFly itself; scripts/fetch-showcase.mjs puts the files in
 // public/showcase/ at build time. Missing files fall back to drawn art.
 
 export type ShowcaseMedia = { src: string; kind: "image" | "video" };
