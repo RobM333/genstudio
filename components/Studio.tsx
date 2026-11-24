@@ -21,6 +21,8 @@ import type { Direction, DirectorReply } from "@/lib/director";
 import type { Idea } from "@/lib/ideas";
 import { AdaptBox, IdeasBox } from "./IdeaHelpers";
 import { describesSeveralShots, firstShot } from "@/lib/shots";
+import { guessKind } from "@/lib/kind";
+import VoiceButton, { joinSpoken } from "./VoiceButton";
 import { addSoundTo, animateShot, joinShots, lastFrame, lockFrame, planStory, startPicture, waitFor, type Story } from "./storyRunner";
 import { lengthAdvice, LONG_LENGTHS, MAX_STORY_SECONDS, type ShotPlan } from "@/lib/storyboard";
 import { nextLength, readChat } from "@/lib/chat";
@@ -228,6 +230,13 @@ export default function Studio({ mode }: { mode: AppMode }) {
   const [view, setView] = useState<View>("home");
   const [formError, setFormError] = useState<string | null>(null);
   const [refs, setRefs] = useState<RefItem[]>([]);
+  const [refsSignal, setRefsSignal] = useState(0); // bumps when the Reference button is pressed
+  const [homeRefsOpen, setHomeRefsOpen] = useState(false);
+  const [kindPicked, setKindPicked] = useState(false); // the person chose Image or Video themselves
+  const [kindWhy, setKindWhy] = useState<string | null>(null); // why the Home box chose Image or Video
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const promptNow = useRef("");
+  promptNow.current = prompt;
   const [plan, setPlan] = useState<ShotPlan | null>(null);
   const [planFor, setPlanFor] = useState<string>("");
   const [storyLen, setStoryLen] = useState<number | null>(null); // null = one clip
@@ -1587,6 +1596,53 @@ export default function Studio({ mode }: { mode: AppMode }) {
     if (template && template.kind !== k) setTemplate(null);
   }
 
+  /** The person tapped Image or Video themselves: stop choosing for them. */
+  function pickKind(k: MediaKind) {
+    setKindPicked(true);
+    setKindWhy(null);
+    switchKind(k);
+  }
+
+  /** Home's one box: as people type or speak, work out whether they want a picture or a video. */
+  function typeHome(text: string) {
+    setPrompt(text);
+    if (!text.trim()) {
+      setKindPicked(false);
+      setKindWhy(null);
+      return;
+    }
+    if (kindPicked || template) return;
+    const g = guessKind(text);
+    if (!g) return;
+    setKindWhy(g.why);
+    if (g.kind !== kind) switchKind(g.kind);
+  }
+
+  function speak(spoken: string, home: boolean) {
+    setVoiceError(null);
+    const text = joinSpoken(promptNow.current, spoken).slice(0, 2000);
+    promptNow.current = text;
+    if (home) typeHome(text);
+    else setPrompt(text);
+  }
+
+  const promptTools = (home: boolean) => (
+    <div className="prompt-tools">
+      <button
+        type="button"
+        className={refs.length ? "tool-btn on" : "tool-btn"}
+        onClick={() => {
+          if (home) setHomeRefsOpen(true);
+          setRefsSignal((n) => n + 1);
+        }}
+        title="Upload a photo of your product, logo, a person who agreed, or a style to match"
+      >
+        <span aria-hidden>📎</span> Reference{refs.length ? ` · ${refs.length}` : ""}
+      </button>
+      <VoiceButton onText={(t) => speak(t, home)} onError={setVoiceError} />
+    </div>
+  );
+
   // ---------- pieces shared by several views ----------
 
   const kindTabs = (
@@ -1597,7 +1653,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
           role="tab"
           aria-selected={kind === k}
           className={kind === k ? "tab active" : "tab"}
-          onClick={() => switchKind(k)}
+          onClick={() => pickKind(k)}
         >
           <span className="tab-icon" aria-hidden>
             {k === "image" ? <IconImage /> : <IconVideo />}
@@ -2288,6 +2344,8 @@ export default function Studio({ mode }: { mode: AppMode }) {
       />
       <span className="prompt-count">{prompt.length}/2000</span>
     </div>
+    {promptTools(false)}
+    {voiceError && <p className="notice warn small-notice">{voiceError}</p>}
     {kind === "image" && describesSeveralShots(prompt) && (
       <div className="notice warn small-notice shots-warning">
         <span>⚠️ This describes more than one shot, with a cut. A picture can only show one shot, so the result would mix them up.</span>
@@ -2312,7 +2370,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
         </span>
       </span>
     </label>
-    <ReferencesBox refs={refs} onChange={setRefs} mode={mode} kit={kitPics} onSave={saveToKit} />
+    <ReferencesBox refs={refs} onChange={setRefs} mode={mode} kit={kitPics} onSave={saveToKit} openSignal={refsSignal} />
     {!template && (
       <div className="examples">
         <span className="examples-label">Try:</span>
@@ -2895,7 +2953,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
               className={!adMode && kind === k ? "tab active" : "tab"}
               onClick={() => {
                 setAdMode(false);
-                switchKind(k);
+                pickKind(k);
               }}
             >
               <span className="tab-icon" aria-hidden>
@@ -3198,19 +3256,33 @@ export default function Studio({ mode }: { mode: AppMode }) {
             className="prompt"
             rows={3}
             maxLength={2000}
-            placeholder={`Describe an ${kind === "image" ? "image" : "video"}... e.g. ${EXAMPLES[kind][0]}`}
+            placeholder={`Describe an image or video... e.g. ${EXAMPLES[kind][0]}`}
             value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
+            onChange={(e) => typeHome(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) generate();
             }}
           />
         </div>
+        {promptTools(true)}
+        {prompt.trim() && (
+          <p className="kind-note">
+            {kind === "image" ? "📸 You'll get a picture" : "🎬 You'll get a video"}
+            {kindWhy && !kindPicked ? `, because ${kindWhy}.` : "."}{" "}
+            <button className="link" onClick={() => pickKind(kind === "image" ? "video" : "image")}>
+              Make {kind === "image" ? "a video" : "a picture"} instead
+            </button>
+          </p>
+        )}
+        {voiceError && <p className="notice warn small-notice">{voiceError}</p>}
+        {(homeRefsOpen || refs.length > 0) && (
+          <ReferencesBox refs={refs} onChange={setRefs} mode={mode} kit={kitPics} onSave={saveToKit} openSignal={refsSignal} />
+        )}
         <div className="lite-bar">
           <div className="lite-left">
             <div className="mini-tabs">
               {(["image", "video"] as MediaKind[]).map((k) => (
-                <button key={k} className={kind === k ? "active" : ""} onClick={() => switchKind(k)}>
+                <button key={k} className={kind === k ? "active" : ""} onClick={() => pickKind(k)}>
                   {k === "image" ? <IconImage /> : <IconVideo />} {k === "image" ? "Image" : "Video"}
                 </button>
               ))}
