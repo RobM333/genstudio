@@ -34,6 +34,7 @@ import { ADVERTISE_PROMISE, asksForSpeech, decide, MONTHLY_CAP, promiseNote, typ
 import type { Analysis } from "@/lib/analyze";
 import { creditsFor } from "@/lib/pricing";
 import { logFreeRemake, logReturned, logUsed, usedThisMonth } from "./creditLog";
+import AccountChip from "./account/AccountChip";
 import { loadTalk, saveTalk, TalkForm, type TalkSetup } from "./TalkingVideo";
 import { buildTalk, type TalkJob } from "./talkRunner";
 import { MAX_TALK_SECONDS, talkCost, talkSeconds, TALK_VIDEO_MODEL_ID } from "@/lib/talk";
@@ -366,6 +367,21 @@ export default function Studio({ mode }: { mode: AppMode }) {
     }
     setLoaded(true);
   }, []);
+
+  // Links from the landing page: /studio?template=<id> opens that template, /studio?view=create opens Create.
+  const linkHandled = useRef(false);
+  useEffect(() => {
+    if (!loaded || linkHandled.current) return;
+    linkHandled.current = true;
+    const params = new URLSearchParams(window.location.search);
+    const t = TEMPLATES.find((x) => x.id === params.get("template"));
+    const v = params.get("view");
+    if (t) startTemplate(t);
+    else if (v === "create" || v === "templates" || v === "gallery" || v === "brand") setView(v);
+    else return;
+    window.history.replaceState(null, "", window.location.pathname);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded]);
   useEffect(() => {
     if (!loaded) return;
     try {
@@ -3798,6 +3814,8 @@ export default function Studio({ mode }: { mode: AppMode }) {
           </button>
           <ModeBadge mode={mode} />
         </div>
+
+        <AccountChip />
 
         <button
           className="new-btn"

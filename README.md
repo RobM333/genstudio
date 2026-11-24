@@ -49,6 +49,26 @@ It goes only into Netlify's secret settings:
 The badge in the top right of the app turns green and says **Live**. Your browser will ask for a
 username and password: type anything as the username and your `APP_PASSWORD` as the password.
 
+## Switching on accounts (each person signs in and has their own credits)
+
+Until these two settings exist, the app works exactly as before (one shared password).
+
+1. Make a free account at https://resend.com (it sends the sign-in emails; free for up to 3,000 a month).
+2. In Resend, go to API Keys, create one, and copy it.
+3. In Netlify: Site configuration > Environment variables. Add `RESEND_API_KEY` (paste the key, mark it secret)
+   and `ADMIN_EMAILS` (your own email; it must be the same email you used for Resend at first).
+4. Deploy again (Deploys > Trigger deploy). Open the site, go to `/signin`, and sign in with your email.
+   You start with 1,000 credits, and the "Owner page" link (`/admin`) lets you invite people and add credits.
+5. Before inviting anyone else: in Resend, add your domain (for example toastyfly.com) and follow its steps,
+   then add `EMAIL_FROM` in Netlify, for example `ToastyFly <hello@toastyfly.com>`. Until then Resend only
+   delivers to your own email, and the Owner page gives you a sign-in link to send people yourself.
+
+How it works: sign-in is by a 6-digit code sent by email (no passwords). It is invite-only: only the owner,
+invited people and existing accounts can sign in. Accounts, credits and saved work are kept in Netlify Blobs
+(built into the site, no extra database). Credits are charged on the server for each AI step as it starts,
+and given back automatically if the step fails. Optional: `AUTH_SECRET` (any long random text) to sign
+sign-in cookies; otherwise one is derived from the server's other secrets.
+
 ### Why long videos still work on Netlify's free plan
 
 Netlify stops any server request that runs longer than about 10 seconds, and a video can take a few
