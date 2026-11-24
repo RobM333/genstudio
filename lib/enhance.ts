@@ -27,6 +27,8 @@ Rules:
 - Never add any other words, slogans or captions to the image. If the user asked for no text, say "no text".
 - If the user names a real, famous person, describe them generically instead (for example "a tall basketball player"), and say so in the note. Never hint at who they are: no "legendary", no famous numbers, signature moves or team.
 - For sports, uniforms or products, invent plain team colours and a made-up name or none. Never use real teams, clubs, leagues, jersey numbers tied to famous players, or brand logos.
+- If the description has "Director's choices:", the user picked those (shot size, camera angle, lens, camera move, light, look) on purpose. Keep every one of them, in clear camera words, and build the rest around them. Where nothing is given, choose what suits the shot.
+- If the description names characters (for example "Characters: Mia (...)"), keep their names, looks and outfits exactly, and never add other main characters.
 - For pictures, write one paragraph of about 60 to 110 words. For videos, follow the length given below. Plain English.`;
 
 const JSON_REPLY = `Reply with JSON only, like {"prompt": "...", "note": "..."}.
@@ -141,7 +143,7 @@ ${VIDEO_JSON_REPLY}`;
 
 function refNote(kinds: string[]): string {
   if (kinds.length === 0) return "";
-  return `\nThe user also gives their own pictures of: ${kinds.join(", ")}. They are shown to the image model. Do not describe how those look (no colours, shapes, labels, faces or clothes for them); call them "the product", "the logo", "the person". Describe the new scene around them: setting, layout, camera, light.`;
+  return `\nThe user also gives their own pictures of: ${kinds.join(", ")}. They are shown to the image model. Do not describe how those look (no colours, shapes, labels, faces or clothes for them); call them "the product", "the logo", "the person" (or by the character's name if one is given). Describe the new scene around them: setting, layout, camera, light. Only exception: if the description says what a named character is wearing, keep that outfit.`;
 }
 
 /** Simple fallback used in demo mode or when the AI writer isn't available. */

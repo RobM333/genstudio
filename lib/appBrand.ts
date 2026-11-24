@@ -23,3 +23,10 @@ export const LOGO_HAS_NAME = true;
 export const BRAND_MARK = "/brand/toastyfly-mark.svg";
 
 // The browser-tab icon is app/icon.svg (and app/apple-icon.png for phones).
+
+/**
+ * The name of the film mode (pick camera, lens, light and look shot by shot,
+ * with the same characters in every shot). Change it here and it changes everywhere.
+ * Other names considered: "Director's Chair", "Shot Maker".
+ */
+export const FILM_NAME = "Film Set";

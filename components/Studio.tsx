@@ -37,7 +37,11 @@ import { logFreeRemake, logReturned, logUsed, usedThisMonth } from "./creditLog"
 import { loadTalk, saveTalk, TalkForm, type TalkSetup } from "./TalkingVideo";
 import { buildTalk, type TalkJob } from "./talkRunner";
 import { MAX_TALK_SECONDS, talkCost, talkSeconds, TALK_VIDEO_MODEL_ID } from "@/lib/talk";
-import { BRAND_MARK as BRAND_MARK_FILE, BRAND_NAME } from "@/lib/appBrand";
+import { BRAND_MARK as BRAND_MARK_FILE, BRAND_NAME, FILM_NAME } from "@/lib/appBrand";
+import FilmSet, { draftFromJob } from "./FilmSet";
+import { buildFilm, changeShot, freshFilm, type FilmJob } from "./filmRunner";
+import { filmCost, shotSecondsFor, STILL_MODEL_ID } from "@/lib/filmset";
+import { AI_LABEL_NOTE, characterRefs } from "@/lib/characters";
 
 type Item = {
   id: string;
@@ -77,6 +81,7 @@ type Item = {
   story?: Story; // a longer video made from several linked shots
   ad?: AdJob; // a full ad: planned scenes, voiceover and music
   talk?: TalkJob; // you, talking: your words in your own voice, said by your own photo
+  film?: FilmJob; // Film Set: shots directed one by one, with the same characters in each
   takes?: Takes; // behind the scenes: checked first-frame pictures for a video, or two takes of a premium picture
   scale?: number; // "Sharpen to HD": how much bigger the video gets
   creditUsd?: number; // what an ad version costs to make, worked out when it starts
@@ -97,7 +102,9 @@ type ChatAct =
   | { type: "hd" }
   | { type: "ad"; plan: AdPlan; note: string }
   | { type: "shape"; aspectRatio: AspectRatio }
-  | { type: "talk"; text: string };
+  | { type: "talk"; text: string }
+  | { type: "film"; note: string; shot?: number } // remake one shot of a film (or all of it) with a change
+  | { type: "filmEdit" }; // open the film in Film Set
 type ChatOffer = { label: string; cost: number; act: ChatAct; free?: boolean };
 type ChatMsg = {
   id: string;
@@ -183,7 +190,7 @@ const BRAND_MARK = "\n\nOn brand: ";
 /** Asking for a picture in another shape, like "other shapes" or "make it vertical for TikTok". */
 const RESHAPE = /\b(other shapes?|resize|re-size|reshape|(make it|turn it into|as an?) (vertical|square|landscape|portrait|wide|tall)|9:16|1:1|16:9|(for|to fit) (tiktok|reels?|shorts|instagram|youtube))\b/i;
 const SHAPE_USES: Record<string, string> = { "9:16": "TikTok, Reels and Shorts", "1:1": "the Instagram feed", "16:9": "YouTube and websites" };
-type View = "home" | "create" | "templates" | "gallery" | "brand";
+type View = "home" | "create" | "templates" | "gallery" | "brand" | "film";
 const STORAGE_KEY = "genstudio.gallery.v1";
 const MAX_ITEMS = 200;
 
@@ -274,6 +281,9 @@ export default function Studio({ mode }: { mode: AppMode }) {
   const [talkText, setTalkText] = useState("");
   const [talkLang, setTalkLang] = useState("English");
   const talkRuns = useRef(new Set<string>());
+  const filmRuns = useRef(new Set<string>());
+  const [filmDraft, setFilmDraft] = useState<ReturnType<typeof draftFromJob> | null>(null);
+  const [filmKey, setFilmKey] = useState(0); // remounts Film Set when a film is reopened
   // Brand kit, saved in this browser and switched on per project.
   const [brand, setBrand] = useState<Brand>({ pictures: [] });
   const [eleven, setEleven] = useState<ElevenConnection | null>(null); // the user's own ElevenLabs voices, in this browser only
@@ -301,7 +311,8 @@ export default function Studio({ mode }: { mode: AppMode }) {
 
   const isAuto = choice === AUTO;
   const brandOn = useBrand && hasBrand(brand);
-  const kitPics = brandOn ? brand.pictures : undefined;
+  // Saved characters work anywhere reference pictures do, as people with a name.
+  const kitPics = brandOn ? [...brand.pictures, ...characterRefs(brand.characters).filter((c) => !brand.pictures.some((p) => p.url === c.url))] : undefined;
   const saveToKit = (r: RefItem) => setBrand((b) => ({ ...b, pictures: [...b.pictures.filter((x) => x.url !== r.url), r].slice(-KIT_PICTURES) }));
   const auto = pickModel({ kind, prompt, quality, aspectRatio });
   const model = isAuto ? auto.model : (getModel(choice) ?? models[0]);
@@ -377,7 +388,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
     const t = TEMPLATES.find((x) => x.id === params.get("template"));
     const v = params.get("view");
     if (t) startTemplate(t);
-    else if (v === "create" || v === "templates" || v === "gallery" || v === "brand") setView(v);
+    else if (v === "create" || v === "templates" || v === "gallery" || v === "brand" || v === "film") setView(v);
     else return;
     window.history.replaceState(null, "", window.location.pathname);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -540,6 +551,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
     items.filter((it) => it.status === "pending" && it.story).forEach(runStory);
     items.filter((it) => it.status === "pending" && it.ad).forEach(runAd);
     items.filter((it) => it.status === "pending" && it.talk).forEach(runTalk);
+    items.filter((it) => it.status === "pending" && it.film).forEach(runFilm);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded]);
 
@@ -1170,6 +1182,93 @@ export default function Studio({ mode }: { mode: AppMode }) {
     }
   }
 
+  const filmShotSeconds = (job: FilmJob) => shotSecondsFor(job.videoModelId, job.seconds);
+  /** A character's newest look picture from the brand kit, if it was remade since. */
+  const latestLook = (id: string) => {
+    const c = brand.characters?.find((x) => x.id === id);
+    return c?.sheetUrl && c.sheetToken ? { sheetUrl: c.sheetUrl, sheetToken: c.sheetToken } : {};
+  };
+
+  /** Starts a Film Set picture or scene. Returns a message if it can't start. */
+  function startFilm(job: FilmJob, parentId?: string, fixNote?: string): string | null {
+    if (mode === "locked") return "Real generation is switched off.";
+    if (!hasAcceptedTerms()) {
+      setAskTerms(true);
+      return null;
+    }
+    const n = job.shots.length;
+    const secs = job.still ? undefined : n * filmShotSeconds(job);
+    const item: Item = {
+      id: crypto.randomUUID(),
+      kind: job.still ? "image" : "video",
+      modelId: job.still ? (job.cast.length ? REFERENCE_IMAGE_MODEL.id : STILL_MODEL_ID) : animateModelFor(job.videoModelId).id,
+      modelName: job.still ? `${FILM_NAME} · one frame` : `${FILM_NAME} · ${n} shot${n === 1 ? "" : "s"}`,
+      prompt: job.shots.map((s, i) => `${job.still ? "" : `Shot ${i + 1}: `}${s.action.trim().replace(/[.\s]+$/, "")}.`).join(" "),
+      aspectRatio: job.aspectRatio,
+      duration: secs,
+      status: "pending",
+      createdAt: Date.now(),
+      parentId,
+      fixNote,
+      wantSound: job.sound,
+      hasAudio: job.sound,
+      creditUsd: filmJobCost(job),
+      autoReason: job.cast.length ? `directed shot by shot, with ${job.cast.map((c) => c.name).join(" and ")} kept the same in every shot` : "directed shot by shot",
+      film: job,
+    };
+    madeHere.current.add(item.id);
+    setItems((prev) => [item, ...prev]);
+    setSelectedId(item.id);
+    setView("create");
+    setComposing(false);
+    runFilm(item);
+    return null;
+  }
+
+  /** Makes a film one step at a time. Safe to call again to carry on. */
+  async function runFilm(start: Item) {
+    if (!start.film || filmRuns.current.has(start.id)) return;
+    filmRuns.current.add(start.id);
+    const job: FilmJob = JSON.parse(JSON.stringify(start.film));
+    const save = (j: FilmJob, patch: Partial<Item> = {}) => update(start.id, { film: JSON.parse(JSON.stringify(j)), ...patch });
+    try {
+      update(start.id, { status: "pending", error: undefined, stepStartedAt: Date.now(), phase: "working" });
+      let lastStep = job.step;
+      const url = await buildFilm(
+        job,
+        (j) => {
+          // The progress bar restarts its clock when the step changes.
+          const moved = j.step !== lastStep;
+          lastStep = j.step;
+          save(j, moved ? { stepStartedAt: Date.now() } : {});
+        },
+        (castId, look) => setBrand((b) => ({ ...b, characters: (b.characters ?? []).map((c) => (c.id === castId ? { ...c, ...look } : c)) })),
+      );
+      job.step = undefined;
+      save(job, { status: "done", url, demo: url.startsWith("data:") || undefined });
+    } catch (e) {
+      job.step = undefined;
+      save(job, { status: "failed", error: (e as Error).message || "The film stopped partway." });
+    } finally {
+      filmRuns.current.delete(start.id);
+    }
+  }
+
+  /** What a film costs: only the parts still to make (a changed shot remakes just that shot). */
+  function filmJobCost(job: FilmJob): number {
+    const todo = job.shots.filter((s) => !s.url && !(job.still && s.frameUrl)).length;
+    const full = filmCost({ still: job.still, shots: Math.max(1, todo), videoModelId: job.videoModelId, seconds: job.seconds, sound: job.sound, cast: job.cast.length, newLooks: job.cast.filter((c) => !c.sheetUrl).length });
+    return full;
+  }
+
+  /** Opens a film in Film Set with its settings, ready to change. */
+  function editFilm(it: Item) {
+    if (!it.film) return;
+    setFilmDraft(draftFromJob(it.film));
+    setFilmKey((k) => k + 1);
+    go("film");
+  }
+
   /** What an ad costs to make: all of it for a new ad, only the changed parts for a new version. */
   function adStartCost(job: AdJob, parentId?: string): number {
     const parent = parentId ? items.find((x) => x.id === parentId)?.ad : undefined;
@@ -1182,6 +1281,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
   function itemCost(it: Item): number {
     if (it.ad) return it.creditUsd ?? adCost(it.ad.plan, Boolean(it.ad.refs?.length), Boolean(it.ad.check?.on));
     if (it.talk) return talkCost(it.talk.seconds, it.talk.text.length);
+    if (it.film) return it.creditUsd ?? filmJobCost(it.film);
     if (it.story) return storyCost(it.story.firstModelId, Math.max(1, it.story.shots.length || it.story.wantShots || 1), it.story.sound, Boolean(it.story.refs?.length));
     const m = getModel(it.modelId);
     return m ? jobCost(m, it.duration, Boolean(it.wantSound), it.quality) : 0;
@@ -1196,7 +1296,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
       if (!madeHere.current.has(it.id)) continue;
       if (it.status === "done" && !it.charged) {
         if (!it.free && mode === "live") logUsed(it.id, creditsFor(itemCost(it)), it.modelName);
-        const check = mode === "live" && it.kind === "video" && Boolean(it.url) && !it.ad && !it.talk && !it.demo;
+        const check = mode === "live" && it.kind === "video" && Boolean(it.url) && !it.ad && !it.talk && !it.film && !it.demo;
         update(it.id, { charged: true, promise: undefined, promiseCheck: check ? "running" : undefined });
         if (check) autoCheck(it);
         if (it.ad?.check?.faultsLeft?.length) adPromise(it);
@@ -1204,7 +1304,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
         update(it.id, {
           promise: {
             type: "refund",
-            note: it.ad || it.story
+            note: it.ad || it.story || it.film
               ? "It stopped partway, so it uses no credits. Carrying on finishes it without paying again for the parts already made."
               : promiseNote(decide({ failed: true, usedThisMonth: 0 }))!,
           },
@@ -1697,6 +1797,10 @@ export default function Studio({ mode }: { mode: AppMode }) {
     setTemplate(null);
     setFormError(null);
     setAdError(null);
+    if (it.film) {
+      editFilm(it);
+      return;
+    }
     if (it.talk) {
       setAdMode(false);
       setTalkMode(true);
@@ -1759,6 +1863,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
   function recreateCost(it: Item): number | null {
     if (it.ad) return adCost(it.ad.plan, !!it.ad.refs?.length, !!it.ad.check?.on);
     if (it.talk) return talkCost(it.talk.seconds, it.talk.text.length);
+    if (it.film) return filmJobCost(freshFilm(it.film));
     if (it.story) return storyCost(it.story.firstModelId, storyShotCount(it), it.story.sound, !!it.story.refs?.length);
     const m = getModel(it.modelId);
     if (!m) return null;
@@ -1771,6 +1876,12 @@ export default function Studio({ mode }: { mode: AppMode }) {
   /** Makes a new take straight away, with the same prompt and settings. It joins the same history and chat. */
   function recreate(it: Item) {
     setRecreateAsk(null);
+    if (it.film) {
+      const job = freshFilm(it.film);
+      const err = startFilm({ ...job, cast: job.cast.map((c) => ({ ...c, ...latestLook(c.id) })) }, it.id);
+      if (err) say(rootOf(it.id), it.id, { text: err });
+      return;
+    }
     if (it.talk) {
       const err = startTalk(it.talk.text, it.talk.language, it.id);
       if (err) say(rootOf(it.id), it.id, { text: err });
@@ -2251,6 +2362,39 @@ export default function Studio({ mode }: { mode: AppMode }) {
       });
       return;
     }
+    if (it.film && new RegExp(`^open in ${FILM_NAME}$`, "i").test(text)) {
+      editFilm(it);
+      return;
+    }
+    if (it.film) {
+      // A film changes shot by shot: "shot 2: closer, from below" remakes only shot 2.
+      const job = it.film;
+      const m = /^\s*(?:in\s+)?shot\s*(\d)\s*[:,.-]?\s*(.*)$/i.exec(text);
+      const shot = m ? Number(m[1]) - 1 : undefined;
+      const note = (m ? m[2] : text).trim();
+      if (shot !== undefined && (shot < 0 || shot >= job.shots.length)) {
+        reply({ text: `This film has ${job.shots.length} shot${job.shots.length === 1 ? "" : "s"}. Start with “shot 1:” to “shot ${job.shots.length}:” to change one.` });
+        return;
+      }
+      if (note.length < 3) {
+        reply({ text: "Tell me what to change, like “shot 2: closer, from below”." });
+        return;
+      }
+      const one = job.still || shot !== undefined;
+      const next = one ? changeShot(job, shot ?? 0, note) : freshFilm({ ...job, scene: { ...job.scene, setting: `${job.scene.setting.trim()}${job.scene.setting.trim() ? ". " : ""}Change: ${note}` } });
+      const cost = filmJobCost(next);
+      reply({
+        text: one && !job.still
+          ? `I'll remake shot ${(shot ?? 0) + 1} with “${note.slice(0, 160)}” and keep the other shots as they are. That costs ${price(cost)}.`
+          : `I'll make it again with “${note.slice(0, 160)}”, same characters and choices. That costs ${price(cost)}. To change only one shot, start with “shot 2:”.`,
+        offers: [
+          { label: one && !job.still ? `🎬 Remake shot ${(shot ?? 0) + 1}` : "🎬 Make it again with this", cost, act: { type: "film", note, shot: job.still ? 0 : shot } },
+          { label: `🎛️ Open in ${FILM_NAME}`, cost: 0, free: true, act: { type: "filmEdit" } },
+        ],
+        state: "open",
+      });
+      return;
+    }
     if (/^director'?s? notes?$|^(ask|call) the director$/i.test(text) && !it.ad) {
       if (!it.url) reply({ text: "This one didn't finish. Tell me what you'd like and I'll make it again." });
       else directorNotes(it, thread);
@@ -2385,6 +2529,12 @@ export default function Studio({ mode }: { mode: AppMode }) {
     }
     const a = offer.act;
     let err: string | null = null;
+    if (a.type === "filmEdit") {
+      // Not a remake, just opens the film's settings.
+      if (it.film) editFilm(it);
+      patchMsg(msg.id, { state: "done" });
+      return;
+    }
     if (offer.free) nextFree.current = true;
     if (a.type === "fix") err = fixItem(it, a.note, a.newPrompt, a.how);
     else if (a.type === "length") doLength(it, a.seconds);
@@ -2394,6 +2544,14 @@ export default function Studio({ mode }: { mode: AppMode }) {
     else if (a.type === "hd") doHd(it);
     else if (a.type === "shape" && it.ad) makeShape(it, a.aspectRatio);
     else if (a.type === "talk" && it.talk) err = startTalk(a.text, it.talk.language, it.id);
+    else if (a.type === "film" && it.film) {
+      const base = it.film;
+      const next =
+        a.shot !== undefined
+          ? changeShot(base, a.shot, a.note)
+          : freshFilm({ ...base, scene: { ...base.scene, setting: `${base.scene.setting.trim()}${base.scene.setting.trim() ? ". " : ""}Change: ${a.note}` } });
+      err = startFilm({ ...next, cast: next.cast.map((c) => ({ ...c, ...latestLook(c.id) })) }, it.id, a.note);
+    }
     else if (a.type === "shape" && it.kind === "image") reshapeImage(it, a.aspectRatio);
     else if (a.type === "ad" && it.ad) startAd(changedAdJob(it.ad, a.plan).job, { parentId: it.id, fixNote: a.note, aspectRatio: it.aspectRatio });
     if (offer.free) {
@@ -2425,6 +2583,12 @@ export default function Studio({ mode }: { mode: AppMode }) {
     chips.push({ label: "🔍 Find what's wrong", text: "Find what's wrong" });
     if (selected.talk) {
       chips.length = 0;
+    } else if (selected.film) {
+      chips.length = 0;
+      const n = selected.film.shots.length;
+      if (!selected.film.still && n > 1) chips.push({ label: `🎥 Shot ${Math.min(2, n)}: closer`, text: `shot ${Math.min(2, n)}: closer, from a lower angle` });
+      chips.push({ label: "💡 Warmer light", text: "warmer, golden light" });
+      chips.push({ label: `🎛️ Open in ${FILM_NAME}`, text: `open in ${FILM_NAME}` });
     } else if (selected.ad) {
       chips.push({ label: "✨ Try a new hook", text: "Give scene 1 a new, more gripping hook (new picture and voice line). Keep everything else the same." });
       chips.push({ label: "📐 Other shapes", text: "Make it in other shapes for TikTok, Instagram and YouTube" });
@@ -2443,7 +2607,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
         chips.push({ label: "🎨 Use as my brand look", text: "Use it as my brand look" });
       }
     }
-    if (!selected.ad && !selected.talk && hdPlan(selected)) chips.push({ label: "✨ Sharpen to HD", text: "Sharpen to HD" });
+    if (!selected.ad && !selected.talk && !selected.film && hdPlan(selected)) chips.push({ label: "✨ Sharpen to HD", text: "Sharpen to HD" });
     if (selected.quality === "draft" && !selected.talk) chips.push({ label: "✦ Higher quality", text: "Make it higher quality" });
   }
 
@@ -2455,6 +2619,10 @@ export default function Studio({ mode }: { mode: AppMode }) {
             Tell me what to change, like{" "}
             {selected.talk
               ? "the new words you'd like to say. I make it again in your voice"
+              : selected.film
+              ? selected.film.still
+                ? "“warmer light” or “she should be smiling”. Your characters stay the same"
+                : "“shot 2: closer, from below” or “shot 3: she turns to the camera”. I only remake the shots you change, and your characters stay the same"
               : selected.ad
               ? "“scene 2: show it at night”, “music: calmer” or “end card: say Shop now”. I only remake the parts that change"
               : selected.kind === "video"
@@ -3282,6 +3450,15 @@ export default function Studio({ mode }: { mode: AppMode }) {
             talk or film again.
           </p>
         )}
+        {!adMode && !talkMode && (
+          <button className="film-teaser" onClick={() => go("film")}>
+            <span aria-hidden>🎬</span>
+            <span>
+              <strong>Want to direct it like a film?</strong> Pick the camera angle, lens, light and look shot by shot, with the same characters in every shot.
+            </span>
+            <span className="film-teaser-go">Open {FILM_NAME} →</span>
+          </button>
+        )}
         {adMode && (
           <p className="muted small g-hint">
             A finished ad with several scenes, a voiceover and music. You see the whole plan and can change it before anything is made.
@@ -3526,12 +3703,16 @@ export default function Studio({ mode }: { mode: AppMode }) {
         {selected.talk && selected.status !== "done" && (
           <StoryPanel item={selected} running={talkRuns.current.has(selected.id)} onResume={runTalk} />
         )}
+        {selected.film && selected.status !== "done" && (
+          <StoryPanel item={selected} running={filmRuns.current.has(selected.id)} onResume={runFilm} />
+        )}
         <div className="viewer-actions">
           {selected.url && (
             <button className="btn btn-light" onClick={() => download(selected)}>
               Download
             </button>
           )}
+          {selected.url && showsAiPerson(selected) && <p className="muted small ai-label-note">ℹ️ {AI_LABEL_NOTE}</p>}
           {!reAsking && reButton}
           {!selected.design && !selected.prompt.startsWith(DESIGN_MOTION_PROMPT) && (
             <button className="btn" onClick={() => reuse(selected)}>
@@ -3836,6 +4017,12 @@ export default function Studio({ mode }: { mode: AppMode }) {
               )}
             </button>
           ))}
+          <button className={view === "film" ? "nav-item active" : "nav-item"} onClick={() => go("film")}>
+            <span className="nav-icon" aria-hidden>
+              🎬
+            </span>
+            {FILM_NAME} <span className="soon-tag new-tag">New</span>
+          </button>
           <div className="nav-divider" />
           <button className={view === "brand" ? "nav-item active" : "nav-item"} onClick={() => go("brand")}>
             <span className="nav-icon" aria-hidden>
@@ -3893,6 +4080,20 @@ export default function Studio({ mode }: { mode: AppMode }) {
         )}
         {view === "templates" && templatesView}
         {view === "gallery" && galleryView}
+        {view === "film" && (
+          <FilmSet
+            key={filmKey}
+            mode={mode}
+            brand={brand}
+            onBrand={setBrand}
+            initial={filmDraft}
+            onStart={(job) => {
+              const err = startFilm(job);
+              if (!err) setFilmDraft(null);
+              return err;
+            }}
+          />
+        )}
         {view === "brand" && <BrandKit brand={brand} onChange={setBrand} mode={mode} onUseIdea={makeIdea} eleven={eleven} onEleven={setEleven} />}
       </main>
 
@@ -4017,12 +4218,47 @@ function typicalSeconds(it: Item): number {
   return base;
 }
 
+/** True when a result shows a realistic person made with AI (a saved character, a person photo, or you talking). */
+function showsAiPerson(it: Item): boolean {
+  return Boolean(it.film?.cast.length || it.talk || it.refs?.some((r) => r.kind === "person") || it.ad?.refs?.some((r) => r.kind === "person"));
+}
+
 function PendingTile({ item }: { item: Item }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 500);
     return () => clearInterval(t);
   }, []);
+  if (item.film) {
+    const job = item.film;
+    const n = job.shots.length;
+    const looks = job.cast.length;
+    // Steps: look pictures, shot pictures, filming, joining and sound.
+    const steps = job.still ? 1 + looks : looks + 2 + (n > 1 ? 1 : 0) + (job.sound ? 1 : 0);
+    const done =
+      job.cast.filter((c) => c.sheetUrl).length +
+      (job.shots.every((s) => s.frameUrl) ? 1 : 0) +
+      (job.shots.every((s) => s.url) ? 1 : 0) +
+      (job.joinedUrl && n > 1 ? 1 : 0);
+    const filming = job.shots.every((s) => s.frameUrl);
+    const view = progressView({
+      phase: "working",
+      elapsedSec: (now - (item.stepStartedAt ?? now)) / 1000,
+      typicalSec: filming && !job.shots.every((s) => s.url) ? (getModel(item.modelId)?.typicalSeconds ?? 120) * (job.seconds > 6 ? 1.6 : 1) : 20,
+      step: Math.min(steps, done + 1),
+      steps,
+      stepLabel: job.step ?? "Getting the set ready",
+    });
+    return (
+      <div className="tile-state">
+        <span className="progress-label">{view.label}</span>
+        <div className="progress" role="progressbar" aria-valuenow={Math.round(view.percent)} aria-valuemin={0} aria-valuemax={100}>
+          <div className="progress-fill" style={{ width: `${view.percent}%` }} />
+        </div>
+        <span className="muted small">{view.timeLeft}</span>
+      </div>
+    );
+  }
   if (item.talk) {
     const voiced = Boolean(item.talk.audioUrl);
     const view = progressView({

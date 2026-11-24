@@ -9,11 +9,13 @@ import { brandLine, colorName, type BrandInfo } from "@/lib/brand";
 import ReferencesBox, { type RefItem } from "./ReferencesBox";
 import { WeekPlan } from "./IdeaHelpers";
 import type { Idea } from "@/lib/ideas";
+import Characters from "./Characters";
+import { MAX_CHARACTERS, type Character } from "@/lib/characters";
 
 // The brand kit page: save the brand once, then switch it on in any project.
 // It lives in this browser until accounts arrive.
 
-export type Brand = BrandInfo & { business?: string; voice?: string; pictures: RefItem[] };
+export type Brand = BrandInfo & { business?: string; voice?: string; pictures: RefItem[]; characters?: Character[] };
 
 const STORE = "genstudio.brand.v1";
 export const KIT_PICTURES = 12;
@@ -23,7 +25,11 @@ export function loadBrand(): Brand {
     const raw = localStorage.getItem(STORE);
     const b = raw ? (JSON.parse(raw) as Brand) : null;
     if (b && typeof b === "object")
-      return { ...b, pictures: Array.isArray(b.pictures) ? b.pictures.filter((r) => r && r.url && r.kind && r.token).slice(0, KIT_PICTURES) : [] };
+      return {
+        ...b,
+        pictures: Array.isArray(b.pictures) ? b.pictures.filter((r) => r && r.url && r.kind && r.token).slice(0, KIT_PICTURES) : [],
+        characters: Array.isArray(b.characters) ? b.characters.filter((c) => c && c.id && c.name).slice(0, MAX_CHARACTERS) : [],
+      };
   } catch {
     // nothing saved, or storage blocked
   }
@@ -40,7 +46,7 @@ export function saveBrand(b: Brand) {
 
 /** True when the kit has something to use. */
 export function hasBrand(b: Brand): boolean {
-  return Boolean(b.name || b.style || b.colors?.length || b.voice || b.pictures.length);
+  return Boolean(b.name || b.style || b.colors?.length || b.voice || b.pictures.length || b.characters?.some((c) => c.sheetUrl));
 }
 
 /** The words part of the kit, sent to planners and added to prompts. */
@@ -166,9 +172,31 @@ export default function BrandKit({
         </p>
       </section>
 
-      <section className="g-step">
+      <section className="g-step" id="characters">
         <div className="g-head">
           <span className="g-num">3</span>
+          <h2>Your characters</h2>
+          <span className="step-opt">the same face in every post, video and film</span>
+        </div>
+        <p className="muted small char-intro">
+          Make a person once, like a presenter or your brand&apos;s own face, and they look the same every time. Clothes, places and camera angles can change;
+          their face doesn&apos;t. Use them in Film Set, or switch on your brand kit in Create and add them like a reference picture.
+        </p>
+        <Characters
+          characters={brand.characters ?? []}
+          onChange={(characters) => onChange({ ...brand, characters })}
+          mode={mode}
+          kitPeople={brand.pictures.filter((r) => r.kind === "person")}
+        />
+        <p className="muted small g-hint">
+          Invented people, or you (or an adult who agreed) from a photo. Never a real or famous person, and never someone made to look like one. Realistic AI people
+          should be labelled as AI when you post them.
+        </p>
+      </section>
+
+      <section className="g-step">
+        <div className="g-head">
+          <span className="g-num">4</span>
           <h2>Plan my week</h2>
           <span className="step-opt">a post for each day, ready to make</span>
         </div>

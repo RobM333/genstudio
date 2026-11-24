@@ -77,9 +77,10 @@ const LABEL: Record<RefKind, string> = {
 };
 
 /** Tells the picture model how to use each reference picture, in order. */
-export function referenceInstructions(kinds: RefKind[], offset = 0): string {
+export function referenceInstructions(kinds: RefKind[], offset = 0, names: (string | undefined)[] = []): string {
   const lines = kinds.map((k, i) => {
-    const what = LABEL[k];
+    // A saved character carries a name, so a scene with two people knows who is who.
+    const what = k === "person" && names[i] ? `${names[i]}, a person to feature` : LABEL[k];
     const how =
       k === "product"
         ? "keep its exact shape, colours, materials, label and any text"
@@ -91,6 +92,21 @@ export function referenceInstructions(kinds: RefKind[], offset = 0): string {
     return `Image ${i + 1 + offset} is ${what}: ${how}.`;
   });
   return `${lines.join(" ")} Build a new, realistic scene around them as described next. Lighting, shadows, reflections and perspective on them must match the new scene.`;
+}
+
+/** Only a short first name may label a person reference inside a prompt. */
+export function refName(name: unknown): string | undefined {
+  if (typeof name !== "string") return undefined;
+  const n = (name.trim().split(/\s+/)[0] ?? "").replace(/[^\p{L}\p{N}'-]/gu, "").slice(0, 20);
+  return n || undefined;
+}
+
+/**
+ * "Same scene": a later shot of a film is a new camera position in the same
+ * place. Image 1 is an earlier frame of the scene; the people pictures follow.
+ */
+export function sceneInstructions(kinds: RefKind[], names: (string | undefined)[] = []): string {
+  return `Image 1 is an earlier frame of this same scene: keep the same place, set, props, time of day, light and colour grade, but frame it from the new camera position described next (it may be closer, further, higher or from another side). ${referenceInstructions(kinds, 1, names)}`;
 }
 
 /**
