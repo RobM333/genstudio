@@ -1070,3 +1070,7 @@ select.text-input { appearance: auto; }
 .tpl-mock-wrap .b3 { background: var(--b3, #23232b); }
 /* Wide examples (banners, call backgrounds) show whole, a little above the card title */
 .showcase.showcase-fit { object-fit: contain; object-position: center 38%; padding: 0 10px; background: radial-gradient(120% 80% at 50% 35%, #202028, #0b0b10 75%); }
+/* The no wasted credits promise */
+.promise-note { margin: 10px 0 0; font-size: 0.9rem; }
+.home-promise { text-align: center; margin: -18px 0 22px; color: var(--muted, #888); font-size: 0.95rem; }
+.promise-list { margin: 10px 0 14px; padding-left: 18px; display: grid; gap: 6px; font-size: 0.92rem; }

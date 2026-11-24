@@ -35,13 +35,17 @@ export async function GET(req: Request) {
   }
 }
 
-/** Turns fal's error into a plain reason the user can act on. Failed jobs are not charged. */
+/**
+ * Turns fal's error into a plain reason the user can act on. Under our promise a
+ * failed job never uses the person's credits. (fal doesn't bill server errors;
+ * it may bill some refused or invalid requests, a 422, which we absorb.)
+ */
 function jobError(err: unknown): string {
   const e = err as { status?: number; body?: { detail?: unknown } };
   const detail = typeof e?.body?.detail === "string" ? e.body.detail : JSON.stringify(e?.body?.detail ?? "");
   if (/content checker|content policy|flagged|sensitive|nsfw|safety/i.test(detail)) {
-    return "The AI service's content checker refused this. Common causes: a real person's name or look-alike, real team logos, or (for Google Veo) a child in the picture. Try describing people generically, or animate with Kling or Hailuo. You weren't charged.";
+    return "The AI service's content checker refused this. Common causes: a real person's name or look-alike, real team logos, or (for Google Veo) a child in the picture. Try describing people generically, or animate with Kling or Hailuo. It won't use any of your credits.";
   }
-  if (e?.status === 422) return "The AI service couldn't use these settings or this prompt. Try a simpler prompt or another model. You weren't charged.";
-  return "The job failed on the AI service. Please try again. You weren't charged.";
+  if (e?.status === 422) return "The AI service couldn't use these settings or this prompt. Try a simpler prompt or another model. It won't use any of your credits.";
+  return "The job failed on the AI service. Please try again. It won't use any of your credits.";
 }

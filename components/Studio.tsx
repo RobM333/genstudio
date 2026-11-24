@@ -20,6 +20,10 @@ import { lengthAdvice, LONG_LENGTHS, MAX_STORY_SECONDS, type ShotPlan } from "@/
 import { nextLength, readChat } from "@/lib/chat";
 import { AD_LANGUAGES, AD_LENGTHS, AD_PRICES, AD_TONES, AD_VOICES, adCost, languageFromLocale, maxVoiceChars, checkCost, endCardSeconds, maxRedos, maxVoiceWords, redoCap, SCENE_SECONDS, sceneCount, sceneRemakeCost, type AdBrief, type AdPlan } from "@/lib/adplan";
 import { AD_T2V, buildAd, changedAdJob, newAdJob, type AdJob } from "./adRunner";
+import { ADVERTISE_PROMISE, asksForSpeech, decide, MONTHLY_CAP, promiseNote, type PromiseOutcome } from "@/lib/promise";
+import type { Analysis } from "@/lib/analyze";
+import { creditsFor } from "@/lib/pricing";
+import { logFreeRemake, logReturned, logUsed, usedThisMonth } from "./creditLog";
 
 type Item = {
   id: string;
@@ -58,6 +62,11 @@ type Item = {
   refs?: RefItem[]; // the user's own reference pictures used for this picture
   story?: Story; // a longer video made from several linked shots
   ad?: AdJob; // a full ad: planned scenes, voiceover and music
+  creditUsd?: number; // what an ad version costs to make, worked out when it starts
+  charged?: boolean; // its credits were counted (only once it finished, so failed jobs never use any)
+  free?: boolean; // a remake given under the no wasted credits promise
+  promiseCheck?: "running" | "done"; // the automatic check for clear faults
+  promise?: { type: PromiseOutcome["type"]; note: string }; // what the promise did for this result
 };
 
 /** Something the chat offers to do, always shown with its price first. */
@@ -69,7 +78,7 @@ type ChatAct =
   | { type: "video" }
   | { type: "ad"; plan: AdPlan; note: string }
   | { type: "shape"; aspectRatio: AspectRatio };
-type ChatOffer = { label: string; cost: number; act: ChatAct };
+type ChatOffer = { label: string; cost: number; act: ChatAct; free?: boolean };
 type ChatMsg = {
   id: string;
   thread: string; // the first version this conversation is about
@@ -227,6 +236,8 @@ export default function Studio({ mode }: { mode: AppMode }) {
   const [directorAnswers, setDirectorAnswers] = useState("");
   const [directorPicked, setDirectorPicked] = useState<number | null>(null);
   const polling = useRef(new Set<string>());
+  const madeHere = useRef(new Set<string>()); // jobs started on this page visit, so old gallery items are never counted again
+  const nextFree = useRef(false); // the next job is a free remake under the promise
 
   const isAuto = choice === AUTO;
   const brandOn = useBrand && hasBrand(brand);
@@ -459,7 +470,10 @@ export default function Studio({ mode }: { mode: AppMode }) {
       wantSound,
       hasAudio: Boolean(m.audio && wantSound),
       stage: "video",
+      free: nextFree.current || undefined,
     };
+    nextFree.current = false;
+    madeHere.current.add(item.id);
     setItems((prev) => [item, ...prev]);
     setSelectedId(item.id);
     setView("create");
@@ -688,7 +702,10 @@ export default function Studio({ mode }: { mode: AppMode }) {
           ? `${wantShots * seconds}s video made as ${wantShots} linked shots, so every moment fits`
           : "uses your own pictures",
       story,
+      free: nextFree.current || undefined,
     };
+    nextFree.current = false;
+    madeHere.current.add(item.id);
     setItems((prev) => [item, ...prev]);
     setSelectedId(item.id);
     setView("create");
@@ -872,7 +889,9 @@ export default function Studio({ mode }: { mode: AppMode }) {
       enhance: true,
       autoReason: `${job.plan.scenes.length} scenes, an end card, voiceover and music`,
       ad: job,
+      creditUsd: adStartCost(job, opts.parentId),
     };
+    madeHere.current.add(item.id);
     setItems((prev) => [item, ...prev]);
     setSelectedId(item.id);
     setView("create");
@@ -903,6 +922,99 @@ export default function Studio({ mode }: { mode: AppMode }) {
     } finally {
       adRuns.current.delete(start.id);
     }
+  }
+
+  /** What an ad costs to make: all of it for a new ad, only the changed parts for a new version. */
+  function adStartCost(job: AdJob, parentId?: string): number {
+    const parent = parentId ? items.find((x) => x.id === parentId)?.ad : undefined;
+    const fresh = job.clips.filter((c) => !c.url).length;
+    if (!parent || fresh === job.clips.length) return adCost(job.plan, Boolean(job.refs?.length), Boolean(job.check?.on));
+    return adChangeCost(parent, job.plan);
+  }
+
+  /** What a finished job cost to make, for counting its credits. */
+  function itemCost(it: Item): number {
+    if (it.ad) return it.creditUsd ?? adCost(it.ad.plan, Boolean(it.ad.refs?.length), Boolean(it.ad.check?.on));
+    if (it.story) return storyCost(it.story.firstModelId, Math.max(1, it.story.shots.length || it.story.wantShots || 1), it.story.sound, Boolean(it.story.refs?.length));
+    const m = getModel(it.modelId);
+    return m ? estimateCost(m, it.duration, Boolean(it.wantSound)) : 0;
+  }
+
+  // The no wasted credits promise. A job's credits are only counted once it has
+  // finished, so a failed job never uses any. Finished videos get an automatic
+  // check for clear faults, behind the scenes.
+  useEffect(() => {
+    if (!loaded) return;
+    for (const it of items) {
+      if (!madeHere.current.has(it.id)) continue;
+      if (it.status === "done" && !it.charged) {
+        if (!it.free && mode === "live") logUsed(it.id, creditsFor(itemCost(it)), it.modelName);
+        const check = mode === "live" && it.kind === "video" && Boolean(it.url) && !it.ad && !it.demo;
+        update(it.id, { charged: true, promise: undefined, promiseCheck: check ? "running" : undefined });
+        if (check) autoCheck(it);
+        if (it.ad?.check?.faultsLeft?.length) adPromise(it);
+      } else if (it.status === "failed" && !it.promise) {
+        update(it.id, {
+          promise: {
+            type: "refund",
+            note: it.ad || it.story
+              ? "It stopped partway, so it uses no credits. Carrying on finishes it without paying again for the parts already made."
+              : promiseNote(decide({ failed: true, usedThisMonth: 0 }))!,
+          },
+        });
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, loaded]);
+
+  /** Looks at a finished video (and listens, when nobody asked for speech) for the clear faults the promise covers. */
+  async function autoCheck(it: Item) {
+    const wantsSpeech = asksForSpeech(basePrompt(it));
+    const [a, speech] = await Promise.all([analyzeItem(it).catch(() => null), it.hasAudio && !wantsSpeech ? speechCheck(it.url!) : Promise.resolve(false)]);
+    applyPromise(it, withSpeech(a, speech), rootOf(it.id), true);
+  }
+
+  /**
+   * Acts on a check's result: credits back for a clear fault, a free remake for a
+   * borderline problem, within the monthly limit. Returns false when the promise
+   * had nothing to do, so the normal "Find what's wrong" reply can be shown.
+   */
+  function applyPromise(it: Item, a: Analysis | null, thread: string, auto = false): boolean {
+    let outcome = decide({ check: a, usedThisMonth: usedThisMonth() });
+    // Never two free remakes in a row for the same idea.
+    if (outcome.type === "free_remake" && it.free) outcome = { type: "none" };
+    if (outcome.type === "refund" && !logReturned(it.id, outcome.fault, outcome.reason)) outcome = { type: "none" };
+    const note = promiseNote(outcome);
+    update(it.id, auto ? { promiseCheck: "done", ...(note ? { promise: { type: outcome.type, note } } : {}) } : note ? { promise: { type: outcome.type, note } } : {});
+    if (!note || !a) return false;
+    const fixNote = it.kind === "image" && a.fix ? a.fix : a.problems.join(" ");
+    const how: FixMode = it.kind === "image" ? suggestFixMode(fixNote) : "edit";
+    const fix: ChatAct = { type: "fix", note: fixNote, how, newPrompt: it.kind === "video" ? a.prompt || undefined : undefined };
+    say(thread, it.id, {
+      text: note,
+      problems: a.problems,
+      offers: it.ad
+        ? undefined
+        : [outcome.type === "free_remake" ? { label: "🔧 Remake it on us", cost: 0, free: true, act: fix } : { label: "🔧 Remake it, fixed", cost: fixCost(it, how), act: fix }],
+      state: it.ad ? undefined : "open",
+    });
+    return true;
+  }
+
+  /** An ad scene still had a clear fault after the automatic remakes: that scene's credits come back. */
+  function adPromise(it: Item) {
+    const left = it.ad?.check?.faultsLeft ?? [];
+    if (!left.length || !it.ad) return;
+    const scenes = left.map((f) => f.scene + 1).join(" and ");
+    if (usedThisMonth() >= MONTHLY_CAP) {
+      update(it.id, { promise: { type: "capped", note: `Our check found a clear fault in scene ${scenes}. This month's ${MONTHLY_CAP} automatic refunds and free remakes are used up, so it's charged as normal.` } });
+      return;
+    }
+    const credits = left.length * creditsFor(sceneRemakeCost(it.ad.plan, Boolean(it.ad.refs?.length)));
+    if (!logReturned(it.id, left[0].fault, `Scene ${scenes}: ${left[0].reason}`, credits)) return;
+    update(it.id, {
+      promise: { type: "refund", note: `Our check found a clear fault in scene ${scenes} (${left[0].reason.toLowerCase()}). Under our no wasted credits promise, the credits for ${left.length > 1 ? "those scenes" : "that scene"} come back.` },
+    });
   }
 
   /** Price of a new version after a plan change: only changed parts are made again. */
@@ -1562,9 +1674,13 @@ export default function Studio({ mode }: { mode: AppMode }) {
       text: `Looking closely at every part${it.kind === "video" ? ", right to the last frame" : ""}. This costs ${price(cost)}.`,
       state: "working",
     });
-    analyzeItem(it)
-      .then((a) => {
+    const listen = it.kind === "video" && it.hasAudio && !it.ad && !asksForSpeech(basePrompt(it));
+    Promise.all([analyzeItem(it), listen ? speechCheck(it.url!) : Promise.resolve(false)])
+      .then(([found, speech]) => {
+        const a = withSpeech(found, speech)!;
         patchMsg(id, { state: "done" });
+        // A clear fault (or a borderline problem) is covered by the promise: credits back or a free remake.
+        if (!it.ad && applyPromise(it, a, thread)) return;
         if (a.problems.length === 0) {
           say(thread, it.id, { text: "I couldn't spot any clear problems. Tell me what you'd like changed and I'll fix it." });
           return;
@@ -1706,6 +1822,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
     }
     const a = offer.act;
     let err: string | null = null;
+    if (offer.free) nextFree.current = true;
     if (a.type === "fix") err = fixItem(it, a.note, a.newPrompt, a.how);
     else if (a.type === "length") doLength(it, a.seconds);
     else if (a.type === "final") makeFinal(it);
@@ -1713,6 +1830,10 @@ export default function Studio({ mode }: { mode: AppMode }) {
     else if (a.type === "video") doVideo(it);
     else if (a.type === "shape" && it.ad) makeShape(it, a.aspectRatio);
     else if (a.type === "ad" && it.ad) startAd(changedAdJob(it.ad, a.plan).job, { parentId: it.id, fixNote: a.note, aspectRatio: it.aspectRatio });
+    if (offer.free) {
+      if (err || nextFree.current) nextFree.current = false;
+      else logFreeRemake(it.id, a.type === "fix" ? a.note.slice(0, 120) : "Free remake");
+    }
     if (err) {
       say(msg.thread, it.id, { text: err });
       return;
@@ -1781,7 +1902,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
               <div className="chat-offers">
                 {m.offers.map((o, i) => (
                   <button key={o.label} className={i === 0 ? "pill active" : "pill"} onClick={() => acceptOffer(m, o)} disabled={mode === "locked"}>
-                    {o.label} · {mode === "demo" ? "Free" : `est. ${formatCost(o.cost)}`}
+                    {o.label} · {mode === "demo" || o.free ? "Free" : `est. ${formatCost(o.cost)}`}
                   </button>
                 ))}
                 <button className="link-btn" onClick={() => patchMsg(m.id, { state: "cancelled" })}>
@@ -2746,6 +2867,8 @@ export default function Studio({ mode }: { mode: AppMode }) {
           <dd>{new Date(selected.createdAt).toLocaleString()}</dd>
         </dl>
         {selected.enhanceNote && <p className="enhance-note">💡 {selected.enhanceNote}</p>}
+        {selected.promiseCheck === "running" && <p className="muted small promise-note">🔍 Checking it for clear faults…</p>}
+        {selected.promise && <p className="promise-note">🛡️ {selected.promise.note}</p>}
         {selected.status === "done" && selected.url && selected.keyframeFor && <AnimateBox pic={selected} onAnimate={animate} />}
         {selected.story && selected.status !== "done" && (
           <StoryPanel item={selected} running={storyRuns.current.has(selected.id)} onResume={runStory} />
@@ -2802,6 +2925,11 @@ export default function Studio({ mode }: { mode: AppMode }) {
       <h1 className="home-title">
         What will you <em>create</em> today?
       </h1>
+      {ADVERTISE_PROMISE && (
+        <p className="home-promise">
+          🛡️ Pay only for videos that work. <Link href="/pricing#promise">How it works</Link>
+        </p>
+      )}
 
       <div className="composer-lite">
         <div className="prompt-box">
@@ -3318,7 +3446,6 @@ function AnimateBox({ pic, onAnimate }: { pic: Item; onAnimate: (p: Item) => voi
   );
 }
 
-type Analysis = { problems: string[]; fix: string; prompt: string };
 
 type FixMode = "edit" | "remake";
 
@@ -3329,6 +3456,40 @@ function suggestFixMode(note: string): FixMode {
   )
     ? "remake"
     : "edit";
+}
+
+/** Listens for a voice saying words in a finished video. A failed listen counts as no speech. */
+async function speechCheck(url: string): Promise<boolean> {
+  try {
+    const res = await fetch("/api/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: "speech", url }) });
+    let data = await res.json().catch(() => ({}));
+    if (!res.ok) return false;
+    const started = Date.now();
+    while (data.status !== "COMPLETED") {
+      if (data.status === "FAILED" || Date.now() - started > 2 * 60 * 1000) return false;
+      await new Promise((r) => setTimeout(r, 2000));
+      const r = await fetch(`/api/analyze?kind=speech&requestId=${encodeURIComponent(data.requestId)}`);
+      data = { ...(await r.json().catch(() => ({}))), requestId: data.requestId };
+    }
+    return data.speech === true;
+  } catch {
+    return false;
+  }
+}
+
+const SPEECH_PROBLEM = "Someone talks, but no speech was asked for.";
+
+/** Adds "unwanted speech" to a check's result when the listen heard words. */
+function withSpeech(a: Analysis | null, speech: boolean): Analysis | null {
+  if (!speech) return a;
+  const base: Analysis = a ?? { problems: [], fix: "", prompt: "" };
+  return {
+    ...base,
+    problems: [SPEECH_PROBLEM, ...base.problems].slice(0, 4),
+    faults: ["unwanted_speech", ...(base.faults ?? [])],
+    serious: true,
+    fix: base.fix || "No one speaks. Sound effects and ambience only.",
+  };
 }
 
 /** Asks the vision model to look for mistakes in a finished picture or video (about 1 cent per 5 seconds). */
