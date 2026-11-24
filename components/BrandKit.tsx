@@ -1,7 +1,10 @@
 "use client";
 
 import type { AppMode } from "@/lib/config";
-import { AD_VOICES } from "@/lib/adplan";
+import { useState } from "react";
+import { isOwnVoice, looksLikeKey, needsConsent, voiceKind } from "@/lib/elevenlabs";
+import { fetchVoices, saveEleven, type ElevenConnection } from "./elevenConnect";
+import { OwnVoiceOptions } from "./VoiceOptions";
 import { brandLine, colorName, type BrandInfo } from "@/lib/brand";
 import ReferencesBox, { type RefItem } from "./ReferencesBox";
 import { WeekPlan } from "./IdeaHelpers";
@@ -51,11 +54,15 @@ export default function BrandKit({
   onChange,
   mode,
   onUseIdea,
+  eleven,
+  onEleven,
 }: {
   brand: Brand;
   onChange: (b: Brand) => void;
   mode: AppMode;
   onUseIdea: (i: Idea) => void;
+  eleven: ElevenConnection | null;
+  onEleven: (c: ElevenConnection | null) => void;
 }) {
   const colors = brand.colors ?? [];
   const setColor = (i: number, c: string) => onChange({ ...brand, colors: colors.map((x, j) => (j === i ? c : x)) });
@@ -133,12 +140,18 @@ export default function BrandKit({
         </label>
         <select id="brand-voice" className="text-input" value={brand.voice ?? ""} onChange={(e) => onChange({ ...brand, voice: e.target.value || undefined })}>
           <option value="">Let the planner pick</option>
-          {AD_VOICES.map((v) => (
-            <option key={v.id} value={v.id}>
-              {v.label}
-            </option>
-          ))}
+          <OwnVoiceOptions eleven={eleven} current={brand.voice} />
         </select>
+        <ElevenLabsConnect
+          eleven={eleven}
+          onEleven={(c) => {
+            onEleven(c);
+            // A voice that is no longer connected (or lost its consent tick) stops being the brand voice.
+            if (isOwnVoice(brand.voice) && !(c?.voices.some((v) => `el:${v.id}` === brand.voice && (!needsConsent(v.category) || c.consented.includes(v.id)))))
+              onChange({ ...brand, voice: undefined });
+          }}
+          mode={mode}
+        />
       </section>
 
       <section className="g-step">
@@ -169,5 +182,108 @@ export default function BrandKit({
       )}
       <p className="muted small g-hint">Saved automatically in this browser.</p>
     </div>
+  );
+}
+
+/**
+ * Optional: connect the user's own ElevenLabs account to use their voices,
+ * including a cloned brand voice. The key stays in this browser.
+ */
+function ElevenLabsConnect({ eleven, onEleven, mode }: { eleven: ElevenConnection | null; onEleven: (c: ElevenConnection | null) => void; mode: AppMode }) {
+  const [key, setKey] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const update = (c: ElevenConnection | null) => {
+    saveEleven(c);
+    onEleven(c);
+  };
+
+  async function connect(k: string) {
+    setError("");
+    if (!looksLikeKey(k)) {
+      setError("That doesn't look like an ElevenLabs key. Copy it again from your ElevenLabs settings.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const voices = await fetchVoices(k);
+      update({ key: k, voices, consented: eleven?.key === k ? eleven.consented.filter((id) => voices.some((v) => v.id === id)) : [] });
+      setKey("");
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const toggleConsent = (id: string, on: boolean) => {
+    if (!eleven) return;
+    update({ ...eleven, consented: on ? [...new Set([...eleven.consented, id])] : eleven.consented.filter((x) => x !== id) });
+  };
+
+  const cloned = eleven?.voices.filter((v) => needsConsent(v.category)) ?? [];
+
+  return (
+    <details className="eleven" open={Boolean(eleven)}>
+      <summary>Use your own ElevenLabs voices <span className="muted small">(optional)</span></summary>
+      {!eleven ? (
+        <div className="eleven-body">
+          <p className="muted small">
+            Have an ElevenLabs account? Connect it to use your own voices in ad voiceovers, including a cloned brand voice. Those voiceovers are billed to your
+            ElevenLabs account, not to GenStudio. Our own voices stay available as well.
+          </p>
+          <p className="muted small">
+            Make a key at elevenlabs.io under Developers, API keys. Give it access to Text to Speech and to Voices (read). Your key is kept only in this
+            browser and is never saved by GenStudio.
+          </p>
+          <div className="eleven-row">
+            <input
+              className="text-input"
+              type="password"
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="Paste your ElevenLabs API key"
+              aria-label="ElevenLabs API key"
+              value={key}
+              onChange={(e) => setKey(e.target.value.trim())}
+            />
+            <button className="pill" disabled={busy || !key || mode === "locked"} onClick={() => connect(key)}>
+              {busy ? "Connecting..." : "Connect"}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="eleven-body">
+          <p className="small">
+            ✓ Connected. {eleven.voices.length} voice{eleven.voices.length === 1 ? "" : "s"} found. Pick one above, or in any ad&apos;s plan.
+          </p>
+          {cloned.length > 0 && (
+            <>
+              <p className="muted small">Voices made from a real person&apos;s recording can be used once you confirm you may use them:</p>
+              {cloned.map((v) => (
+                <label key={v.id} className="refs-consent">
+                  <input type="checkbox" checked={eleven.consented.includes(v.id)} onChange={(e) => toggleConsent(v.id, e.target.checked)} />
+                  <span>
+                    <strong>{v.name}</strong> <span className="muted">({voiceKind(v.category)})</span>: this is my own voice, or the person whose voice it is
+                    agreed to it being used in my ads.
+                  </span>
+                </label>
+              ))}
+            </>
+          )}
+          <div className="eleven-row">
+            <button className="pill" disabled={busy} onClick={() => connect(eleven.key)}>
+              {busy ? "Checking..." : "Refresh my voices"}
+            </button>
+            <button className="link-btn" onClick={() => update(null)}>
+              Disconnect
+            </button>
+          </div>
+          <p className="muted small">Your key is kept only in this browser. Disconnect to remove it, for example on a shared computer.</p>
+        </div>
+      )}
+      {error && <p className="error small">{error}</p>}
+    </details>
   );
 }

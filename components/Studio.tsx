@@ -12,6 +12,9 @@ import AgreeModal, { hasAcceptedTerms } from "./AgreeModal";
 import Link from "next/link";
 import { progressView, type Phase } from "@/lib/progress";
 import ReferencesBox, { finishReference, loadRefs, saveRefs, type RefItem } from "./ReferencesBox";
+import { loadEleven, type ElevenConnection } from "./elevenConnect";
+import { OwnVoiceOptions } from "./VoiceOptions";
+import { isOwnVoice } from "@/lib/elevenlabs";
 import BrandKit, { brandInfo, hasBrand, KIT_PICTURES, loadBrand, saveBrand, type Brand } from "./BrandKit";
 import { brandLine, colorName } from "@/lib/brand";
 import type { Direction, DirectorReply } from "@/lib/director";
@@ -20,6 +23,8 @@ import { AdaptBox, IdeasBox } from "./IdeaHelpers";
 import { describesSeveralShots, firstShot } from "@/lib/shots";
 import { guessKind } from "@/lib/kind";
 import VoiceButton, { joinSpoken } from "./VoiceButton";
+import CanvaImport, { type Design } from "./CanvaImport";
+import { DESIGN_MOTION_PROMPT, nearestShape } from "@/lib/canva";
 import { addSoundTo, animateShot, joinShots, lastFrame, lockFrame, planStory, startPicture, waitFor, type Story } from "./storyRunner";
 import { lengthAdvice, LONG_LENGTHS, MAX_STORY_SECONDS, type ShotPlan } from "@/lib/storyboard";
 import { nextLength, readChat } from "@/lib/chat";
@@ -74,6 +79,7 @@ type Item = {
   free?: boolean; // a remake given under the no wasted credits promise
   promiseCheck?: "running" | "done"; // the automatic check for clear faults
   promise?: { type: PromiseOutcome["type"]; note: string }; // what the promise did for this result
+  design?: { from: "canva"; name: string; colors: string[]; token: string }; // a design the user brought in, not made here
 };
 
 /** Something the chat offers to do, always shown with its price first. */
@@ -168,6 +174,8 @@ type JobSpec = {
 const AUTO = "auto";
 // The brand kit's words are added after this mark, so "Reuse prompt" can take them off again.
 const BRAND_MARK = "\n\nOn brand: ";
+/** Asking for a picture in another shape, like "other shapes" or "make it vertical for TikTok". */
+const RESHAPE = /\b(other shapes?|resize|re-size|reshape|(make it|turn it into|as an?) (vertical|square|landscape|portrait|wide|tall)|9:16|1:1|16:9|(for|to fit) (tiktok|reels?|shorts|instagram|youtube))\b/i;
 const SHAPE_USES: Record<string, string> = { "9:16": "TikTok, Reels and Shorts", "1:1": "the Instagram feed", "16:9": "YouTube and websites" };
 type View = "home" | "create" | "templates" | "gallery" | "brand";
 const STORAGE_KEY = "genstudio.gallery.v1";
@@ -229,6 +237,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
   const [refs, setRefs] = useState<RefItem[]>([]);
   const [refsSignal, setRefsSignal] = useState(0); // bumps when the Reference button is pressed
   const [homeRefsOpen, setHomeRefsOpen] = useState(false);
+  const [canvaOpen, setCanvaOpen] = useState(false); // the "Bring in from Canva" steps
   const [kindPicked, setKindPicked] = useState(false); // the person chose Image or Video themselves
   const [kindWhy, setKindWhy] = useState<string | null>(null); // why the Home box chose Image or Video
   const [voiceError, setVoiceError] = useState<string | null>(null);
@@ -255,6 +264,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
   const [adCheck, setAdCheck] = useState(true); // check every scene and remake weak ones
   // Brand kit, saved in this browser and switched on per project.
   const [brand, setBrand] = useState<Brand>({ pictures: [] });
+  const [eleven, setEleven] = useState<ElevenConnection | null>(null); // the user's own ElevenLabs voices, in this browser only
   const [useBrand, setUseBrand] = useState(true);
   // Start an ad from a product page.
   const [productLink, setProductLink] = useState("");
@@ -331,6 +341,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
     setItems(loadItems());
     setRefs(loadRefs());
     setBrand(loadBrand());
+    setEleven(loadEleven());
     // Voiceovers start in the browser's language (changeable in the ad's options).
     setBrief((b) => (b.language ? b : { ...b, language: languageFromLocale(navigator.language) }));
     try {
@@ -1052,7 +1063,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
     const save = (j: AdJob, patch: Partial<Item> = {}) => update(start.id, { ad: JSON.parse(JSON.stringify(j)), ...patch });
     try {
       update(start.id, { status: "pending", error: undefined, stepStartedAt: Date.now(), phase: "working" });
-      const out = await buildAd(job, start.aspectRatio, save);
+      const out = await buildAd(job, start.aspectRatio, save, { live: mode === "live" });
       job.step = undefined;
       save(job, { status: "done", url: out.url, hasAudio: out.hasAudio, stage: "sound" });
     } catch (e) {
@@ -1164,7 +1175,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
       c.scenes * (AD_PRICES.scene + AD_PRICES.picture) +
       (c.card ? AD_PRICES.picture + endCardSeconds(plan.seconds) * AD_PRICES.cardPerSecond : 0) +
       (!withRefs && old.plan.look !== plan.look ? AD_PRICES.picture : 0) +
-      (c.voiceChars / 1000) * AD_PRICES.voicePer1000Chars +
+      (isOwnVoice(plan.voice) ? 0 : (c.voiceChars / 1000) * AD_PRICES.voicePer1000Chars) +
       (c.music ? AD_PRICES.musicPerMinute * Math.ceil(plan.seconds / 60) : 0) +
       plan.seconds * AD_PRICES.editPerSecond * 2
     );
@@ -1202,6 +1213,111 @@ export default function Studio({ mode }: { mode: AppMode }) {
       offers: others.map((ar) => ({ label: `📐 ${ar} for ${SHAPE_USES[ar]}`, cost, act: { type: "shape" as const, aspectRatio: ar } })),
       state: "open",
     });
+  }
+
+  // ---------- designs brought in from Canva ----------
+
+  /** The design this result came from, when it (or the version it was changed from) was brought in from Canva. */
+  function designOf(it: Item): Item | undefined {
+    const root = items.find((x) => x.id === rootOf(it.id));
+    return root?.design && root.url ? root : it.design && it.url ? it : undefined;
+  }
+
+  /** Opens a design from Canva as a finished picture, with what to do next. Bringing it in costs nothing. */
+  function importDesign(d: Design) {
+    setCanvaOpen(false);
+    const item: Item = {
+      id: crypto.randomUUID(),
+      kind: "image",
+      modelId: "upload",
+      modelName: "Your Canva design",
+      prompt: DESIGN_MOTION_PROMPT,
+      aspectRatio: nearestShape(d.width, d.height),
+      status: "done",
+      url: d.url,
+      createdAt: Date.now(),
+      charged: true,
+      design: { from: "canva", name: d.name, colors: d.colors, token: d.token },
+    };
+    setItems((prev) => [item, ...prev]);
+    setSelectedId(item.id);
+    setComposing(false);
+    go("create");
+    const v = videoFromPicture(item);
+    say(item.id, item.id, {
+      text: `Your Canva design is in. Bringing it in is free. Pick what to do next, or tell me a change, like "make the background navy". You can also use the buttons under the chat to make an ad with a voiceover from it, or to use it as your brand look.`,
+      offers: [{ label: "🎬 Bring it to life", cost: v.cost, act: { type: "video" } }, ...imageShapeOffers(item)],
+      state: "open",
+    });
+  }
+
+  /** The other shapes a picture can be remade in, each priced. */
+  function imageShapeOffers(it: Item): ChatOffer[] {
+    const cost = estimateCost(EDIT_IMAGE_MODEL);
+    return (["9:16", "1:1", "16:9"] as AspectRatio[])
+      .filter((ar) => ar !== it.aspectRatio)
+      .map((ar) => ({ label: `📐 ${ar} for ${SHAPE_USES[ar]}`, cost, act: { type: "shape" as const, aspectRatio: ar } }));
+  }
+
+  function offerImageShapes(it: Item, thread: string) {
+    say(thread, it.id, {
+      text: `I'll fit the same picture into another shape, keeping the words, logo and colours and extending the background so nothing is cut off. Each shape costs ${price(estimateCost(EDIT_IMAGE_MODEL))}.`,
+      offers: imageShapeOffers(it),
+      state: "open",
+    });
+  }
+
+  /** The same picture in another shape (for TikTok, Instagram or YouTube), made by the editing model so it stays the same design. */
+  function reshapeImage(it: Item, aspectRatio: AspectRatio) {
+    if (!it.url) return;
+    const frame = aspectRatio === "9:16" ? "a tall 9:16 frame" : aspectRatio === "16:9" ? "a wide 16:9 frame" : "a square 1:1 frame";
+    runJob({
+      kind: "image",
+      modelId: EDIT_IMAGE_MODEL.id,
+      prompt: basePrompt(it),
+      editPrompt: `Fit this exact design into ${frame}. Extend the background naturally and move the elements so nothing is cut off or squashed. Keep every word, logo, photo and colour exactly the same, sharp and readable.`,
+      aspectRatio,
+      sourceUrl: it.url,
+      enhance: false,
+      parentId: it.id,
+      templateName: it.templateName,
+      fixNote: `${aspectRatio} for ${SHAPE_USES[aspectRatio]}`,
+      autoReason: "fits your picture into a new shape",
+    });
+  }
+
+  /** Puts the design's colours and the design itself (as a style picture) into the brand kit. Free. */
+  function designAsBrand(it: Item, thread: string) {
+    const src = designOf(it);
+    if (!src?.design || !src.url) return;
+    const ref: RefItem = { url: src.url, kind: "style", token: src.design.token, name: src.design.name || "Canva design" };
+    const colors = src.design.colors;
+    setBrand((b) => ({
+      ...b,
+      colors: colors.length ? colors : b.colors,
+      pictures: [...b.pictures.filter((x) => x.url !== ref.url), ref].slice(-KIT_PICTURES),
+    }));
+    setUseBrand(true);
+    const names = [...new Set(colors.map(colorName).filter(Boolean))];
+    say(thread, it.id, {
+      text: `Done, and free. Your brand kit now ${names.length ? `uses this design's colours (${names.join(", ")}) and ` : ""}keeps the design as a style picture, so new pictures, videos and ads follow its look. You can change it any time on the Brand kit page.`,
+    });
+  }
+
+  /** Starts a Full ad (scenes, voiceover and music) that uses the design as its look. Nothing is spent until the ad is built. */
+  function adFromDesign(it: Item, thread: string) {
+    const src = designOf(it);
+    if (!src?.design || !src.url) return;
+    const ref: RefItem = { url: src.url, kind: "style", token: src.design.token, name: src.design.name || "Canva design" };
+    say(thread, it.id, {
+      text: "I've started a Full ad that uses your design as its look. Describe your product and who it's for, and the ad gets scenes, a voiceover and music. You'll see the plan and an estimated price before anything is made.",
+    });
+    setRefs((prev) => [...prev.filter((r) => r.url !== ref.url), ref].slice(0, 4));
+    setAdPlan(null);
+    setAdShape(src.aspectRatio);
+    setAdMode(true);
+    setComposing(true);
+    go("create");
   }
 
   /** Works out a change to a finished ad from plain words, then offers it with its price. */
@@ -1634,6 +1750,14 @@ export default function Studio({ mode }: { mode: AppMode }) {
       >
         <span aria-hidden>📎</span> Reference{refs.length ? ` · ${refs.length}` : ""}
       </button>
+      <button
+        type="button"
+        className={canvaOpen ? "tool-btn on" : "tool-btn"}
+        onClick={() => setCanvaOpen((o) => !o)}
+        title="Bring in a design you made in Canva, then animate it, resize it or turn it into an ad"
+      >
+        <span aria-hidden>🎨</span> From Canva
+      </button>
       <VoiceButton onText={(t) => speak(t, home)} onError={setVoiceError} />
     </div>
   );
@@ -1736,7 +1860,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
       key={it.id}
       className={`tile tile-${it.aspectRatio.replace(":", "x")} tile-${it.status}`}
       onClick={() => openItem(it)}
-      title={it.prompt}
+      title={shownPrompt(it)}
     >
       {it.status === "pending" && <PendingTile item={it} />}
       {it.status === "failed" && (
@@ -1747,7 +1871,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
       )}
       {it.status === "done" && it.url && <Media item={it} thumb />}
       <span className="tile-overlay">
-        <span className="tile-prompt">{it.prompt}</span>
+        <span className="tile-prompt">{shownPrompt(it)}</span>
         <span className="tile-label">
           {it.kind === "video" ? (it.hasAudio ? "🔊 " : "▶ ") : ""}
           {it.modelName}
@@ -2000,6 +2124,19 @@ export default function Studio({ mode }: { mode: AppMode }) {
       else directorNotes(it, thread);
       return;
     }
+    if (designOf(it) && /^(use (it|this|the design)? ?as )?my brand look$/i.test(text)) {
+      designAsBrand(it, thread);
+      return;
+    }
+    if (designOf(it) && /^(make )?an? (full )?ad with (a )?voice ?over/i.test(text)) {
+      adFromDesign(it, thread);
+      return;
+    }
+    if (it.kind === "image" && !it.ad && RESHAPE.test(text) && text.length < 80) {
+      if (!it.url) reply({ text: "This picture didn't finish, so there's nothing to resize yet." });
+      else offerImageShapes(it, thread);
+      return;
+    }
     const intent = readChat(text, it.kind);
     if (intent.type === "check") {
       if (!it.url) reply({ text: "This one didn't finish, so there's nothing to check. Tell me what you'd like and I'll make it again." });
@@ -2083,6 +2220,11 @@ export default function Studio({ mode }: { mode: AppMode }) {
         reply({ text: `I'll make it again with your change. That costs ${price(remakeOffer.cost)}.`, offers: [remakeOffer], state: "open" });
         return;
       }
+      if (designOf(it)) {
+        // A design from Canva has no prompt to remake it from, so it's always changed in place.
+        reply({ text: `I'll change just that and keep the rest of your design the same. That costs ${price(editOffer.cost)}.`, offers: [editOffer], state: "open" });
+        return;
+      }
       const how = suggestFixMode(text);
       reply({
         text:
@@ -2119,6 +2261,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
     else if (a.type === "video") doVideo(it);
     else if (a.type === "hd") doHd(it);
     else if (a.type === "shape" && it.ad) makeShape(it, a.aspectRatio);
+    else if (a.type === "shape" && it.kind === "image") reshapeImage(it, a.aspectRatio);
     else if (a.type === "ad" && it.ad) startAd(changedAdJob(it.ad, a.plan).job, { parentId: it.id, fixNote: a.note, aspectRatio: it.aspectRatio });
     if (offer.free) {
       if (err || nextFree.current) nextFree.current = false;
@@ -2157,7 +2300,14 @@ export default function Studio({ mode }: { mode: AppMode }) {
       const next = nextLength(selected.duration, LONG_LENGTHS);
       if ((selected.duration ?? 0) < MAX_STORY_SECONDS) chips.push({ label: `⏱️ Make it ${next}s`, text: `Make it ${next} seconds` });
       if (!selected.hasAudio) chips.push({ label: "🔊 Add sound", text: "Add sound" });
-    } else chips.push({ label: "🎬 Turn into a video", text: "Turn it into a video" });
+    } else {
+      chips.push({ label: "🎬 Turn into a video", text: "Turn it into a video" });
+      chips.push({ label: "📐 Other shapes", text: "Other shapes for TikTok, Instagram and YouTube" });
+      if (designOf(selected)) {
+        chips.push({ label: "🎙️ Ad with voiceover", text: "Make an ad with voiceover from it" });
+        chips.push({ label: "🎨 Use as my brand look", text: "Use it as my brand look" });
+      }
+    }
     if (!selected.ad && hdPlan(selected)) chips.push({ label: "✨ Sharpen to HD", text: "Sharpen to HD" });
     if (selected.quality === "draft") chips.push({ label: "✦ Higher quality", text: "Make it higher quality" });
   }
@@ -2340,6 +2490,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
       <span className="prompt-count">{prompt.length}/2000</span>
     </div>
     {promptTools(false)}
+    {canvaOpen && <CanvaImport mode={mode} onDone={importDesign} onClose={() => setCanvaOpen(false)} />}
     {voiceError && <p className="notice warn small-notice">{voiceError}</p>}
     {kind === "image" && describesSeveralShots(prompt) && (
       <div className="notice warn small-notice shots-warning">
@@ -2858,14 +3009,11 @@ export default function Studio({ mode }: { mode: AppMode }) {
           <label className="ad-label">
             🎙️ Voice
             <select className="text-input" value={adPlan.voice} onChange={(e) => editPlan({ voice: e.target.value })}>
-              {AD_VOICES.map((v) => (
-                <option key={v.id} value={v.id}>
-                  {v.label}
-                </option>
-              ))}
+              <OwnVoiceOptions eleven={eleven} current={adPlan.voice} />
             </select>
           </label>
         </div>
+        {isOwnVoice(adPlan.voice) && <p className="muted small g-hint">Your ElevenLabs voice reads the voiceover, billed to your ElevenLabs account, so it isn&apos;t in our price.</p>}
       </section>
 
       <section className="g-step">
@@ -3077,7 +3225,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
           key={it.id}
           className={selected?.id === it.id ? "film active" : "film"}
           onClick={() => setSelectedId(it.id)}
-          title={it.prompt}
+          title={shownPrompt(it)}
         >
           {it.status === "done" && it.url ? <Media item={it} thumb /> : <span className="film-state">{it.status === "failed" ? "!" : <span className="spinner small" />}</span>}
         </button>
@@ -3119,7 +3267,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
       <div className="details">
         <div className="details-text">
           <p className="viewer-prompt">
-            {basePrompt(selected)}
+            {selected.design ? `🎨 Brought in from Canva${selected.design.name ? `: ${selected.design.name}` : ""}` : selected.prompt.startsWith(DESIGN_MOTION_PROMPT) ? shownPrompt(selected) : basePrompt(selected)}
           </p>
           {selected.fixNote && <p className="fix-note">🔧 Fixed: {selected.fixNote}</p>}
           {selected.enhancedPrompt && selected.enhancedPrompt !== selected.prompt && (
@@ -3200,9 +3348,11 @@ export default function Studio({ mode }: { mode: AppMode }) {
             </button>
           )}
           {!reAsking && reButton}
-          <button className="btn" onClick={() => reuse(selected)}>
-            Reuse prompt
-          </button>
+          {!selected.design && !selected.prompt.startsWith(DESIGN_MOTION_PROMPT) && (
+            <button className="btn" onClick={() => reuse(selected)}>
+              Reuse prompt
+            </button>
+          )}
           <button className="btn btn-danger" onClick={() => remove(selected.id)}>
             Delete
           </button>
@@ -3263,6 +3413,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
           />
         </div>
         {promptTools(true)}
+        {canvaOpen && <CanvaImport mode={mode} onDone={importDesign} onClose={() => setCanvaOpen(false)} />}
         {prompt.trim() && (
           <p className="kind-note">
             {kind === "image" ? "📸 You'll get a picture" : "🎬 You'll get a video"}
@@ -3529,12 +3680,12 @@ export default function Studio({ mode }: { mode: AppMode }) {
               key={it.id}
               className={view === "create" && selected?.id === it.id ? "recent active" : "recent"}
               onClick={() => openItem(it)}
-              title={it.prompt}
+              title={shownPrompt(it)}
             >
               <span className="recent-thumb">
                 {it.status === "done" && it.url ? <Media item={it} thumb /> : <span className="spinner tiny" />}
               </span>
-              <span className="recent-text">{it.prompt}</span>
+              <span className="recent-text">{shownPrompt(it)}</span>
             </button>
           ))}
         </div>
@@ -3556,7 +3707,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
         )}
         {view === "templates" && templatesView}
         {view === "gallery" && galleryView}
-        {view === "brand" && <BrandKit brand={brand} onChange={setBrand} mode={mode} onUseIdea={makeIdea} />}
+        {view === "brand" && <BrandKit brand={brand} onChange={setBrand} mode={mode} onUseIdea={makeIdea} eleven={eleven} onEleven={setEleven} />}
       </main>
 
       {askTerms && (
@@ -4024,6 +4175,14 @@ function TemplateMock({ t, colors, name }: { t: Template; colors?: string[]; nam
 }
 
 /** The user's own words, without any "Fix:" notes added later. */
+/** What to show as a result's name: its prompt, or where a brought-in design came from. */
+function shownPrompt(it: Item): string {
+  if (it.design) return `🎨 Canva design${it.design.name ? `: ${it.design.name}` : ""}`;
+  // Versions made from a brought-in design carry its motion prompt, which isn't something the person wrote.
+  if (it.prompt.startsWith(DESIGN_MOTION_PROMPT)) return `🎨 Canva design${it.kind === "video" ? " brought to life" : ""}${it.fixNote ? ` · ${it.fixNote}` : ""}`;
+  return it.prompt;
+}
+
 function basePrompt(it: Item): string {
   const i = it.prompt.indexOf(". Fix: ");
   return i === -1 ? it.prompt : it.prompt.slice(0, i);
