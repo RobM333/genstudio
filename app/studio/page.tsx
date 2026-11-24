@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Studio from "@/components/Studio";
 import { AccountGate } from "@/components/account/Account";
 import { getMode } from "@/lib/config";
+import { BRAND_NAME } from "@/lib/appBrand";
 import { accountsOn } from "@/lib/accounts/config";
 
 // The studio (Home, Create, Templates, Gallery, Brand kit). Behind sign-in
@@ -9,7 +10,7 @@ import { accountsOn } from "@/lib/accounts/config";
 // landing page lives at "/".
 export const dynamic = "force-dynamic";
 
-export const metadata: Metadata = { title: "Studio · GenStudio" };
+export const metadata: Metadata = { title: `Studio · ${BRAND_NAME}` };
 
 export default function StudioPage() {
   const studio = <Studio mode={getMode()} />;

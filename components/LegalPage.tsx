@@ -6,7 +6,7 @@ export default function LegalPage({ title, children }: { title: string; children
   return (
     <div className="legal">
       <Link href="/" className="legal-back">
-        ← Back to GenStudio
+        ← Back to ToastyFly
       </Link>
       <div className="notice warn">
         <strong>Draft.</strong> This text has not been reviewed by a lawyer yet and will change before launch.

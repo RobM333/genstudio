@@ -1,4 +1,4 @@
-// The catalogue of AI models GenStudio can use.
+// The catalogue of AI models ToastyFly can use.
 // Each entry maps to a model hosted on fal.ai. Model ids and prices change
 // often, so this is the one file to update when fal.ai adds or renames models.
 // Prices are rough estimates for showing users; check fal.ai/pricing for real numbers.

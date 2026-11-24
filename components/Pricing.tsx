@@ -25,7 +25,7 @@ export default function Pricing() {
   return (
     <div className="pricing">
       <Link href="/studio" className="legal-back">
-        ← Back to GenStudio
+        ← Back to ToastyFly
       </Link>
       <div className="notice warn">
         <strong>Not on sale yet.</strong> These are the plans we plan to offer. Accounts and payments are coming, so nothing can be bought or charged today.
@@ -81,7 +81,7 @@ export default function Pricing() {
       <section className="pricing-section">
         <h2>What credits buy</h2>
         <p className="muted small">
-          Worked out from what each job costs to make today. Before anything is made, GenStudio shows how many credits it uses. AI service prices change, so these can
+          Worked out from what each job costs to make today. Before anything is made, ToastyFly shows how many credits it uses. AI service prices change, so these can
           change too.
         </p>
         <table className="credit-table">

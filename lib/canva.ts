@@ -1,5 +1,5 @@
 // "Bring in from Canva": people download a design from Canva as a picture and
-// drop it into GenStudio, where it becomes a finished result they can bring to
+// drop it into ToastyFly, where it becomes a finished result they can bring to
 // life, resize for each app, turn into an ad with a voiceover, or use as their
 // brand look. There is no Canva sign-in yet: the file comes from their computer.
 

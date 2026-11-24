@@ -1,14 +1,15 @@
 import type { Metadata } from "next";
 import LegalPage from "@/components/LegalPage";
+import { BRAND_NAME } from "@/lib/appBrand";
 
-export const metadata: Metadata = { title: "Privacy Policy · GenStudio" };
+export const metadata: Metadata = { title: `Privacy Policy · ${BRAND_NAME}` };
 
 // DRAFT for lawyer review. Accounts are covered; update when payments or analytics are added.
 export default function Privacy() {
   return (
     <LegalPage title="Privacy Policy">
       <p>
-        This policy explains what information GenStudio, operated by [Company name] (&quot;we&quot;), collects, why,
+        This policy explains what information ToastyFly, operated by [Company name] (&quot;we&quot;), collects, why,
         who we share it with, and the choices you have. In short: we collect only what we need to make your images and
         videos, we don&apos;t sell your data, and we don&apos;t use your content to train AI.
       </p>
@@ -152,7 +153,7 @@ export default function Privacy() {
       </p>
 
       <h2>9. Children</h2>
-      <p>GenStudio is for adults 18 and over. We don&apos;t knowingly collect information from children.</p>
+      <p>ToastyFly is for adults 18 and over. We don&apos;t knowingly collect information from children.</p>
 
       <h2>10. Changes and contact</h2>
       <p>

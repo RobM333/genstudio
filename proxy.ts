@@ -47,7 +47,7 @@ export function proxy(req: NextRequest) {
   }
   return new NextResponse("Password required", {
     status: 401,
-    headers: { "WWW-Authenticate": 'Basic realm="GenStudio", charset="UTF-8"' },
+    headers: { "WWW-Authenticate": 'Basic realm="ToastyFly", charset="UTF-8"' },
   });
 }
 

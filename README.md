@@ -1,15 +1,17 @@
-# GenStudio
+# ToastyFly
+
+> The app is called **ToastyFly** (renamed from GenStudio). The GitHub repository and Netlify project keep the old `genstudio` name. The name and logo live in `lib/appBrand.ts`.
 
 Create images and videos with the best AI models, in one place.
 Built for creators and marketers.
 
-![GenStudio screenshot](docs/screenshot.png)
+![ToastyFly screenshot](docs/screenshot.png)
 
 ## What it does today
 
 - **Prompt to image** with 4 models: FLUX Schnell (cheap drafts), FLUX 1.1 Pro Ultra, Nano Banana (Google), Recraft V3.
 - **Prompt to video** with 3 models: Hailuo 02, Kling 2.5 Turbo Pro, Google Veo 3 Fast.
-- **Auto model picking**: choose "Auto" and GenStudio picks the right model for the job (for example Nano Banana when the prompt has text, Recraft for logos, Veo 3 when a video needs sound) and says why.
+- **Auto model picking**: choose "Auto" and ToastyFly picks the right model for the job (for example Nano Banana when the prompt has text, Recraft for logos, Veo 3 when a video needs sound) and says why.
 - **Draft, then final**: Auto drafts with the cheapest model. Open a draft you like and press **Make final version** to re-create it with the best model. The app shows the rough cost first.
 - **Ad templates**: 8 starting points for creators and marketers (product hero shot, story ad with headline, YouTube thumbnail, sale banner, product reveal video, brand teaser, UGC-style testimonial and more). Fill in a couple of blanks and go.
 - Pick the shape (square, wide, tall) and the video length. Each model shows a rough price.

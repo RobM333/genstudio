@@ -42,7 +42,7 @@ export async function safeFetch(raw: string, opts: { maxBytes: number; accept: s
       const res = await fetch(url, {
         redirect: "manual",
         signal: ctrl.signal,
-        headers: { accept: opts.accept, "user-agent": "Mozilla/5.0 (compatible; GenStudioBot/1.0)" },
+        headers: { accept: opts.accept, "user-agent": "Mozilla/5.0 (compatible; ToastyFlyBot/1.0)" },
       });
       if (res.status >= 300 && res.status < 400) {
         const next = res.headers.get("location");

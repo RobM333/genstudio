@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { BRAND_LOGO, BRAND_NAME, MAKES, OFFER, spotsLine, TOTAL_SPOTS } from "@/lib/founding";
+import { BRAND_LOGO, BRAND_NAME, LOGO_HAS_NAME, MAKES, OFFER, spotsLine, TOTAL_SPOTS } from "@/lib/founding";
 
 // Public "Founding 100" sign-up page. Works without the app password.
 // Sign-ups go to /api/founding (kept in Netlify Blobs) and a copy goes to
@@ -122,7 +122,7 @@ export default function Founding() {
         <Link href="/" aria-label={`${BRAND_NAME}: see examples`}>
           {BRAND_LOGO ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img className="founding-logo" src={BRAND_LOGO} alt={BRAND_NAME} width={300} height={315} />
+            <img className={LOGO_HAS_NAME ? "founding-logo founding-logo-wide" : "founding-logo"} src={BRAND_LOGO} alt={BRAND_NAME} width={LOGO_HAS_NAME ? 399 : 300} height={LOGO_HAS_NAME ? 100 : 315} />
           ) : (
             <span className="founding-brand">{BRAND_NAME}</span>
           )}
