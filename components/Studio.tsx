@@ -34,6 +34,7 @@ import { ADVERTISE_PROMISE, asksForSpeech, decide, MONTHLY_CAP, promiseNote, typ
 import type { Analysis } from "@/lib/analyze";
 import { creditsFor } from "@/lib/pricing";
 import { logFreeRemake, logReturned, logUsed, usedThisMonth } from "./creditLog";
+import AccountChip from "./account/AccountChip";
 import { loadTalk, saveTalk, TalkForm, type TalkSetup } from "./TalkingVideo";
 import { buildTalk, type TalkJob } from "./talkRunner";
 import { MAX_TALK_SECONDS, talkCost, talkSeconds, TALK_VIDEO_MODEL_ID } from "@/lib/talk";
@@ -45,6 +46,7 @@ function joinLessons(a?: string[], b?: unknown): string[] | undefined {
   const all = [...new Set([...(a ?? []), ...extra])];
   return all.length ? all : undefined;
 }
+import { BRAND_MARK as BRAND_MARK_FILE, BRAND_NAME } from "@/lib/appBrand";
 
 type Item = {
   id: string;
@@ -376,6 +378,21 @@ export default function Studio({ mode }: { mode: AppMode }) {
     }
     setLoaded(true);
   }, []);
+
+  // Links from the landing page: /studio?template=<id> opens that template, /studio?view=create opens Create.
+  const linkHandled = useRef(false);
+  useEffect(() => {
+    if (!loaded || linkHandled.current) return;
+    linkHandled.current = true;
+    const params = new URLSearchParams(window.location.search);
+    const t = TEMPLATES.find((x) => x.id === params.get("template"));
+    const v = params.get("view");
+    if (t) startTemplate(t);
+    else if (v === "create" || v === "templates" || v === "gallery" || v === "brand") setView(v);
+    else return;
+    window.history.replaceState(null, "", window.location.pathname);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded]);
   useEffect(() => {
     if (!loaded) return;
     try {
@@ -3847,12 +3864,14 @@ export default function Studio({ mode }: { mode: AppMode }) {
 
       <aside className="sidebar">
         <div className="sidebar-top">
-          <button className="brand" onClick={() => go("home")} aria-label="GenStudio home">
+          <button className="brand" onClick={() => go("home")} aria-label={`${BRAND_NAME} home`}>
             <LogoMark />
-            <span className="wordmark">GenStudio</span>
+            <span className="wordmark">{BRAND_NAME}</span>
           </button>
           <ModeBadge mode={mode} />
         </div>
+
+        <AccountChip />
 
         <button
           className="new-btn"
@@ -3918,7 +3937,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
         <footer className="side-foot">
           <Link href="/terms">Terms</Link> · <Link href="/acceptable-use">Acceptable use</Link> ·{" "}
           <Link href="/privacy">Privacy</Link>
-          <span className="side-foot-note">You are responsible for what you create with GenStudio.</span>
+          <span className="side-foot-note">You are responsible for what you create with {BRAND_NAME}.</span>
         </footer>
       </aside>
 
@@ -4025,19 +4044,8 @@ function Showcase({ media, fit }: { media?: ShowcaseMedia; fit?: boolean }) {
 }
 
 function LogoMark({ size = 28 }: { size?: number }) {
-  return (
-    <svg className="logomark" width={size} height={size} viewBox="0 0 32 32" aria-hidden>
-      <defs>
-        <linearGradient id="gs-g" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="#5ce1e6" />
-          <stop offset="0.5" stopColor="#8b7cff" />
-          <stop offset="1" stopColor="#ff8a5b" />
-        </linearGradient>
-      </defs>
-      <rect x="1" y="1" width="30" height="30" rx="9" fill="url(#gs-g)" />
-      <path d="M16 7.5l2.4 6.1 6.1 2.4-6.1 2.4L16 24.5l-2.4-6.1L7.5 16l6.1-2.4z" fill="#07070a" />
-    </svg>
-  );
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img className="logomark" src={BRAND_MARK_FILE} width={size} height={size} alt="" aria-hidden />;
 }
 
 function IconImage() {
@@ -4350,7 +4358,7 @@ async function download(item: Item) {
     }
   }
   const ext = item.url.startsWith("data:image/svg") ? "svg" : item.kind === "video" ? "mp4" : "png";
-  const name = `genstudio-${item.kind}-${item.id.slice(0, 8)}.${ext}`;
+  const name = `toastyfly-${item.kind}-${item.id.slice(0, 8)}.${ext}`;
   let href = item.url;
   let revoke = false;
   if (!item.url.startsWith("data:")) {

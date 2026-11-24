@@ -1,21 +1,22 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import LegalPage from "@/components/LegalPage";
+import { BRAND_NAME } from "@/lib/appBrand";
 
-export const metadata: Metadata = { title: "Terms of Use · GenStudio" };
+export const metadata: Metadata = { title: `Terms of Use · ${BRAND_NAME}` };
 
 // DRAFT for lawyer review. Placeholders in [brackets] must be filled in before launch.
 export default function Terms() {
   return (
     <LegalPage title="Terms of Use">
       <p>
-        These Terms of Use (&quot;Terms&quot;) govern your use of GenStudio (the &quot;Service&quot;), operated by
+        These Terms of Use (&quot;Terms&quot;) govern your use of ToastyFly (the &quot;Service&quot;), operated by
         [Company name] (&quot;we&quot;, &quot;us&quot;). By using the Service you agree to these Terms, our{" "}
         <Link href="/acceptable-use">Acceptable Use Policy</Link> and our <Link href="/privacy">Privacy Policy</Link>,
         which are part of these Terms. If you do not agree, do not use the Service.
       </p>
 
-      <h2>1. Who can use GenStudio</h2>
+      <h2>1. Who can use ToastyFly</h2>
       <p>
         You must be at least 18 years old to use the Service. If you use it for a company or other organisation, you
         confirm you are allowed to accept these Terms for it.
@@ -23,11 +24,23 @@ export default function Terms() {
 
       <h2>2. What the Service does</h2>
       <p>
-        GenStudio lets you create images, videos and audio (&quot;Outputs&quot;) from prompts, images and other
+        ToastyFly lets you create images, videos and audio (&quot;Outputs&quot;) from prompts, images and other
         material you provide (&quot;Inputs&quot;). It uses AI models run by third-party providers. AI Outputs can be
         wrong, unexpected, or similar to content made for someone else. We do not review Outputs before you receive
         them. We may add, change or remove models and features, and we may set reasonable usage limits to keep the
         Service working for everyone.
+      </p>
+
+      <p>
+        <strong>Your account and credits.</strong> You sign in with your email address and a one-time code we email
+        you. Keep access to your email safe, because anyone who can read it can sign in as you. One account is for one
+        person. Making Outputs uses credits from your account. Before a job starts we show its price as an estimated
+        range; credits come off as each step of the job starts. If a step fails on the AI service, its credits come
+        back automatically. Credits are not money, have no cash value, can&apos;t be transferred or sold, and (unless
+        the law says otherwise, or our &quot;no wasted credits&quot; promise applies) are not refunded. Free credits,
+        such as a Founding member&apos;s free month, may have an end date that we tell you about. We may correct a
+        balance that is wrong because of a mistake or misuse. You can delete your account at any time on your account
+        page; unused credits are lost when you do.
       </p>
 
       <h2>3. Your responsibility for Inputs and Outputs</h2>
@@ -69,7 +82,7 @@ export default function Terms() {
           marketing without your permission. Our model providers process your content to create your Outputs under
           their own terms. The <Link href="/privacy">Privacy Policy</Link> explains how.
         </li>
-        <li>GenStudio&apos;s software, design and brand belong to us.</li>
+        <li>ToastyFly&apos;s software, design and brand belong to us.</li>
       </ul>
 
       <h2>5. Safety, moderation and our right to act</h2>
@@ -133,7 +146,7 @@ export default function Terms() {
 
       <h2>12. Ending your use</h2>
       <p>
-        You can stop using GenStudio at any time. We may end or suspend your access as described in section 5. Sections
+        You can stop using ToastyFly at any time. We may end or suspend your access as described in section 5. Sections
         that by their nature should continue (such as ownership, liability and indemnity) still apply afterwards.
       </p>
 

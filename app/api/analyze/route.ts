@@ -46,7 +46,7 @@ export async function POST(req: Request) {
     });
   }
   if (mode === "locked") return NextResponse.json({ error: "Real generation is switched off." }, { status: 403 });
-  if (!isFalMediaUrl(url)) return NextResponse.json({ error: "Only results made in GenStudio can be analyzed." }, { status: 400 });
+  if (!isFalMediaUrl(url)) return NextResponse.json({ error: "Only results made in ToastyFly can be analyzed." }, { status: 400 });
   // A picture's check can compare the product with its reference picture.
   const productUrl = kind === "image" && body.productUrl && isFalMediaUrl(String(body.productUrl)) ? String(body.productUrl) : "";
 
@@ -96,7 +96,7 @@ async function startSpeechCheck(url: string) {
   const mode = getMode();
   if (mode === "demo") return NextResponse.json({ status: "COMPLETED", demo: true, speech: false });
   if (mode === "locked") return NextResponse.json({ error: "Real generation is switched off." }, { status: 403 });
-  if (!isFalMediaUrl(url)) return NextResponse.json({ error: "Only results made in GenStudio can be checked." }, { status: 400 });
+  if (!isFalMediaUrl(url)) return NextResponse.json({ error: "Only results made in ToastyFly can be checked." }, { status: 400 });
   try {
     const { request_id } = await fal.queue.submit(SPEECH_CHECKER, { input: { audio_url: url, task: "transcribe", chunk_level: "segment" } });
     return NextResponse.json({ status: "IN_QUEUE", requestId: request_id, kind: "speech" });

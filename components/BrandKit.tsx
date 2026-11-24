@@ -231,11 +231,11 @@ function ElevenLabsConnect({ eleven, onEleven, mode }: { eleven: ElevenConnectio
         <div className="eleven-body">
           <p className="muted small">
             Have an ElevenLabs account? Connect it to use your own voices in ad voiceovers, including a cloned brand voice. Those voiceovers are billed to your
-            ElevenLabs account, not to GenStudio. Our own voices stay available as well.
+            ElevenLabs account, not to ToastyFly. Our own voices stay available as well.
           </p>
           <p className="muted small">
             Make a key at elevenlabs.io under Developers, API keys. Give it access to Text to Speech and to Voices (read). Your key is kept only in this
-            browser and is never saved by GenStudio.
+            browser and is never saved by ToastyFly.
           </p>
           <div className="eleven-row">
             <input

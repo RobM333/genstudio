@@ -1,14 +1,15 @@
 import type { Metadata } from "next";
 import LegalPage from "@/components/LegalPage";
+import { BRAND_NAME } from "@/lib/appBrand";
 
-export const metadata: Metadata = { title: "Acceptable Use Policy · GenStudio" };
+export const metadata: Metadata = { title: `Acceptable Use Policy · ${BRAND_NAME}` };
 
 // DRAFT for lawyer review.
 export default function AcceptableUse() {
   return (
     <LegalPage title="Acceptable Use Policy">
       <p>
-        This policy explains what you may not create or do with GenStudio. It is part of our Terms of Use. We may
+        This policy explains what you may not create or do with ToastyFly. It is part of our Terms of Use. We may
         block prompts, remove Outputs and suspend or close accounts that break it, and we report illegal content where
         the law requires.
       </p>

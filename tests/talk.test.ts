@@ -8,9 +8,9 @@ const code = "4729";
 const sentence = consentSentence(code);
 assert.ok(sentence.includes("4 7 2 9"));
 assert.deepEqual(checkConsent(sentence + " The best part of my week...", code), { ok: true });
-assert.deepEqual(checkConsent("I am recording my own voice for GenStudio and I agree to it making a copy of my voice. My code is 4729.", code), { ok: true });
-assert.deepEqual(checkConsent("I am recording my own voice for GenStudio, and I agree to it making a copy of my voice. My code is four seven two nine.", code), { ok: true });
-assert.deepEqual(checkConsent("I am recording my own voice for GenStudio and I agree to it making a copy of my voice. My code is 4,729.", code), { ok: true });
+assert.deepEqual(checkConsent("I am recording my own voice for ToastyFly and I agree to it making a copy of my voice. My code is 4729.", code), { ok: true });
+assert.deepEqual(checkConsent("I am recording my own voice for ToastyFly, and I agree to it making a copy of my voice. My code is four seven two nine.", code), { ok: true });
+assert.deepEqual(checkConsent("I am recording my own voice for ToastyFly and I agree to it making a copy of my voice. My code is 4,729.", code), { ok: true });
 assert.equal(checkConsent("I am recording my own voice. My code is 4 7 2 9.", code).ok, false); // no agreement
 assert.equal(checkConsent(sentence.replace("4 7 2 9", "1 2 3 4"), code).ok, false); // wrong code
 assert.equal(checkConsent(sentence, code, 2).ok, false); // two people

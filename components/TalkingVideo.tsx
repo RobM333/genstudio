@@ -2,7 +2,8 @@
 
 // "You, talking": set up your voice and photo once, then type what to say and
 // get a video of yourself saying it in your own voice.
-// The voice copy and the photo are kept in this browser until accounts arrive.
+// The voice copy and the photo are kept in this browser, and in the person's
+// account when they are signed in (accounts on).
 
 import { useEffect, useRef, useState } from "react";
 import type { AppMode } from "@/lib/config";
@@ -24,6 +25,7 @@ import {
 } from "@/lib/talk";
 import { finishReference, shrink } from "./ReferencesBox";
 import { post, waitForResult } from "./storyRunner";
+import { useAccount } from "./account/Account";
 
 export type TalkVoice = { id: string; token: string; sampleUrl?: string; at: number };
 export type TalkPhoto = { url: string; token: string; shape?: "1:1" | "16:9" | "9:16" }; // the video keeps the photo's shape
@@ -235,7 +237,7 @@ export function VoiceSetup({ mode, onDone, onCancel }: { mode: AppMode; onDone: 
           <audio src={clipUrl} controls className="talk-audio" />
           <label className="refs-consent">
             <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
-            <span>This is my own voice. I agree to GenStudio making a copy of it that only I use, and I won&apos;t use it to pretend to be anyone else.</span>
+            <span>This is my own voice. I agree to ToastyFly making a copy of it that only I use, and I won&apos;t use it to pretend to be anyone else.</span>
           </label>
           <button className="btn btn-light" onClick={send} disabled={!!busy}>
             {busy ?? `Make my voice copy · ${mode === "demo" ? "free in demo" : `est. ${formatCost(setupCost())}`}`}
@@ -350,6 +352,7 @@ export function TalkForm({
               <button className="link-btn" onClick={() => setRedoVoice(true)}>
                 Record again
               </button>
+              <DeleteVoice onDeleted={() => onSetup({ ...setup, voice: undefined })} />
             </div>
           ) : (
             <VoiceSetup
@@ -433,5 +436,42 @@ export function TalkForm({
         <p className="muted small">It can take several minutes. If it fails, it uses no credits.</p>
       </section>
     </>
+  );
+}
+
+/** Deletes the voice copy: from the account (so it can never be used again) when signed in, and from this browser. */
+function DeleteVoice({ onDeleted }: { onDeleted: () => void }) {
+  const account = useAccount();
+  const [ask, setAsk] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (!ask)
+    return (
+      <button className="link-btn" onClick={() => setAsk(true)}>
+        Delete my voice copy
+      </button>
+    );
+  return (
+    <span className="talk-delete">
+      Delete your voice copy for good?{" "}
+      <button
+        className="link-btn"
+        onClick={async () => {
+          if (account) {
+            const r = await fetch("/api/me/voice", { method: "DELETE" }).catch(() => null);
+            if (!r?.ok) return setError("Couldn't delete it. Please try again.");
+            account.refresh();
+          }
+          setAsk(false);
+          onDeleted();
+        }}
+      >
+        Yes, delete it
+      </button>{" "}
+      ·{" "}
+      <button className="link-btn" onClick={() => setAsk(false)}>
+        Keep it
+      </button>
+      {error && <span className="form-error"> {error}</span>}
+    </span>
   );
 }

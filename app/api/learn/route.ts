@@ -2,16 +2,27 @@ import { NextResponse } from "next/server";
 import { catalogue, PROBLEM_CODES, summarize, type CustomRule, type LessonKind, type ProblemCode } from "@/lib/learn";
 import { getSettings, listEvents, saveSettings } from "@/lib/learnStore";
 import { checkPrompt } from "@/lib/safety";
+import { accountsOn } from "@/lib/accounts/config";
+import { currentUser } from "@/lib/accounts/current";
+
+/** With accounts on, only the owner (ADMIN_EMAILS) may see or change the rules. */
+async function notOwner(req: Request): Promise<NextResponse | null> {
+  if (!accountsOn()) return null;
+  const user = await currentUser(req);
+  return user?.admin ? null : NextResponse.json({ error: "Only the owner can see this." }, { status: 403 });
+}
 
 // The owner's page for "learn from every fix" (/learn): what keeps going wrong,
 // the rules waiting for an OK, and the on/off switches. Behind the app password
 // like the rest of the app, and refuses changes when no password is set, so
-// strangers can never switch rules on or off. When accounts arrive, this
-// becomes owner-only.
+// strangers can never switch rules on or off. With accounts on, only the
+// owner (ADMIN_EMAILS) can see or change it.
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(req: Request) {
+  const denied = await notOwner(req);
+  if (denied) return denied;
   const [events, settings] = await Promise.all([listEvents(), getSettings(true)]);
   return NextResponse.json(summarize(events, settings), { headers: { "Cache-Control": "no-store" } });
 }
@@ -19,6 +30,8 @@ export async function GET() {
 const KINDS: LessonKind[] = ["image", "video"];
 
 export async function POST(req: Request) {
+  const denied = await notOwner(req);
+  if (denied) return denied;
   if (!process.env.APP_PASSWORD?.trim() && process.env.FAL_KEY?.trim())
     return NextResponse.json({ error: "Set APP_PASSWORD first, so only you can change these." }, { status: 403 });
   let body: { action?: string; id?: string; kind?: string; text?: string; problem?: string };

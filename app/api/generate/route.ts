@@ -8,6 +8,8 @@ import { isRefKind, lockInstructions, MAX_REFS, referenceInstructions, verify, t
 import { enhancePrompt } from "@/lib/enhance";
 import { lessonKind } from "@/lib/learn";
 import { lessonsFor } from "@/lib/learnStore";
+import { payForStep } from "@/lib/accounts/current";
+import { generateUsd } from "@/lib/accounts/credits";
 
 export const dynamic = "force-dynamic";
 
@@ -30,7 +32,7 @@ export async function POST(req: Request) {
   const refs = rawRefs.map((r) => ({ url: String(r?.url ?? ""), kind: r?.kind, token: String(r?.token ?? "") }));
   if (refs.some((r) => !isRefKind(r.kind))) return NextResponse.json({ error: "Bad reference picture." }, { status: 400 });
   const refKinds = refs.map((r) => r.kind as RefKind);
-  // A product picture GenStudio made earlier (signed when it finished), reused so every scene of an ad shows the same product.
+  // A product picture ToastyFly made earlier (signed when it finished), reused so every scene of an ad shows the same product.
   const productUrl = body.productUrl ? String(body.productUrl) : "";
   if (refs.length > 0 || productUrl) {
     if (model.kind !== "image" || model.needsSource)
@@ -113,7 +115,7 @@ export async function POST(req: Request) {
   }
 
   if (sourceUrl && !isFalMediaUrl(sourceUrl)) {
-    return NextResponse.json({ error: "Only results made in GenStudio can be changed." }, { status: 400 });
+    return NextResponse.json({ error: "Only results made in ToastyFly can be changed." }, { status: 400 });
   }
   // Each reference must be one our safety check passed (signed by /api/reference).
   if (refs.some((r) => !isFalMediaUrl(r.url) || !verify(r.token, "ref", r.url, r.kind as string)))
@@ -125,12 +127,18 @@ export async function POST(req: Request) {
   if (body.purpose === "lock" && productUrl && refs.length > 0) finalPrompt = `${lockInstructions(refKinds)}\n${finalPrompt}`;
   else if (refs.length > 0) finalPrompt = `${referenceInstructions(refKinds, productUrl ? 1 : 0)}\n${finalPrompt}`;
 
+  // With accounts on, the credits for this step come off the person's balance first.
+  const pay = await payForStep(req, generateUsd(model, duration, body.sound !== false), duration ? `${model.name}, ${duration}s` : model.name);
+  if (pay.error) return pay.error;
+
   try {
     const { request_id } = await fal.queue.submit(model.id, {
       input: model.buildInput({ prompt: finalPrompt, aspectRatio, duration, sourceUrl, sound: body.sound !== false, refUrls, avoid, scale: Number(body.scale) || undefined }),
     });
-    return NextResponse.json({ status: "IN_QUEUE", requestId: request_id, modelId: model.id, aspectRatio, duration, enhancedPrompt, enhanceNote, lessons: lessonIds });
+    await pay.done(request_id);
+    return NextResponse.json({ status: "IN_QUEUE", requestId: request_id, modelId: model.id, aspectRatio, duration, enhancedPrompt, enhanceNote, lessons: lessonIds, credits: pay.credits || undefined });
   } catch (err) {
+    await pay.undo();
     console.error("fal submit failed", err);
     return NextResponse.json({ error: friendlyError(err) }, { status: 502 });
   }
