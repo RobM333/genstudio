@@ -14,7 +14,64 @@ export const OFFER = {
   freeMonths: 1,
   /** Shown as an estimate: the exact founding price is confirmed before anyone pays. */
   foundingDiscount: "about 30%",
+  /** What members drop to if they don't stay on a paid plan. */
+  afterPlan: "Free",
+  afterCredits: 50,
+  /** How many days before the free month ends we send the founding price message. */
+  reminderDays: 4,
 };
+
+/** The planned founding discount, used only to show estimates. */
+export const FOUNDING_DISCOUNT = 0.3;
+
+/** "about $13", the estimated founding price for a plan's monthly price. Never exact: it is confirmed before anyone pays. */
+export function foundingPriceText(monthly: number): string {
+  return `about $${Math.round(monthly * (1 - FOUNDING_DISCOUNT))}`;
+}
+
+/** The sharing reward: for each friend who joins through a member's link, both get this many credits, for up to this many friends. */
+export const REFERRAL = { bonus: 100, maxFriends: 5 };
+
+/** Personal invite codes are 8 letters and numbers. */
+export function cleanRefCode(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const c = raw.trim();
+  return /^[A-Za-z0-9]{8}$/.test(c) ? c : null;
+}
+
+/**
+ * The inbox an email really goes to, so one person can't count as their own
+ * friend: Gmail ignores dots and anything after a "+", and most providers ignore
+ * a "+tag".
+ */
+export function inboxOf(email: string): string {
+  const e = email.trim().toLowerCase();
+  const at = e.lastIndexOf("@");
+  if (at < 1) return e;
+  let local = e.slice(0, at);
+  let domain = e.slice(at + 1);
+  if (domain === "googlemail.com") domain = "gmail.com";
+  local = local.split("+")[0];
+  if (domain === "gmail.com") local = local.replace(/\./g, "");
+  return `${local}@${domain}`;
+}
+
+/** Well-known throwaway inbox services. Sign-ups from these still work, they just don't earn the sharing reward. */
+const THROWAWAY = new Set([
+  "mailinator.com", "guerrillamail.com", "guerrillamail.net", "guerrillamailblock.com", "sharklasers.com", "grr.la",
+  "10minutemail.com", "10minutemail.net", "temp-mail.org", "tempmail.com", "tempmail.net", "temp-mail.io", "tempmailo.com",
+  "yopmail.com", "yopmail.net", "trashmail.com", "trashmail.de", "getnada.com", "nada.email", "dispostable.com",
+  "maildrop.cc", "mailnesia.com", "mintemail.com", "throwawaymail.com", "fakeinbox.com", "emailondeck.com",
+  "mohmal.com", "mytemp.email", "tempinbox.com", "spamgourmet.com", "burnermail.io", "moakt.com", "tmail.ws",
+  "emailfake.com", "mailcatch.com", "inboxkitten.com", "1secmail.com", "1secmail.net", "dropmail.me", "tempr.email",
+  "discard.email", "mail.tm", "mailpoof.com", "33mail.com", "spambox.us", "tempail.com",
+]);
+
+export function isThrowawayEmail(email: string): boolean {
+  const domain = email.trim().toLowerCase().split("@").pop() ?? "";
+  for (const d of THROWAWAY) if (domain === d || domain.endsWith(`.${d}`)) return true;
+  return false;
+}
 
 /** Optional answer to "What would you make first?" */
 export const MAKES = [

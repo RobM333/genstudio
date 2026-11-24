@@ -3,7 +3,7 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes, randomInt } 
 import { kv, type KV } from "./kv";
 import { authSecret } from "./session";
 import { isAdminEmail } from "./config";
-import { cleanEmail } from "../founding";
+import { cleanEmail, OFFER } from "../founding";
 import { monthKey, MONTHLY_CAP, type FaultCode } from "../promise";
 
 // Everything an account keeps, and the few things that change it. Credits only
@@ -33,6 +33,18 @@ export type User = {
   deletedVoices?: string[];
   /** Automatic refunds and free remakes under the promise this month. */
   promise?: { month: string; used: number };
+  /** Credits spent on AI work so far, less what came back (for the owner's page). */
+  used?: number;
+  /** Bonus credits earned by sharing their invite link. */
+  bonus?: number;
+  /** Which group of invites they came in with (the owner invites in groups). */
+  group?: number;
+  /** The month (e.g. 2026-12) the Free plan's credits were last topped up. */
+  freeMonth?: string;
+  /** When their free Founding month ended and they moved to the Free plan. */
+  foundingEnded?: string;
+  /** The free month end date the founding price message was sent for. */
+  reminderSent?: string;
 };
 
 export type Invite = {
@@ -43,6 +55,8 @@ export type Invite = {
   /** Months of the plan for free (the Founding offer is 1). */
   months?: number;
   founding?: boolean;
+  /** Which group of invites this was part of. */
+  group?: number;
   at: number;
   /** Set when the person first signs in and the invite's credits are added. */
   usedAt?: number;
@@ -64,7 +78,7 @@ const CODES_PER_HOUR = 5;
 const PROMISE_WINDOW_MS = 6 * 3600_000;
 
 const sha = (s: string) => createHash("sha256").update(s).digest("hex").slice(0, 40);
-const emailKey = (email: string) => sha(`email:${email}`);
+export const emailKey = (email: string) => sha(`email:${email}`);
 const round1 = (n: number) => Math.round(n * 10) / 10;
 
 async function store(): Promise<KV> {
@@ -98,7 +112,7 @@ export async function maySignIn(email: string): Promise<boolean> {
 }
 
 /** Changes a stored record safely when two requests touch it at once. */
-async function update<T>(key: string, change: (v: T) => T | null): Promise<T | null> {
+export async function updateRecord<T>(key: string, change: (v: T) => T | null): Promise<T | null> {
   const s = await store();
   for (let i = 0; i < 10; i++) {
     const cur = await s.getVersioned<T>(key);
@@ -112,7 +126,7 @@ async function update<T>(key: string, change: (v: T) => T | null): Promise<T | n
 }
 
 export async function saveUser(id: string, change: (u: User) => User): Promise<User | null> {
-  return update<User>(`user/${id}`, change);
+  return updateRecord<User>(`user/${id}`, change);
 }
 
 function addMonths(at: number, months: number): string {
@@ -135,8 +149,10 @@ async function createUser(email: string, now: number): Promise<User> {
     plan: invite?.plan ?? "free",
     planUntil: invite?.months ? addMonths(now, invite.months) : undefined,
     founding: invite?.founding || undefined,
+    group: invite?.group,
     admin: admin || undefined,
     sv: 1,
+    freeMonth: monthKey(now),
   };
   // Only one account per email, even if two sign-ins race.
   if (!(await s.set(`email/${emailKey(email)}`, { userId: user.id }, { onlyIfNew: true }))) {
@@ -145,7 +161,7 @@ async function createUser(email: string, now: number): Promise<User> {
   }
   await s.set(`user/${user.id}`, user);
   if (invite && !invite.usedAt) {
-    await update<Invite>(`invite/${emailKey(email)}`, (i) => ({ ...i, usedAt: now }));
+    await updateRecord<Invite>(`invite/${emailKey(email)}`, (i) => ({ ...i, usedAt: now }));
     if (invite.credits > 0)
       await changeCredits(user.id, invite.credits, "grant", invite.founding ? "Founding member: 1 month of Creator" : "Welcome credits", undefined, now);
   }
@@ -183,7 +199,7 @@ export async function finishSignIn(raw: string, code: string, now = Date.now()):
   const saved = await s.get<{ hash: string; expires: number; tries: number }>(key);
   if (!saved || saved.expires < now || saved.tries >= CODE_TRIES) return { ok: false, reason: "expired" };
   if (saved.hash !== sha(`${authSecret()}:${email}:${String(code).replace(/\D/g, "")}`)) {
-    await update<{ hash: string; expires: number; tries: number }>(key, (c) => ({ ...c, tries: c.tries + 1 }));
+    await updateRecord<{ hash: string; expires: number; tries: number }>(key, (c) => ({ ...c, tries: c.tries + 1 }));
     return { ok: false, reason: "wrong" };
   }
   await s.delete(key);
@@ -207,7 +223,9 @@ export async function changeCredits(userId: string, delta: number, type: LedgerT
       short = u.credits;
       return null as unknown as User;
     }
-    return { ...u, credits: next };
+    // Spending counts up; credits given back for a job count it down again.
+    const spent = type === "charge" ? -d : type === "refund" || type === "promise" ? -d : 0;
+    return { ...u, credits: next, used: spent ? Math.max(0, round1((u.used ?? 0) + spent)) : u.used };
   }).catch(() => null);
   if (!user) return short !== undefined ? { ok: false, reason: "not-enough", balance: short } : { ok: false, reason: "no-account" };
   const entry: LedgerEntry = { at: now, type, credits: d, balance: user.credits, what: what.slice(0, 160), ref };
@@ -295,9 +313,59 @@ export async function promiseAction(
   return r.ok ? { ok: true, credits, user: r.user } : { ok: false, reason: "nothing" };
 }
 
+// ---------- the free Founding month ending, and the Free plan ----------
+
+const today = (now: number) => new Date(now).toISOString().slice(0, 10);
+
+export type FoundingStage = "active" | "ending-soon" | "ended";
+
+/** Where a founding member is in their free month. Null for everyone else. */
+export function foundingStage(u: User, now = Date.now()): { stage: FoundingStage; endsOn: string; daysLeft: number } | null {
+  if (u.foundingEnded) return { stage: "ended", endsOn: u.foundingEnded, daysLeft: 0 };
+  if (!u.founding || !u.planUntil) return null;
+  const daysLeft = Math.ceil((Date.parse(`${u.planUntil}T00:00:00Z`) - now) / 86400_000);
+  if (daysLeft <= 0) return { stage: "ended", endsOn: u.planUntil, daysLeft: 0 };
+  return { stage: daysLeft <= OFFER.reminderDays ? "ending-soon" : "active", endsOn: u.planUntil, daysLeft };
+}
+
+/**
+ * Keeps the plan right, run whenever the account is read. Nobody is ever
+ * charged here (payments aren't built): when a free month ends the person moves
+ * to the Free plan and keeps their saved work and any credits left. On the Free
+ * plan the balance is topped up to 50 at the start of each month (unused Free
+ * credits don't pile up).
+ */
+export async function applyPlanChanges(user: User, now = Date.now()): Promise<User> {
+  if (user.admin) return user;
+  const month = monthKey(now);
+  const ended = Boolean(user.planUntil && user.plan !== "free" && user.planUntil <= today(now));
+  const freeTopUp = (ended || user.plan === "free") && user.freeMonth !== month;
+  if (!ended && !freeTopUp) return user;
+  let topUp = 0;
+  const next = await saveUser(user.id, (u) => {
+    const endNow = Boolean(u.planUntil && u.plan !== "free" && u.planUntil <= today(now));
+    const isFree = endNow || u.plan === "free";
+    if (!endNow && !(isFree && u.freeMonth !== month)) return null as unknown as User;
+    topUp = endNow || u.freeMonth !== month ? Math.max(0, round1(OFFER.afterCredits - (u.credits || 0))) : 0;
+    const out: User = { ...u, freeMonth: isFree ? month : u.freeMonth };
+    if (endNow) {
+      out.plan = "free";
+      out.foundingEnded = u.founding ? u.planUntil : undefined;
+      out.planUntil = undefined;
+    }
+    return out;
+  }).catch(() => null);
+  if (!next) return (await getUser(user.id)) ?? user;
+  if (topUp > 0) {
+    const r = await changeCredits(user.id, topUp, "grant", `Free plan: topped up to ${OFFER.afterCredits} credits for the month`, undefined, now);
+    if (r.ok) return r.user;
+  }
+  return next;
+}
+
 // ---------- invites (the owner's page) ----------
 
-export async function invite(rawEmail: string, opts: { name?: string; founding?: boolean; credits?: number }, now = Date.now()): Promise<{ invite: Invite; existing: boolean } | null> {
+export async function invite(rawEmail: string, opts: { name?: string; founding?: boolean; credits?: number; group?: number }, now = Date.now()): Promise<{ invite: Invite; existing: boolean } | null> {
   const email = cleanEmail(rawEmail);
   if (!email) return null;
   const s = await store();
@@ -309,6 +377,7 @@ export async function invite(rawEmail: string, opts: { name?: string; founding?:
     plan: founding ? "creator" : "free",
     months: founding ? 1 : undefined,
     founding: founding || undefined,
+    group: opts.group && opts.group > 0 && opts.group < 1000 ? Math.floor(opts.group) : undefined,
     at: now,
   };
   const before = await getInvite(email);
@@ -316,7 +385,13 @@ export async function invite(rawEmail: string, opts: { name?: string; founding?:
   if (user) {
     // Already has an account: add the offer straight away (only once for the Founding offer).
     if (founding && user.founding) return { invite: { ...inv, usedAt: before?.usedAt ?? user.createdAt }, existing: true };
-    await saveUser(user.id, (u) => ({ ...u, plan: founding ? "creator" : u.plan, planUntil: founding ? addMonths(now, 1) : u.planUntil, founding: founding || u.founding }));
+    await saveUser(user.id, (u) => ({
+      ...u,
+      plan: founding ? "creator" : u.plan,
+      planUntil: founding ? addMonths(now, 1) : u.planUntil,
+      founding: founding || u.founding,
+      group: u.group ?? inv.group,
+    }));
     if (inv.credits > 0) await changeCredits(user.id, inv.credits, "grant", founding ? "Founding member: 1 month of Creator" : "Credits from ToastyFly", undefined, now);
     inv.usedAt = now;
     await s.set(`invite/${emailKey(email)}`, inv);

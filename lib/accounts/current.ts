@@ -2,7 +2,7 @@ import "server-only";
 import { NextResponse } from "next/server";
 import { accountsOn } from "./config";
 import { cookieFrom, readSession } from "./session";
-import { chargeStep, changeCredits, getUser, recordCharge, refundCharge, type User } from "./store";
+import { applyPlanChanges, chargeStep, changeCredits, getUser, recordCharge, refundCharge, type User } from "./store";
 import { creditsForUsd } from "./credits";
 
 /** The signed-in person, or null (also null when accounts are off). */
@@ -11,7 +11,9 @@ export async function currentUser(req: Request): Promise<User | null> {
   const s = readSession(cookieFrom(req.headers.get("cookie")));
   if (!s) return null;
   const user = await getUser(s.userId);
-  return user && user.sv === s.version ? user : null;
+  if (!user || user.sv !== s.version) return null;
+  // A free month that has ended moves to the Free plan here (nobody is charged).
+  return applyPlanChanges(user).catch(() => user);
 }
 
 export function signInNeeded() {

@@ -44,6 +44,15 @@ export default function Privacy() {
           connection per day using a scrambled (hashed) form of your IP address that can&apos;t be read back.
         </li>
         <li>
+          <strong>Invite links</strong>: when you sign up we make a personal invite link for you. If a friend joins with
+          it, we keep a note of who invited whom (both email addresses), whether the bonus credits have been added, and
+          when. We use this only to add the bonus, apply the limit of 5 friends and prevent misuse. Only we can see who
+          invited whom: your account page shows how many friends joined, not their addresses, and we don&apos;t show your
+          address to them. When you join through a
+          link, the code from it is kept in your browser for that visit only (session storage) so it isn&apos;t lost if
+          you move around the page.
+        </li>
+        <li>
           <strong>Later, when payments launch</strong>: billing details handled by our payment processor. We will
           never see or store your full card number.
         </li>
@@ -72,8 +81,9 @@ export default function Privacy() {
         <li>To fix problems and understand which features are used, using aggregated data.</li>
         <li>To improve results for everyone, using your feedback (see below).</li>
         <li>
-          To invite founding members and waitlist sign-ups, and email them about their spot and the founding offer. We
-          don&apos;t add you to other mailing lists, and every email lets you ask to be removed.
+          To invite founding members and waitlist sign-ups, and email them about their spot and the founding offer,
+          including one message a few days before a free month ends with the estimated founding price. We don&apos;t add
+          you to other mailing lists, and every email lets you ask to be removed.
         </li>
         <li>To meet legal obligations.</li>
       </ul>
@@ -133,7 +143,9 @@ export default function Privacy() {
         sign-up counts are deleted within [30] days. You can delete your account at any time on your account page.
         That deletes your account details, credit history, saved work, voice copy link and ElevenLabs connection
         straight away (backups at our hosting provider may take up to [30] days to clear), except where the law
-        requires us to keep something. Pictures and videos already made stay at our AI provider&apos;s file storage
+        requires us to keep something. Deleting your account also deletes your invite link and the note of who invited
+        you; for friends you invited, any reward still waiting is cancelled and any reward already added is kept without
+        your email address. Pictures and videos already made stay at our AI provider&apos;s file storage
         for its retention period; email us to ask for them to be removed sooner.
       </p>
 

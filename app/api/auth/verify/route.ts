@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { accountsOn } from "@/lib/accounts/config";
 import { finishSignIn } from "@/lib/accounts/store";
 import { makeSession, SESSION_COOKIE, SESSION_DAYS } from "@/lib/accounts/session";
+import { settleReferrals } from "@/lib/accounts/referrals";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +20,8 @@ export async function POST(req: Request) {
           : "That code isn't right. Please check it and try again.";
     return NextResponse.json({ error, expired: r.reason === "expired" }, { status: 400 });
   }
+  // Any sharing reward that was waiting for this account is added now.
+  await settleReferrals(r.user).catch((e) => console.error("referral settle failed", e));
   const res = NextResponse.json({ ok: true, admin: Boolean(r.user.admin) });
   res.cookies.set(SESSION_COOKIE, makeSession(r.user.id, r.user.sv), {
     httpOnly: true,
