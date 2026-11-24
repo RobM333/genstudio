@@ -42,7 +42,8 @@ Answer these about the picture:
 - gore: does it show graphic violence, gore or weapons pointed at people?
 - people: how many people are visible (0 if none)?
 - matches: does it plausibly match what the user says it is?
-Reply with JSON only: {"minor": false, "nudity": false, "gore": false, "people": 0, "matches": true}`;
+- famous: does it show a widely recognisable public figure (a celebrity, politician, athlete or other famous person)? Answer false for ordinary people.
+Reply with JSON only: {"minor": false, "nudity": false, "gore": false, "people": 0, "matches": true, "famous": false}`;
 }
 
 export type RefCheck = { ok: true } | { ok: false; reason: string };
@@ -63,6 +64,8 @@ export function judgeRefCheck(raw: string, kind: RefKind): RefCheck {
   const people = Number(j.people) || 0;
   if (kind === "person" && people < 1) return { ok: false, reason: "We couldn't see a person in this picture. Try a clear photo of one face." };
   if (kind === "person" && people > 1) return { ok: false, reason: "Please use a photo of just one person, so we know who agreed to it." };
+  // Famous people can't be used as a person reference: they can't agree to it here.
+  if (kind === "person" && j.famous === true) return { ok: false, reason: "This looks like a well-known person. You can only use photos of yourself or of people who agreed to it, never public figures." };
   return { ok: true };
 }
 

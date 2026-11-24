@@ -55,7 +55,7 @@ export async function finishReference(data: { status?: string; requestId?: strin
 }
 
 /** Shrinks very large photos in the browser so uploads stay quick and under the size limit. */
-async function shrink(file: File, keepPng: boolean): Promise<Blob> {
+export async function shrink(file: File, keepPng: boolean): Promise<Blob> {
   if (file.size <= MAX_BYTES && file.type !== "image/heic") {
     const dims = await new Promise<{ w: number; h: number } | null>((resolve) => {
       const img = new Image();

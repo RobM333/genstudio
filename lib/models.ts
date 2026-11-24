@@ -444,7 +444,29 @@ export function hdScaleFor(modelId: string): number {
   return 1.5; // 720p to 1080p
 }
 
-const HIDDEN = [HD_IMAGE_MODEL, HD_VIDEO_MODEL, ADD_SOUND_MODEL, EDIT_IMAGE_MODEL, REFERENCE_IMAGE_MODEL, LAST_FRAME_MODEL, MERGE_VIDEOS_MODEL, VOICE_MODEL, MUSIC_MODEL, COMPOSE_MODEL, CARD_MOTION_MODEL, ...ANIMATE_MODELS];
+/** Talking videos in your own voice (used through /api/talk). Prices checked on fal.ai 2026-11-24. */
+export const TALK_SPEECH_MODEL: ModelInfo = {
+  id: "fal-ai/minimax/speech-02-hd",
+  typicalSeconds: 10,
+  name: "Your voice",
+  kind: "video",
+  tagline: "Reads the words in the user's own copied voice.",
+  approxCost: "~$0.10 / 1000 characters",
+  aspectRatios: ["1:1", "16:9", "9:16"],
+  buildInput: () => ({}),
+};
+export const TALK_VIDEO_MODEL: ModelInfo = {
+  id: "fal-ai/kling-video/ai-avatar/v2/pro",
+  typicalSeconds: 240,
+  name: "Talking video",
+  kind: "video",
+  tagline: "Makes the photo talk, with the lips matched to the voice.",
+  approxCost: "~$0.115 / second",
+  aspectRatios: ["1:1", "16:9", "9:16"],
+  buildInput: () => ({}),
+};
+
+const HIDDEN = [HD_IMAGE_MODEL, HD_VIDEO_MODEL, ADD_SOUND_MODEL, EDIT_IMAGE_MODEL, REFERENCE_IMAGE_MODEL, LAST_FRAME_MODEL, MERGE_VIDEOS_MODEL, VOICE_MODEL, MUSIC_MODEL, COMPOSE_MODEL, CARD_MOTION_MODEL, TALK_SPEECH_MODEL, TALK_VIDEO_MODEL, ...ANIMATE_MODELS];
 
 export function getModel(id: string): ModelInfo | undefined {
   return MODELS.find((m) => m.id === id) ?? HIDDEN.find((m) => m.id === id);

@@ -27,6 +27,9 @@ import { ADVERTISE_PROMISE, asksForSpeech, decide, MONTHLY_CAP, promiseNote, typ
 import type { Analysis } from "@/lib/analyze";
 import { creditsFor } from "@/lib/pricing";
 import { logFreeRemake, logReturned, logUsed, usedThisMonth } from "./creditLog";
+import { loadTalk, saveTalk, TalkForm, type TalkSetup } from "./TalkingVideo";
+import { buildTalk, type TalkJob } from "./talkRunner";
+import { MAX_TALK_SECONDS, talkCost, talkSeconds, TALK_VIDEO_MODEL_ID } from "@/lib/talk";
 
 type Item = {
   id: string;
@@ -65,6 +68,7 @@ type Item = {
   refs?: RefItem[]; // the user's own reference pictures used for this picture
   story?: Story; // a longer video made from several linked shots
   ad?: AdJob; // a full ad: planned scenes, voiceover and music
+  talk?: TalkJob; // you, talking: your words in your own voice, said by your own photo
   takes?: Takes; // behind the scenes: checked first-frame pictures for a video, or two takes of a premium picture
   scale?: number; // "Sharpen to HD": how much bigger the video gets
   creditUsd?: number; // what an ad version costs to make, worked out when it starts
@@ -83,7 +87,8 @@ type ChatAct =
   | { type: "video" }
   | { type: "hd" }
   | { type: "ad"; plan: AdPlan; note: string }
-  | { type: "shape"; aspectRatio: AspectRatio };
+  | { type: "shape"; aspectRatio: AspectRatio }
+  | { type: "talk"; text: string };
 type ChatOffer = { label: string; cost: number; act: ChatAct; free?: boolean };
 type ChatMsg = {
   id: string;
@@ -244,6 +249,12 @@ export default function Studio({ mode }: { mode: AppMode }) {
   const [adError, setAdError] = useState<string | null>(null);
   const [adAsk, setAdAsk] = useState("");
   const [adCheck, setAdCheck] = useState(true); // check every scene and remake weak ones
+  // You, talking: the voice copy and photo are set up once (kept in this browser), then the user types what to say.
+  const [talkMode, setTalkMode] = useState(false);
+  const [talkSetup, setTalkSetup] = useState<TalkSetup>({});
+  const [talkText, setTalkText] = useState("");
+  const [talkLang, setTalkLang] = useState("English");
+  const talkRuns = useRef(new Set<string>());
   // Brand kit, saved in this browser and switched on per project.
   const [brand, setBrand] = useState<Brand>({ pictures: [] });
   const [useBrand, setUseBrand] = useState(true);
@@ -322,6 +333,8 @@ export default function Studio({ mode }: { mode: AppMode }) {
     setItems(loadItems());
     setRefs(loadRefs());
     setBrand(loadBrand());
+    setTalkSetup(loadTalk());
+    setTalkLang(languageFromLocale(navigator.language));
     // Voiceovers start in the browser's language (changeable in the ad's options).
     setBrief((b) => (b.language ? b : { ...b, language: languageFromLocale(navigator.language) }));
     try {
@@ -347,6 +360,9 @@ export default function Studio({ mode }: { mode: AppMode }) {
   useEffect(() => {
     if (loaded) saveBrand(brand);
   }, [brand, loaded]);
+  useEffect(() => {
+    if (loaded) saveTalk(talkSetup);
+  }, [talkSetup, loaded]);
   useEffect(() => {
     if (loaded) saveItems(items);
   }, [items, loaded]);
@@ -487,6 +503,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
     // Storyboards that were running when the page closed carry on from the first unfinished shot.
     items.filter((it) => it.status === "pending" && it.story).forEach(runStory);
     items.filter((it) => it.status === "pending" && it.ad).forEach(runAd);
+    items.filter((it) => it.status === "pending" && it.talk).forEach(runTalk);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded]);
 
@@ -1054,6 +1071,69 @@ export default function Studio({ mode }: { mode: AppMode }) {
     }
   }
 
+  // ---------- You, talking ----------
+
+  /** Starts a talking video: the words in the user's own voice, said by their own photo. */
+  function startTalk(text: string, language: string, parentId?: string): string | null {
+    const words = text.replace(/\s+/g, " ").trim();
+    const voice = talkSetup.voice;
+    const photo = talkSetup.photo;
+    if (!voice || !photo) return "Set up your voice and photo first.";
+    if (!words) return "Type what you'd like to say first.";
+    const safe = checkPrompt(words);
+    if (!safe.ok) return safe.reason ?? "These words can't be used.";
+    const seconds = talkSeconds(words, language);
+    if (seconds > MAX_TALK_SECONDS) return `That's about ${seconds} seconds of talking. Please keep it under ${MAX_TALK_SECONDS}.`;
+    if (!hasAcceptedTerms()) {
+      setAskTerms(true);
+      return null;
+    }
+    const job: TalkJob = { text: words, language, seconds, voiceId: voice.id, voiceToken: voice.token, photoUrl: photo.url, photoToken: photo.token };
+    const item: Item = {
+      id: crypto.randomUUID(),
+      kind: "video",
+      modelId: TALK_VIDEO_MODEL_ID,
+      modelName: `You, talking · ${seconds}s`,
+      prompt: words,
+      aspectRatio: photo.shape ?? "9:16",
+      duration: seconds,
+      status: "pending",
+      createdAt: Date.now(),
+      parentId,
+      wantSound: true,
+      hasAudio: true,
+      autoReason: "your words in your own voice, said by your photo",
+      talk: job,
+    };
+    madeHere.current.add(item.id);
+    setItems((prev) => [item, ...prev]);
+    setSelectedId(item.id);
+    setView("create");
+    setComposing(false);
+    runTalk(item);
+    return null;
+  }
+
+  /** Reads the words in the user's voice, then makes the video. Safe to call again to carry on. */
+  async function runTalk(start: Item) {
+    if (!start.talk || talkRuns.current.has(start.id)) return;
+    talkRuns.current.add(start.id);
+    const job: TalkJob = JSON.parse(JSON.stringify(start.talk));
+    const save = (j: TalkJob, patch: Partial<Item> = {}) => update(start.id, { talk: JSON.parse(JSON.stringify(j)), ...patch });
+    try {
+      update(start.id, { status: "pending", error: undefined, stepStartedAt: Date.now(), phase: "working" });
+      const url = await buildTalk(job, (j) => save(j, { stepStartedAt: Date.now() }));
+      job.step = undefined;
+      save(job, { status: "done", url, demo: url.startsWith("data:") || undefined });
+    } catch (e) {
+      job.step = undefined;
+      job.videoRequestId = undefined; // a failed video is started fresh next time; the voice part is kept
+      save(job, { status: "failed", error: (e as Error).message || "The talking video failed." });
+    } finally {
+      talkRuns.current.delete(start.id);
+    }
+  }
+
   /** What an ad costs to make: all of it for a new ad, only the changed parts for a new version. */
   function adStartCost(job: AdJob, parentId?: string): number {
     const parent = parentId ? items.find((x) => x.id === parentId)?.ad : undefined;
@@ -1065,6 +1145,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
   /** What a finished job cost to make, for counting its credits. */
   function itemCost(it: Item): number {
     if (it.ad) return it.creditUsd ?? adCost(it.ad.plan, Boolean(it.ad.refs?.length), Boolean(it.ad.check?.on));
+    if (it.talk) return talkCost(it.talk.seconds, it.talk.text.length);
     if (it.story) return storyCost(it.story.firstModelId, Math.max(1, it.story.shots.length || it.story.wantShots || 1), it.story.sound, Boolean(it.story.refs?.length));
     const m = getModel(it.modelId);
     return m ? jobCost(m, it.duration, Boolean(it.wantSound), it.quality) : 0;
@@ -1079,7 +1160,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
       if (!madeHere.current.has(it.id)) continue;
       if (it.status === "done" && !it.charged) {
         if (!it.free && mode === "live") logUsed(it.id, creditsFor(itemCost(it)), it.modelName);
-        const check = mode === "live" && it.kind === "video" && Boolean(it.url) && !it.ad && !it.demo;
+        const check = mode === "live" && it.kind === "video" && Boolean(it.url) && !it.ad && !it.talk && !it.demo;
         update(it.id, { charged: true, promise: undefined, promiseCheck: check ? "running" : undefined });
         if (check) autoCheck(it);
         if (it.ad?.check?.faultsLeft?.length) adPromise(it);
@@ -1385,6 +1466,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
   /** "Make this" on an idea: fills Create with it, ready for Generate. */
   function makeIdea(idea: Idea) {
     setAdMode(false);
+    setTalkMode(false);
     setTemplate(null);
     setFormError(null);
     setDirectorPicked(null);
@@ -1473,7 +1555,17 @@ export default function Studio({ mode }: { mode: AppMode }) {
     setTemplate(null);
     setFormError(null);
     setAdError(null);
+    if (it.talk) {
+      setAdMode(false);
+      setTalkMode(true);
+      setTalkText(it.talk.text);
+      setTalkLang(it.talk.language);
+      setComposing(true);
+      go("create");
+      return;
+    }
     if (it.ad) {
+      setTalkMode(false);
       setAdMode(true);
       setBrief({ product: it.ad.brief.product, audience: it.ad.brief.audience, seconds: it.ad.brief.seconds, tone: it.ad.brief.tone, language: it.ad.brief.language ?? "English" });
       setAdCheck(it.ad.check?.on ?? true);
@@ -1485,6 +1577,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
       return;
     }
     setAdMode(false);
+    setTalkMode(false);
     setKind(it.kind);
     // Videos made from linked shots or from a picture go back to the matching text-to-video model.
     const pickable = MODELS.some((m) => m.id === it.modelId);
@@ -1523,6 +1616,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
   /** Estimated price of a new take of this result, or null if it can't be made again. */
   function recreateCost(it: Item): number | null {
     if (it.ad) return adCost(it.ad.plan, !!it.ad.refs?.length, !!it.ad.check?.on);
+    if (it.talk) return talkCost(it.talk.seconds, it.talk.text.length);
     if (it.story) return storyCost(it.story.firstModelId, storyShotCount(it), it.story.sound, !!it.story.refs?.length);
     const m = getModel(it.modelId);
     if (!m) return null;
@@ -1535,6 +1629,11 @@ export default function Studio({ mode }: { mode: AppMode }) {
   /** Makes a new take straight away, with the same prompt and settings. It joins the same history and chat. */
   function recreate(it: Item) {
     setRecreateAsk(null);
+    if (it.talk) {
+      const err = startTalk(it.talk.text, it.talk.language, it.id);
+      if (err) say(rootOf(it.id), it.id, { text: err });
+      return;
+    }
     if (it.ad) {
       const job = newAdJob(it.ad.brief, JSON.parse(JSON.stringify(it.ad.plan)) as AdPlan, it.ad.refs, !!it.ad.check?.on);
       startAd(job, { parentId: it.id, aspectRatio: it.aspectRatio });
@@ -1839,7 +1938,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
 
   /** "Sharpen to HD": how much it costs, or null when it's already sharp (or can't be done). */
   function hdPlan(it: Item): { cost: number; scale?: number } | null {
-    if (!it.url || it.ad || it.status !== "done") return null;
+    if (!it.url || it.ad || it.talk || it.status !== "done") return null;
     if (it.kind === "image") return getModel(it.modelId)?.hd ? null : { cost: estimateCost(HD_IMAGE_MODEL) };
     // The model that made the picture moving (the sound step afterwards doesn't change sharpness).
     const base = it.story ? it.story.shotModelId : it.takes?.best && it.takes.animateModelId ? it.takes.animateModelId : it.modelId;
@@ -1937,6 +2036,22 @@ export default function Studio({ mode }: { mode: AppMode }) {
     const reply = (msg: Partial<ChatMsg> & { text: string }) => say(thread, it.id, msg);
     if (it.status === "pending") {
       reply({ text: "I'm still making this one. Ask me again once it's ready, or press ＋ New to start something else." });
+      return;
+    }
+    if (it.talk) {
+      // A talking video changes by its words: whatever is typed here is what you'll say next.
+      const words = text.replace(/^(say|now say|make me say|change (it|the words) to)\s*:?\s*/i, "").trim();
+      const secs = talkSeconds(words, it.talk.language);
+      if (words.split(/\s+/).length < 6 || secs > MAX_TALK_SECONDS) {
+        reply({ text: `Type the new words you'd like to say (up to about ${MAX_TALK_SECONDS} seconds), and I'll make it again in your voice.` });
+        return;
+      }
+      const cost = talkCost(secs, words.length);
+      reply({
+        text: `I'll make it again with you saying: “${words.slice(0, 200)}${words.length > 200 ? "…" : ""}”. That costs ${price(cost)}.`,
+        offers: [{ label: "🗣️ Say this instead", cost, act: { type: "talk", text: words } }],
+        state: "open",
+      });
       return;
     }
     if (/^director'?s? notes?$|^(ask|call) the director$/i.test(text) && !it.ad) {
@@ -2063,6 +2178,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
     else if (a.type === "video") doVideo(it);
     else if (a.type === "hd") doHd(it);
     else if (a.type === "shape" && it.ad) makeShape(it, a.aspectRatio);
+    else if (a.type === "talk" && it.talk) err = startTalk(a.text, it.talk.language, it.id);
     else if (a.type === "ad" && it.ad) startAd(changedAdJob(it.ad, a.plan).job, { parentId: it.id, fixNote: a.note, aspectRatio: it.aspectRatio });
     if (offer.free) {
       if (err || nextFree.current) nextFree.current = false;
@@ -2091,7 +2207,9 @@ export default function Studio({ mode }: { mode: AppMode }) {
   const chips: { label: string; text: string }[] = [];
   if (selected?.status === "done" && selected.url) {
     chips.push({ label: "🔍 Find what's wrong", text: "Find what's wrong" });
-    if (selected.ad) {
+    if (selected.talk) {
+      chips.length = 0;
+    } else if (selected.ad) {
       chips.push({ label: "✨ Try a new hook", text: "Give scene 1 a new, more gripping hook (new picture and voice line). Keep everything else the same." });
       chips.push({ label: "📐 Other shapes", text: "Make it in other shapes for TikTok, Instagram and YouTube" });
       chips.push({ label: "🎙️ Change the voiceover", text: "Make the voiceover warmer and slower" });
@@ -2102,8 +2220,8 @@ export default function Studio({ mode }: { mode: AppMode }) {
       if ((selected.duration ?? 0) < MAX_STORY_SECONDS) chips.push({ label: `⏱️ Make it ${next}s`, text: `Make it ${next} seconds` });
       if (!selected.hasAudio) chips.push({ label: "🔊 Add sound", text: "Add sound" });
     } else chips.push({ label: "🎬 Turn into a video", text: "Turn it into a video" });
-    if (!selected.ad && hdPlan(selected)) chips.push({ label: "✨ Sharpen to HD", text: "Sharpen to HD" });
-    if (selected.quality === "draft") chips.push({ label: "✦ Higher quality", text: "Make it higher quality" });
+    if (!selected.ad && !selected.talk && hdPlan(selected)) chips.push({ label: "✨ Sharpen to HD", text: "Sharpen to HD" });
+    if (selected.quality === "draft" && !selected.talk) chips.push({ label: "✦ Higher quality", text: "Make it higher quality" });
   }
 
   const chatPanel = selected && (
@@ -2112,7 +2230,9 @@ export default function Studio({ mode }: { mode: AppMode }) {
         <div className="chat-msg ai">
           <p>
             Tell me what to change, like{" "}
-            {selected.ad
+            {selected.talk
+              ? "the new words you'd like to say. I make it again in your voice"
+              : selected.ad
               ? "“scene 2: show it at night”, “music: calmer” or “end card: say Shop now”. I only remake the parts that change"
               : selected.kind === "video"
               ? "“make it slower”, “the dog should be brown” or “make it 15 seconds”"
@@ -2884,15 +3004,17 @@ export default function Studio({ mode }: { mode: AppMode }) {
           <span className="g-num">1</span>
           <h2>What are you making?</h2>
         </div>
-        <div className="tabs tabs-3" role="tablist">
+        <div className="tabs tabs-4" role="tablist">
           {(["image", "video"] as MediaKind[]).map((k) => (
             <button
               key={k}
               role="tab"
-              aria-selected={!adMode && kind === k}
-              className={!adMode && kind === k ? "tab active" : "tab"}
+              aria-selected={!adMode && !talkMode && kind === k}
+              className={!adMode && !talkMode && kind === k ? "tab active" : "tab"}
               onClick={() => {
                 setAdMode(false);
+    setTalkMode(false);
+                setTalkMode(false);
                 switchKind(k);
               }}
             >
@@ -2902,13 +3024,42 @@ export default function Studio({ mode }: { mode: AppMode }) {
               {k === "image" ? "Image" : "Video clip"}
             </button>
           ))}
-          <button role="tab" aria-selected={adMode} className={adMode ? "tab active" : "tab"} onClick={() => setAdMode(true)}>
+          <button
+            role="tab"
+            aria-selected={adMode}
+            className={adMode ? "tab active" : "tab"}
+            onClick={() => {
+              setTalkMode(false);
+              setAdMode(true);
+            }}
+          >
             <span className="tab-icon" aria-hidden>
               🎬
             </span>
-            Full ad <span className="tag tag-rec">New</span>
+            Full ad
+          </button>
+          <button
+            role="tab"
+            aria-selected={talkMode}
+            className={talkMode ? "tab active" : "tab"}
+            onClick={() => {
+              setAdMode(false);
+    setTalkMode(false);
+              setTalkMode(true);
+            }}
+          >
+            <span className="tab-icon" aria-hidden>
+              🗣️
+            </span>
+            You, talking <span className="tag tag-rec">New</span>
           </button>
         </div>
+        {talkMode && (
+          <p className="muted small g-hint">
+            A video of you saying anything you type, in your own voice, with your lips matching. Set up your voice and photo once, then you never have to
+            talk or film again.
+          </p>
+        )}
         {adMode && (
           <p className="muted small g-hint">
             A finished ad with several scenes, a voiceover and music. You see the whole plan and can change it before anything is made.
@@ -2919,6 +3070,21 @@ export default function Studio({ mode }: { mode: AppMode }) {
 
       {adMode ? (
         adBrief
+      ) : talkMode ? (
+        <TalkForm
+          mode={mode}
+          setup={talkSetup}
+          onSetup={setTalkSetup}
+          text={talkText}
+          onText={setTalkText}
+          language={talkLang}
+          onLanguage={setTalkLang}
+          error={formError}
+          onGenerate={() => {
+            const err = startTalk(talkText, talkLang);
+            setFormError(err);
+          }}
+        />
       ) : (
       <>
       <section className="g-step">
@@ -3135,6 +3301,9 @@ export default function Studio({ mode }: { mode: AppMode }) {
           <StoryPanel item={selected} running={adRuns.current.has(selected.id)} onResume={runAd} />
         )}
         {selected.ad && <AdSummary job={selected.ad} />}
+        {selected.talk && selected.status !== "done" && (
+          <StoryPanel item={selected} running={talkRuns.current.has(selected.id)} onResume={runTalk} />
+        )}
         <div className="viewer-actions">
           {selected.url && (
             <button className="btn btn-light" onClick={() => download(selected)}>
@@ -3274,6 +3443,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
         className="link-btn home-ideas"
         onClick={() => {
           setAdMode(false);
+    setTalkMode(false);
           setTemplate(null);
           setIdeasOpen(true);
           setComposing(true);
@@ -3625,6 +3795,27 @@ function PendingTile({ item }: { item: Item }) {
     const t = setInterval(() => setNow(Date.now()), 500);
     return () => clearInterval(t);
   }, []);
+  if (item.talk) {
+    const voiced = Boolean(item.talk.audioUrl);
+    const view = progressView({
+      phase: "working",
+      elapsedSec: (now - (item.stepStartedAt ?? now)) / 1000,
+      // The talking video takes longer the more there is to say.
+      typicalSec: voiced ? 120 + item.talk.seconds * 6 : 15,
+      step: voiced ? 2 : 1,
+      steps: 2,
+      stepLabel: item.talk.step ?? "Getting ready",
+    });
+    return (
+      <div className="tile-state">
+        <span className="progress-label">{view.label}</span>
+        <div className="progress" role="progressbar" aria-valuenow={Math.round(view.percent)} aria-valuemin={0} aria-valuemax={100}>
+          <div className="progress-fill" style={{ width: `${view.percent}%` }} />
+        </div>
+        <span className="muted small">{view.timeLeft}</span>
+      </div>
+    );
+  }
   if (item.ad) {
     const job = item.ad;
     const n = job.clips.length;

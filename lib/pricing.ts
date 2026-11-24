@@ -5,6 +5,7 @@
 import { adCost, adPlanWithRules, AD_PRICES } from "./adplan";
 import { getModel } from "./models";
 import { jobCost } from "./quality";
+import { setupCost, talkCost } from "./talk";
 
 export type Feature = { text: string; soon?: boolean };
 export type Plan = { id: string; name: string; monthly: number; credits: number; for: string; popular?: boolean; features: Feature[] };
@@ -109,6 +110,8 @@ export function creditExamples(): { what: string; usd: number; credits: number }
     { what: "Sharpen a video to HD, 10s", usd: 10 * 0.02 },
     { what: "Character set (4 pictures of one person)", usd: 4 * AD_PRICES.picture + 0.01 },
     { what: "Voiceover line (about 100 characters)", usd: (100 / 1000) * AD_PRICES.voicePer1000Chars },
+    { what: "You, talking: set up your voice copy (once)", usd: setupCost() },
+    { what: "You, talking: 15 seconds in your own voice", usd: talkCost(15) },
     { what: "Full ad, 15 seconds", usd: ad(15) },
     { what: "Full ad, 30 seconds", usd: ad(30) },
     { what: "Full ad, 60 seconds", usd: ad(60) },

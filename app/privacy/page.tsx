@@ -33,8 +33,17 @@ export default function Privacy() {
         </li>
       </ul>
       <p>
-        We don&apos;t collect face scans, voiceprints or other biometric identifiers, and we ask you not to put
-        sensitive personal information (such as health data or ID numbers) in prompts.
+        <strong>Your voice and photo, for &quot;You, talking&quot;</strong>: only if you choose to use it, you record about
+        a minute of your own voice and add a photo of yourself. The recording is sent to our AI providers (fal.ai and
+        the voice services it runs, such as MiniMax and ElevenLabs) to check your spoken consent sentence and to make a
+        copy of your voice, which is used only to read the words you type in your own videos. A voice copy is
+        biometric information, so we never use it for anything else, never share it with other users and never use
+        it to train AI models. The link to your voice copy and your photo are kept in your own browser.
+      </p>
+      <p>
+        Apart from that optional feature, we don&apos;t collect face scans, voiceprints or other biometric
+        identifiers, and we ask you not to put sensitive personal information (such as health data or ID numbers) in
+        prompts.
       </p>
 
       <h2>2. How we use it</h2>
