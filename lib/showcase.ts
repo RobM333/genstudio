@@ -17,6 +17,19 @@ export const TEMPLATE_MEDIA: Record<string, ShowcaseMedia> = {
   "product-reveal": REVEAL,
   "brand-teaser": img("watch"),
   "ugc-testimonial": img("ugc"),
+  // Business and social size templates, made for the made-up brand "Bloom Studio".
+  "teams-background": img("teams-background"),
+  "zoom-background": img("zoom-background"),
+  "linkedin-banner": img("linkedin-banner"),
+  "facebook-cover": img("facebook-cover"),
+  "email-header": img("email-header"),
+  "profile-picture": img("profile-picture"),
+  "brand-announcement": img("brand-announcement"),
+  "instagram-post": img("instagram-post"),
+  "instagram-portrait": img("instagram-portrait"),
+  "youtube-banner": img("youtube-banner"),
+  "vertical-video": img("vertical-video"),
+  "youtube-intro": img("youtube-intro"),
 };
 
 /** Ready-to-try prompts with the result they made, for the empty gallery. */
