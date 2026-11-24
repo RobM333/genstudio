@@ -33,7 +33,8 @@ export default function AcceptableUse() {
         </li>
         <li>
           <strong>Copying a real person&apos;s face, body or voice without their permission</strong>, including voice
-          clones.
+          clones. &quot;You, talking&quot; is for your own voice and your own face only: never record or upload someone
+          else, a public figure, or a child.
         </li>
         <li>Harassment, bullying, threats, or content that promotes hatred or violence against people or groups.</li>
         <li>Content that promotes self-harm, terrorism, or serious violence.</li>

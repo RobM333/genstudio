@@ -757,6 +757,21 @@ kbd {
 .refs-hint { margin: 4px 0 8px; }
 .refs-consent { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; margin-bottom: 8px; }
 .refs-consent input { margin-top: 3px; }
+
+/* You, talking: voice and photo setup */
+.talk-part { display: flex; flex-direction: column; gap: 8px; padding: 12px 0; border-top: 1px solid var(--line); }
+.talk-part:first-of-type { border-top: 0; }
+.talk-setup { display: flex; flex-direction: column; gap: 10px; }
+.talk-consent, .talk-script { margin: 0; padding: 12px 14px; border-radius: 10px; background: var(--panel-2); line-height: 1.55; font-size: 14px; }
+.talk-consent { border-left: 3px solid var(--accent); font-weight: 600; }
+.talk-script { max-height: 150px; overflow: auto; }
+.talk-rec, .talk-ready, .talk-meta { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.talk-audio { width: 100%; max-width: 360px; height: 36px; }
+.talk-photo { width: 56px; height: 56px; object-fit: cover; border-radius: 50%; }
+.talk-meta .text-input { width: auto; min-width: 150px; }
+.tabs-4 { grid-template-columns: repeat(4, 1fr); }
+.tabs-4 .tag { margin-left: 4px; }
+@media (max-width: 640px) { .tabs-4 { grid-template-columns: 1fr 1fr; } }
 .refs-add {
   padding: 8px 14px;
   border-radius: 999px;
