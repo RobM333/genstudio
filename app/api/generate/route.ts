@@ -6,6 +6,8 @@ import { fal } from "@/lib/fal";
 import { checkPrompt, checkWithPersonPhoto } from "@/lib/safety";
 import { isRefKind, lockInstructions, MAX_REFS, referenceInstructions, verify, type RefKind } from "@/lib/references";
 import { enhancePrompt } from "@/lib/enhance";
+import { payForStep } from "@/lib/accounts/current";
+import { generateUsd } from "@/lib/accounts/credits";
 
 export const dynamic = "force-dynamic";
 
@@ -117,12 +119,18 @@ export async function POST(req: Request) {
   if (body.purpose === "lock" && productUrl && refs.length > 0) finalPrompt = `${lockInstructions(refKinds)}\n${finalPrompt}`;
   else if (refs.length > 0) finalPrompt = `${referenceInstructions(refKinds, productUrl ? 1 : 0)}\n${finalPrompt}`;
 
+  // With accounts on, the credits for this step come off the person's balance first.
+  const pay = await payForStep(req, generateUsd(model, duration, body.sound !== false), duration ? `${model.name}, ${duration}s` : model.name);
+  if (pay.error) return pay.error;
+
   try {
     const { request_id } = await fal.queue.submit(model.id, {
       input: model.buildInput({ prompt: finalPrompt, aspectRatio, duration, sourceUrl, sound: body.sound !== false, refUrls, avoid, scale: Number(body.scale) || undefined }),
     });
-    return NextResponse.json({ status: "IN_QUEUE", requestId: request_id, modelId: model.id, aspectRatio, duration, enhancedPrompt, enhanceNote });
+    await pay.done(request_id);
+    return NextResponse.json({ status: "IN_QUEUE", requestId: request_id, modelId: model.id, aspectRatio, duration, enhancedPrompt, enhanceNote, credits: pay.credits || undefined });
   } catch (err) {
+    await pay.undo();
     console.error("fal submit failed", err);
     return NextResponse.json({ error: friendlyError(err) }, { status: 502 });
   }

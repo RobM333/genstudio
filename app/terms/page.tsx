@@ -30,6 +30,18 @@ export default function Terms() {
         Service working for everyone.
       </p>
 
+      <p>
+        <strong>Your account and credits.</strong> You sign in with your email address and a one-time code we email
+        you. Keep access to your email safe, because anyone who can read it can sign in as you. One account is for one
+        person. Making Outputs uses credits from your account. Before a job starts we show its price as an estimated
+        range; credits come off as each step of the job starts. If a step fails on the AI service, its credits come
+        back automatically. Credits are not money, have no cash value, can&apos;t be transferred or sold, and (unless
+        the law says otherwise, or our &quot;no wasted credits&quot; promise applies) are not refunded. Free credits,
+        such as a Founding member&apos;s free month, may have an end date that we tell you about. We may correct a
+        balance that is wrong because of a mistake or misuse. You can delete your account at any time on your account
+        page; unused credits are lost when you do.
+      </p>
+
       <h2>3. Your responsibility for Inputs and Outputs</h2>
       <ul>
         <li>

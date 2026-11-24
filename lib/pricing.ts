@@ -83,7 +83,7 @@ export const LOWEST_CREDIT_PRICE = Math.min(...PLANS.filter((p) => p.monthly > 0
 export const CREDIT_COST_USD = 0.012;
 
 /** Our estimates can be a little low: credits are worked out from the top of the range. */
-const COST_MARGIN = 1.15;
+export const COST_MARGIN = 1.15;
 
 /** Credits for a job, from the top of its estimated cost range, rounded up to a tidy number. */
 export function creditsFor(usd: number): number {

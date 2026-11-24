@@ -16,7 +16,7 @@ const CLAIM = "/founding#claim";
 const START = STUDIO_OPEN ? `${STUDIO_PATH}?view=create` : CLAIM;
 const HERO_COLUMNS = 5;
 
-export default function Landing() {
+export default function Landing({ signIn = false }: { signIn?: boolean }) {
   const [filter, setFilter] = useState<WallGroup | "all">("all");
   const [open, setOpen] = useState<WallItem | null>(null);
   const shown = wallIn(filter);
@@ -37,6 +37,11 @@ export default function Landing() {
           <a href="#templates">Templates</a>
           <a href="#create">Create</a>
         </nav>
+        {signIn && (
+          <Link href="/signin" className="l-signin">
+            Sign in
+          </Link>
+        )}
         <Link href={CLAIM} className="generate small l-top-cta">
           Claim a founding spot
         </Link>

@@ -17,6 +17,10 @@ import {
   TRANSCRIBE_MODEL_ID,
   VOICE_CLONE_MODEL_ID,
 } from "@/lib/talk";
+import { accountsOn } from "@/lib/accounts/config";
+import { currentUser, payForStep, signInNeeded, stepFailed } from "@/lib/accounts/current";
+import { setVoice } from "@/lib/accounts/store";
+import { talkSpeechUsd, talkVideoUsd, voiceCopyUsd } from "@/lib/accounts/credits";
 
 export const dynamic = "force-dynamic";
 
@@ -62,6 +66,16 @@ export async function POST(req: Request) {
     if (mode === "demo") return NextResponse.json({ status: "COMPLETED", demo: true, url: "demo", resultToken: "demo" });
     // Only voices copied here, after the consent check, can be used.
     if (!verify(String(body.voiceToken ?? ""), "voice", voiceId)) return bad("Please set up your voice again.", 403);
+    // With accounts on, a voice copy can only be used by the account it belongs to.
+    if (accountsOn()) {
+      const user = await currentUser(req);
+      if (!user) return signInNeeded();
+      if (user.deletedVoices?.includes(voiceId)) return bad("You deleted this voice copy. Please set up your voice again.", 403);
+      if (!user.voice) await setVoice(user.id, voiceId); // a copy made in this browser before accounts existed
+      else if (user.voice.id !== voiceId) return bad("Please set up your voice again.", 403);
+    }
+    const pay = await payForStep(req, talkSpeechUsd(text), "You, talking: your voice");
+    if (pay.error) return pay.error;
     try {
       const { request_id } = await fal.queue.submit(TALK_SPEECH_MODEL_ID, {
         input: {
@@ -71,8 +85,10 @@ export async function POST(req: Request) {
           output_format: "url",
         },
       });
+      await pay.done(request_id);
       return NextResponse.json({ status: "IN_QUEUE", requestId: request_id, modelId: TALK_SPEECH_MODEL_ID });
     } catch (err) {
+      await pay.undo();
       console.error("talk speak failed", err);
       return bad("Couldn't read the words in your voice. Please try again.", 502);
     }
@@ -89,10 +105,14 @@ export async function POST(req: Request) {
     // The photo must be the user's own checked person picture, and the voice must have been made here.
     if (!isFalMediaUrl(imageUrl) || !verify(String(body.imageToken ?? ""), "ref", imageUrl, "person")) return bad("Please add your photo again.", 403);
     if (!isFalMediaUrl(audioUrl) || !verify(String(body.audioToken ?? ""), "result", audioUrl)) return bad();
+    const pay = await payForStep(req, talkVideoUsd(String(body.text ?? "")), "You, talking: video");
+    if (pay.error) return pay.error;
     try {
       const { request_id } = await fal.queue.submit(TALK_VIDEO_MODEL_ID, { input: { image_url: imageUrl, audio_url: audioUrl, prompt: TALK_MOTION } });
+      await pay.done(request_id);
       return NextResponse.json({ status: "IN_QUEUE", requestId: request_id, modelId: TALK_VIDEO_MODEL_ID });
     } catch (err) {
+      await pay.undo();
       console.error("talk video failed", err);
       return bad("Couldn't start the talking video. Please try again.", 502);
     }
@@ -156,8 +176,17 @@ export async function GET(req: Request) {
       const speakers = new Set((data.words ?? []).filter((w) => w.type === "word" && w.speaker_id).map((w) => w.speaker_id)).size;
       const verdict = checkConsent(String(data.text ?? ""), code, speakers);
       if (!verdict.ok) return NextResponse.json({ status: "REJECTED", error: verdict.reason });
-      // The same recording that holds the consent sentence is the one copied.
-      const clone = await fal.queue.submit(VOICE_CLONE_MODEL_ID, { input: { audio_url: audioUrl, noise_reduction: true, need_volume_normalization: true } });
+      // The same recording that holds the consent sentence is the one copied. The copy is the paid part.
+      const pay = await payForStep(req, voiceCopyUsd(), "You, talking: voice copy (once)");
+      if (pay.error) return pay.error;
+      let clone: { request_id: string };
+      try {
+        clone = await fal.queue.submit(VOICE_CLONE_MODEL_ID, { input: { audio_url: audioUrl, noise_reduction: true, need_volume_normalization: true } });
+      } catch (err) {
+        await pay.undo();
+        throw err;
+      }
+      await pay.done(clone.request_id);
       return NextResponse.json({ status: "COPYING", requestId: clone.request_id, cloneToken: sign("talk-clone", clone.request_id) });
     } catch (err) {
       console.error("talk consent check failed", err);
@@ -172,10 +201,16 @@ export async function GET(req: Request) {
       if (status.status !== "COMPLETED") return NextResponse.json({ status: "COPYING" });
       const result = await fal.queue.result(VOICE_CLONE_MODEL_ID, { requestId });
       const voiceId = String((result.data as { custom_voice_id?: string })?.custom_voice_id ?? "");
-      if (!voiceId) return NextResponse.json({ status: "FAILED", error: "The voice copy didn't work. Please try a clearer recording." });
+      if (!voiceId) {
+        await stepFailed(req, requestId, "the voice copy didn't work");
+        return NextResponse.json({ status: "FAILED", error: "The voice copy didn't work. Please try a clearer recording. It won't use any of your credits." });
+      }
+      const user = await currentUser(req);
+      if (user) await setVoice(user.id, voiceId);
       return NextResponse.json({ status: "COMPLETED", voiceId, voiceToken: sign("voice", voiceId) });
     } catch (err) {
       console.error("talk clone failed", err);
+      await stepFailed(req, requestId, "the voice copy didn't work");
       return NextResponse.json({ status: "FAILED", error: "The voice copy didn't work. Please try a clearer recording in a quiet room." });
     }
   }
