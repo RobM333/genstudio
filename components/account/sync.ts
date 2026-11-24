@@ -14,6 +14,7 @@ export const SYNCED: Record<string, string> = {
   ideas: "genstudio.ideas.v1",
   talk: "genstudio.talk.v1",
   elevenlabs: "genstudio.elevenlabs.v1",
+  film: "genstudio.film.v1", // the Film Set form (saved characters live in the Brand kit)
 };
 /** Whose work this browser is holding. */
 const OWNER = "toastyfly.account.owner";
