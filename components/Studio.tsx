@@ -1485,6 +1485,8 @@ export default function Studio({ mode }: { mode: AppMode }) {
     return Math.max(1, it.story?.wantShots || it.story?.shots.length || 1);
   }
 
+  const m0 = (it: Item) => getModel(it.modelId);
+
   /** Estimated price of a new take of this result, or null if it can't be made again. */
   function recreateCost(it: Item): number | null {
     if (it.ad) return adCost(it.ad.plan, !!it.ad.refs?.length, !!it.ad.check?.on);
@@ -1494,7 +1496,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
     if (m.needsSource || m.takesImage) {
       if (!it.sourceUrl) return null; // the picture it was made from is gone
     }
-    return estimateCost(m, it.duration, it.kind === "video" && it.wantSound !== false);
+    return jobCost(m, it.duration, it.kind === "video" && it.wantSound !== false, it.quality);
   }
 
   /** Makes a new take straight away, with the same prompt and settings. It joins the same history and chat. */
@@ -1537,6 +1539,8 @@ export default function Studio({ mode }: { mode: AppMode }) {
       purpose: it.purpose,
       keyframeFor: it.keyframeFor,
       refs: it.refs,
+      scale: it.scale,
+      ...(m0(it)?.id === HD_VIDEO_MODEL.id ? { sound: false, hasAudio: it.hasAudio } : {}),
     });
   }
 
