@@ -1091,3 +1091,11 @@ select.text-input { appearance: auto; }
 .adapt-open { display: block; margin: 0 0 10px; text-align: left; }
 .adapt-box { margin-bottom: 12px; }
 .home-ideas { display: block; margin: 12px auto 0; }
+
+/* Connect ElevenLabs (brand kit) */
+.eleven { margin-top: 12px; border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; }
+.eleven summary { cursor: pointer; font-weight: 600; font-size: 14px; }
+.eleven-body { margin-top: 8px; }
+.eleven-body p { margin: 0 0 8px; }
+.eleven-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 4px; }
+.eleven-row .text-input { flex: 1 1 220px; min-width: 0; }

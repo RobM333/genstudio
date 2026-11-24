@@ -54,7 +54,7 @@ export async function POST(req: Request) {
           timer = setTimeout(() => reject(new Error("ad planner timed out")), TIMEOUT_MS);
         }),
       ]).finally(() => clearTimeout(timer))) as { data?: { output?: string } };
-      const plan = parseAdPlan(result?.data?.output ?? "", brief);
+      const plan = parseAdPlan(result?.data?.output ?? "", brief, revising ? body.plan?.voice : undefined);
       if (plan && planTexts(plan).every((t) => checkPrompt(t).ok)) return NextResponse.json({ plan, by: "ai" });
     } catch (err) {
       console.warn("ad planner fell back:", (err as Error)?.message);

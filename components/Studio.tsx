@@ -12,6 +12,9 @@ import AgreeModal, { hasAcceptedTerms } from "./AgreeModal";
 import Link from "next/link";
 import { progressView, type Phase } from "@/lib/progress";
 import ReferencesBox, { finishReference, loadRefs, saveRefs, type RefItem } from "./ReferencesBox";
+import { loadEleven, type ElevenConnection } from "./elevenConnect";
+import { OwnVoiceOptions } from "./VoiceOptions";
+import { isOwnVoice } from "@/lib/elevenlabs";
 import BrandKit, { brandInfo, hasBrand, KIT_PICTURES, loadBrand, saveBrand, type Brand } from "./BrandKit";
 import { brandLine, colorName } from "@/lib/brand";
 import type { Direction, DirectorReply } from "@/lib/director";
@@ -246,6 +249,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
   const [adCheck, setAdCheck] = useState(true); // check every scene and remake weak ones
   // Brand kit, saved in this browser and switched on per project.
   const [brand, setBrand] = useState<Brand>({ pictures: [] });
+  const [eleven, setEleven] = useState<ElevenConnection | null>(null); // the user's own ElevenLabs voices, in this browser only
   const [useBrand, setUseBrand] = useState(true);
   // Start an ad from a product page.
   const [productLink, setProductLink] = useState("");
@@ -322,6 +326,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
     setItems(loadItems());
     setRefs(loadRefs());
     setBrand(loadBrand());
+    setEleven(loadEleven());
     // Voiceovers start in the browser's language (changeable in the ad's options).
     setBrief((b) => (b.language ? b : { ...b, language: languageFromLocale(navigator.language) }));
     try {
@@ -1043,7 +1048,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
     const save = (j: AdJob, patch: Partial<Item> = {}) => update(start.id, { ad: JSON.parse(JSON.stringify(j)), ...patch });
     try {
       update(start.id, { status: "pending", error: undefined, stepStartedAt: Date.now(), phase: "working" });
-      const out = await buildAd(job, start.aspectRatio, save);
+      const out = await buildAd(job, start.aspectRatio, save, { live: mode === "live" });
       job.step = undefined;
       save(job, { status: "done", url: out.url, hasAudio: out.hasAudio, stage: "sound" });
     } catch (e) {
@@ -1155,7 +1160,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
       c.scenes * (AD_PRICES.scene + AD_PRICES.picture) +
       (c.card ? AD_PRICES.picture + endCardSeconds(plan.seconds) * AD_PRICES.cardPerSecond : 0) +
       (!withRefs && old.plan.look !== plan.look ? AD_PRICES.picture : 0) +
-      (c.voiceChars / 1000) * AD_PRICES.voicePer1000Chars +
+      (isOwnVoice(plan.voice) ? 0 : (c.voiceChars / 1000) * AD_PRICES.voicePer1000Chars) +
       (c.music ? AD_PRICES.musicPerMinute * Math.ceil(plan.seconds / 60) : 0) +
       plan.seconds * AD_PRICES.editPerSecond * 2
     );
@@ -2800,14 +2805,11 @@ export default function Studio({ mode }: { mode: AppMode }) {
           <label className="ad-label">
             🎙️ Voice
             <select className="text-input" value={adPlan.voice} onChange={(e) => editPlan({ voice: e.target.value })}>
-              {AD_VOICES.map((v) => (
-                <option key={v.id} value={v.id}>
-                  {v.label}
-                </option>
-              ))}
+              <OwnVoiceOptions eleven={eleven} current={adPlan.voice} />
             </select>
           </label>
         </div>
+        {isOwnVoice(adPlan.voice) && <p className="muted small g-hint">Your ElevenLabs voice reads the voiceover, billed to your ElevenLabs account, so it isn&apos;t in our price.</p>}
       </section>
 
       <section className="g-step">
@@ -3484,7 +3486,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
         )}
         {view === "templates" && templatesView}
         {view === "gallery" && galleryView}
-        {view === "brand" && <BrandKit brand={brand} onChange={setBrand} mode={mode} onUseIdea={makeIdea} />}
+        {view === "brand" && <BrandKit brand={brand} onChange={setBrand} mode={mode} onUseIdea={makeIdea} eleven={eleven} onEleven={setEleven} />}
       </main>
 
       {askTerms && (
