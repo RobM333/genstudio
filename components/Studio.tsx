@@ -14,6 +14,8 @@ import ReferencesBox, { finishReference, loadRefs, saveRefs, type RefItem } from
 import BrandKit, { brandInfo, hasBrand, KIT_PICTURES, loadBrand, saveBrand, type Brand } from "./BrandKit";
 import { brandLine, colorName } from "@/lib/brand";
 import type { Direction, DirectorReply } from "@/lib/director";
+import type { Idea } from "@/lib/ideas";
+import { AdaptBox, IdeasBox } from "./IdeaHelpers";
 import { describesSeveralShots, firstShot } from "@/lib/shots";
 import { addSoundTo, animateShot, joinShots, lastFrame, planStory, startPicture, type Story } from "./storyRunner";
 import { lengthAdvice, LONG_LENGTHS, MAX_STORY_SECONDS, type ShotPlan } from "@/lib/storyboard";
@@ -224,6 +226,10 @@ export default function Studio({ mode }: { mode: AppMode }) {
   const [directorError, setDirectorError] = useState<string | null>(null);
   const [directorAnswers, setDirectorAnswers] = useState("");
   const [directorPicked, setDirectorPicked] = useState<number | null>(null);
+  // Idea helpers: "Give me ideas", and "Make one like this for my brand" on examples and templates.
+  const [ideasOpen, setIdeasOpen] = useState(false);
+  const [adaptFor, setAdaptFor] = useState<number | null>(null); // which example card is being made "mine"
+  const [adaptTemplate, setAdaptTemplate] = useState(false);
   const polling = useRef(new Set<string>());
 
   const isAuto = choice === AUTO;
@@ -1125,7 +1131,34 @@ export default function Studio({ mode }: { mode: AppMode }) {
     });
   }
 
+  /** "Make this" on an idea: fills Create with it, ready for Generate. */
+  function makeIdea(idea: Idea) {
+    setAdMode(false);
+    setTemplate(null);
+    setFormError(null);
+    setDirectorPicked(null);
+    setKind(idea.kind);
+    setChoice(AUTO);
+    setAspectRatio(idea.shape);
+    if (idea.kind === "video") {
+      setStoryLen(null);
+      setDuration(idea.seconds || 5);
+    }
+    setPrompt(idea.prompt);
+    if (hasBrand(brand)) setUseBrand(true);
+    setComposing(true);
+    go("create");
+    setTimeout(() => document.querySelector(".g-go")?.scrollIntoView({ behavior: "smooth", block: "center" }), 120);
+  }
+
+  /** "Make one like this for my brand" on an example: Create opens with the rewritten prompt. */
+  function makeAdapted(k: MediaKind, shape: AspectRatio, newPrompt: string) {
+    setAdaptFor(null);
+    makeIdea({ title: "", why: "", kind: k, shape: shape as Idea["shape"], seconds: 5, prompt: newPrompt });
+  }
+
   function chooseTemplate(t: Template | null) {
+    setAdaptTemplate(false);
     setTemplate(t);
     setFormError(null);
     if (!t) return;
@@ -1328,8 +1361,8 @@ export default function Studio({ mode }: { mode: AppMode }) {
   const inspiration = (
     <div className="inspo">
       {INSPIRATION.map((ex, i) => (
+        <div key={ex.prompt} className="inspo-wrap">
         <button
-          key={ex.prompt}
           className="inspo-card"
           style={{ "--hue": String((i * 61 + 200) % 360) } as React.CSSProperties}
           onClick={() => {
@@ -1345,6 +1378,21 @@ export default function Studio({ mode }: { mode: AppMode }) {
           <span className="inspo-text">{ex.prompt}</span>
           <span className="inspo-cta">Use this prompt →</span>
         </button>
+        {adaptFor === i ? (
+          <AdaptBox
+            brand={brand}
+            mode={mode}
+            kind={ex.kind}
+            example={ex.prompt}
+            onClose={() => setAdaptFor(null)}
+            onDone={(out) => out.prompt && makeAdapted(ex.kind, ex.kind === "video" ? "16:9" : "1:1", out.prompt)}
+          />
+        ) : (
+          <button className="link-btn inspo-mine" onClick={() => setAdaptFor(i)}>
+            ✨ Make one like this for my brand
+          </button>
+        )}
+        </div>
       ))}
     </div>
   );
@@ -2467,6 +2515,27 @@ export default function Studio({ mode }: { mode: AppMode }) {
         </div>
         {template ? (
           <>
+            {adaptTemplate ? (
+              <AdaptBox
+                brand={brand}
+                mode={mode}
+                kind={template.kind}
+                example={fillTemplate(template, Object.fromEntries(template.fields.map((f) => [f.key, f.placeholder])))}
+                fields={template.fields.map(({ key, label, placeholder }) => ({ key, label, placeholder }))}
+                onClose={() => setAdaptTemplate(false)}
+                onDone={(out) => {
+                  setAdaptTemplate(false);
+                  if (!out.fields) return;
+                  const next = { ...fields, ...out.fields };
+                  setFields(next);
+                  setPrompt(fillTemplate(template, next));
+                }}
+              />
+            ) : (
+              <button className="link-btn adapt-open" onClick={() => setAdaptTemplate(true)}>
+                ✨ Make one like this for my brand: we fill in the blanks for your product
+              </button>
+            )}
             {templateFields}
             <label className="sub-label" htmlFor="prompt">
               Your prompt (edit freely)
@@ -2475,6 +2544,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
           </>
         ) : (
           <>
+            <IdeasBox brand={brand} mode={mode} open={ideasOpen} onOpen={setIdeasOpen} onUse={makeIdea} />
             {describeBlock}
             <div className="g-or">
               <span>or start from a template</span>
@@ -2732,6 +2802,18 @@ export default function Studio({ mode }: { mode: AppMode }) {
         </div>
         {formError && <p className="error">{formError}</p>}
       </div>
+      <button
+        className="link-btn home-ideas"
+        onClick={() => {
+          setAdMode(false);
+          setTemplate(null);
+          setIdeasOpen(true);
+          setComposing(true);
+          go("create");
+        }}
+      >
+        💡 Not sure what to make? Get 5 ideas for your business
+      </button>
 
       {notices}
 
@@ -2788,7 +2870,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
     <div className="page">
       <div className="page-head">
         <h1>Templates</h1>
-        <p className="muted">Ready-made ads for stores, socials and YouTube. Pick one, fill in the blanks, and generate.</p>
+        <p className="muted">Ready-made ads for stores, socials and YouTube. Pick one, fill in the blanks (or let us fill them for your brand), and generate.</p>
       </div>
       {(["image", "video"] as MediaKind[]).map((k) => (
         <section key={k} className="home-section">
@@ -2927,7 +3009,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
         )}
         {view === "templates" && templatesView}
         {view === "gallery" && galleryView}
-        {view === "brand" && <BrandKit brand={brand} onChange={setBrand} mode={mode} />}
+        {view === "brand" && <BrandKit brand={brand} onChange={setBrand} mode={mode} onUseIdea={makeIdea} />}
       </main>
 
       {askTerms && (

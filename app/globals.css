@@ -1031,3 +1031,21 @@ select.text-input { appearance: auto; }
 .pricing-foot { margin-top: 36px; }
 .shots-warning { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
 .shots-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* ---------- Idea helpers ---------- */
+.ideas-ask { margin-bottom: 12px; border-color: rgba(64, 200, 255, 0.5); background: rgba(64, 200, 255, 0.06); }
+.ideas-ask:hover { background: rgba(64, 200, 255, 0.12); }
+.ideas-box { margin-bottom: 12px; border-color: rgba(64, 200, 255, 0.4); background: rgba(64, 200, 255, 0.04); }
+.ideas-box .text-input { width: 100%; }
+.idea-tabs { margin: 6px 0 10px; }
+.idea-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
+.idea-cards { grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); }
+.idea-day { font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--cyan); }
+.inspo-wrap { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.inspo-wrap .inspo-card { width: 100%; }
+.inspo-mine { align-self: flex-start; font-size: 13px; text-align: left; }
+.inspo-wrap .adapt-box { padding: 10px; }
+.inspo-wrap .adapt-box .product-link-row { flex-direction: column; align-items: stretch; }
+.adapt-open { display: block; margin: 0 0 10px; text-align: left; }
+.adapt-box { margin-bottom: 12px; }
+.home-ideas { display: block; margin: 12px auto 0; }

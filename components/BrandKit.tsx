@@ -4,11 +4,13 @@ import type { AppMode } from "@/lib/config";
 import { AD_VOICES } from "@/lib/adplan";
 import { brandLine, colorName, type BrandInfo } from "@/lib/brand";
 import ReferencesBox, { type RefItem } from "./ReferencesBox";
+import { WeekPlan } from "./IdeaHelpers";
+import type { Idea } from "@/lib/ideas";
 
 // The brand kit page: save the brand once, then switch it on in any project.
 // It lives in this browser until accounts arrive.
 
-export type Brand = BrandInfo & { voice?: string; pictures: RefItem[] };
+export type Brand = BrandInfo & { business?: string; voice?: string; pictures: RefItem[] };
 
 const STORE = "genstudio.brand.v1";
 export const KIT_PICTURES = 12;
@@ -44,7 +46,17 @@ export function brandInfo(b: Brand): BrandInfo | undefined {
   return { name: b.name || undefined, colors: b.colors?.length ? b.colors : undefined, style: b.style || undefined };
 }
 
-export default function BrandKit({ brand, onChange, mode }: { brand: Brand; onChange: (b: Brand) => void; mode: AppMode }) {
+export default function BrandKit({
+  brand,
+  onChange,
+  mode,
+  onUseIdea,
+}: {
+  brand: Brand;
+  onChange: (b: Brand) => void;
+  mode: AppMode;
+  onUseIdea: (i: Idea) => void;
+}) {
   const colors = brand.colors ?? [];
   const setColor = (i: number, c: string) => onChange({ ...brand, colors: colors.map((x, j) => (j === i ? c : x)) });
   const line = brandLine(brandInfo(brand));
@@ -76,6 +88,17 @@ export default function BrandKit({ brand, onChange, mode }: { brand: Brand; onCh
           placeholder="e.g. Glow"
           value={brand.name ?? ""}
           onChange={(e) => onChange({ ...brand, name: e.target.value })}
+        />
+        <label className="sub-label" htmlFor="brand-business">
+          What you sell <span className="step-opt">used for ideas and the week plan</span>
+        </label>
+        <input
+          id="brand-business"
+          className="text-input"
+          maxLength={400}
+          placeholder="e.g. handmade soy candles in glass jars, sold online"
+          value={brand.business ?? ""}
+          onChange={(e) => onChange({ ...brand, business: e.target.value })}
         />
         <div className="sub-label">Brand colours (up to 3)</div>
         <div className="brand-colors">
@@ -128,6 +151,15 @@ export default function BrandKit({ brand, onChange, mode }: { brand: Brand; onCh
         <p className="muted small g-hint">
           A saved person keeps the same face in every project: that is how you reuse a presenter or a character. Only add people who agreed, and adults only.
         </p>
+      </section>
+
+      <section className="g-step">
+        <div className="g-head">
+          <span className="g-num">3</span>
+          <h2>Plan my week</h2>
+          <span className="step-opt">a post for each day, ready to make</span>
+        </div>
+        <WeekPlan brand={brand} mode={mode} onUse={onUseIdea} />
       </section>
 
       {line && (
