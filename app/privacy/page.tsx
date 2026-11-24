@@ -28,6 +28,12 @@ export default function Privacy() {
           your own browser (local storage), not on our servers. Clearing your browser data removes them.
         </li>
         <li>
+          <strong>Founding member sign-ups</strong>: if you claim a founding spot or join the waitlist on our sign-up
+          page, we keep your email address, and your first name and what you&apos;d like to make if you give them, with
+          the time you signed up. To stop one person filling the list with fake addresses, we also count sign-ups per
+          connection per day using a scrambled (hashed) form of your IP address that can&apos;t be read back.
+        </li>
+        <li>
           <strong>Later, when accounts and payments launch</strong>: your name and email, and billing details handled
           by our payment processor. We will never see or store your full card number.
         </li>
@@ -51,6 +57,10 @@ export default function Privacy() {
         <li>To create your Outputs and run the Service.</li>
         <li>To keep the Service safe: filtering prompts, preventing abuse, and responding to reports.</li>
         <li>To fix problems and understand which features are used, using aggregated data.</li>
+        <li>
+          To invite founding members and waitlist sign-ups, and email them about their spot and the founding offer. We
+          don&apos;t add you to other mailing lists, and every email lets you ask to be removed.
+        </li>
         <li>To meet legal obligations.</li>
       </ul>
       <p>
@@ -72,7 +82,7 @@ export default function Privacy() {
           keep or log it.
         </li>
         <li>
-          <strong>Service providers</strong>: hosting (Netlify), and later our database and payment providers. They act
+          <strong>Service providers</strong>: hosting (Netlify, which also stores the founding sign-up list), and later our database and payment providers. They act
           on our instructions.
         </li>
         <li>
@@ -91,7 +101,9 @@ export default function Privacy() {
       <h2>4. How long we keep it</h2>
       <p>
         We keep content only as long as needed to provide the Service. Files stored by our AI provider are kept for
-        [retention period per provider]. Server logs are kept for up to [30] days. When accounts launch, deleting your
+        [retention period per provider]. Server logs are kept for up to [30] days. Founding sign-ups are kept until you
+        ask us to remove them, or until you create an account (then your account details take over), and the daily
+        sign-up counts are deleted within [30] days. When accounts launch, deleting your
         account deletes your content within [30] days, except where the law requires us to keep it.
       </p>
 

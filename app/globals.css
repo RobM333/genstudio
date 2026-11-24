@@ -1142,3 +1142,59 @@ select.text-input { appearance: auto; }
 }
 .canva-drop.over { border-color: var(--accent); color: var(--text); }
 .canva-after { margin: 8px 0 0; }
+
+/* Founding 100 sign-up page (public). */
+.founding { max-width: 1120px; margin: 0 auto; padding: 20px 16px 48px; }
+.founding-top { display: flex; justify-content: space-between; align-items: center; padding: 4px 0 8px; }
+.founding-logo { display: block; height: 136px; width: auto; filter: drop-shadow(0 10px 30px rgba(139,124,255,0.35)); }
+@media (max-width: 860px) { .founding-logo { height: 96px; } }
+.founding-brand { font-weight: 800; font-size: 20px; letter-spacing: -0.02em; }
+.founding-hero { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr); gap: 40px; align-items: start; padding: 28px 0 32px; }
+.founding-kicker { margin: 0 0 12px; font-size: 13px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--cyan); }
+.founding-intro h1 { font-size: clamp(34px, 5vw, 54px); line-height: 1.04; letter-spacing: -0.03em; margin: 0 0 18px; }
+.founding-intro h1 em { font-family: var(--serif); font-weight: 400; background: var(--spectrum); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.founding-lede { font-size: 17px; color: #d6d6e2; max-width: 34em; margin: 0 0 20px; }
+.founding-perks-short { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; color: #e6e6ef; }
+.founding-card { background: var(--panel-solid); border: 1px solid var(--line-strong); border-radius: var(--radius); padding: 24px; box-shadow: 0 30px 80px -40px rgba(139,124,255,0.6); scroll-margin-top: 20px; }
+.founding-card h2 { font-size: 22px; margin: 6px 0 16px; letter-spacing: -0.01em; }
+.founding-spots { display: grid; gap: 8px; font-size: 14px; }
+.founding-meter { display: block; height: 6px; border-radius: 999px; background: rgba(255,255,255,0.08); overflow: hidden; }
+.founding-meter span { display: block; height: 100%; min-width: 4px; background: var(--spectrum); border-radius: 999px; }
+.founding-field { display: grid; gap: 6px; margin-bottom: 14px; font-size: 14px; font-weight: 600; }
+.founding-field em { font-style: normal; font-weight: 400; font-size: 12px; margin-left: 4px; }
+.founding-field input, .founding-field select {
+  width: 100%; font: inherit; font-weight: 400; color: var(--text); background: var(--bg-2);
+  border: 1px solid var(--line-strong); border-radius: 10px; padding: 11px 12px;
+}
+.founding-field input:focus, .founding-field select:focus { outline: 2px solid var(--cyan); outline-offset: 1px; }
+.founding-hp { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+.founding-agree { display: flex; gap: 10px; align-items: flex-start; font-size: 13px; color: #d6d6e2; margin: 4px 0 16px; }
+.founding-agree input { margin-top: 3px; accent-color: var(--iris); }
+.founding-agree a, .founding-foot a { color: var(--cyan); }
+.founding-error { color: var(--danger); font-size: 14px; margin: 0 0 12px; }
+.founding-fine { text-align: center; margin: 10px 0 0; }
+.founding-done { text-align: center; padding: 18px 4px; }
+.founding-check { width: 48px; height: 48px; margin: 0 auto 10px; border-radius: 50%; display: grid; place-items: center; font-size: 22px; font-weight: 800; color: #07070a; background: var(--spectrum); }
+.founding-section { padding: 36px 0 8px; }
+.founding-section > h2, .founding-two h2 { font-size: 26px; letter-spacing: -0.02em; margin: 0 0 6px; }
+.founding-gallery { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-top: 18px; }
+.founding-shot { position: relative; margin: 0; border-radius: var(--radius-sm); overflow: hidden; border: 1px solid var(--line); background: var(--panel-2); aspect-ratio: 4 / 3; }
+.founding-shot img, .founding-shot video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.founding-shot figcaption { position: absolute; inset: auto 0 0 0; padding: 28px 12px 12px; display: grid; gap: 6px; justify-items: start; font-size: 13px; background: linear-gradient(transparent, rgba(7,7,10,0.85)); }
+.founding-shot figcaption .tag { background: rgba(7,7,10,0.7); color: var(--text); border-color: rgba(255,255,255,0.2); backdrop-filter: blur(6px); }
+.founding-perks { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-top: 18px; }
+.founding-perk { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 18px; }
+.founding-perk h3, .founding-note h3 { font-size: 16px; margin: 0 0 6px; }
+.founding-perk p, .founding-note p { margin: 0; }
+.founding-two { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; }
+.founding-steps { margin: 14px 0 0; padding-left: 20px; display: grid; gap: 10px; color: #d6d6e2; }
+.founding-note { margin-top: 14px; }
+.founding-cta { display: flex; justify-content: center; padding: 40px 0 8px; }
+.founding-cta .generate { width: auto; padding: 14px 28px; }
+.founding-foot { text-align: center; padding-top: 32px; }
+@media (max-width: 860px) {
+  .founding-hero { grid-template-columns: 1fr; gap: 28px; padding-top: 28px; }
+  .founding-gallery { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .founding-perks, .founding-two { grid-template-columns: 1fr; gap: 14px; }
+}
+@media (max-width: 480px) { .founding-gallery { grid-template-columns: 1fr; } }
