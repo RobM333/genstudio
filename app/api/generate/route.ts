@@ -4,7 +4,7 @@ import { getModel, isFalMediaUrl, REFERENCE_IMAGE_MODEL, type AspectRatio } from
 import { makeDemoMedia } from "@/lib/demo";
 import { fal } from "@/lib/fal";
 import { checkPrompt, checkWithPersonPhoto } from "@/lib/safety";
-import { isRefKind, MAX_REFS, referenceInstructions, verify, type RefKind } from "@/lib/references";
+import { isRefKind, lockInstructions, MAX_REFS, referenceInstructions, verify, type RefKind } from "@/lib/references";
 import { enhancePrompt } from "@/lib/enhance";
 
 export const dynamic = "force-dynamic";
@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 const MAX_PROMPT = 2000;
 
 export async function POST(req: Request) {
-  let body: { modelId?: string; prompt?: string; aspectRatio?: string; duration?: number; sourceUrl?: string; sound?: boolean; enhance?: boolean; purpose?: string; refs?: { url?: string; kind?: string; token?: string }[]; productUrl?: string; productToken?: string };
+  let body: { modelId?: string; prompt?: string; aspectRatio?: string; duration?: number; sourceUrl?: string; sound?: boolean; enhance?: boolean; purpose?: string; scale?: number; refs?: { url?: string; kind?: string; token?: string }[]; productUrl?: string; productToken?: string };
   try {
     body = await req.json();
   } catch {
@@ -113,11 +113,13 @@ export async function POST(req: Request) {
   if (productUrl && (!isFalMediaUrl(productUrl) || !verify(String(body.productToken ?? ""), "result", productUrl)))
     return NextResponse.json({ error: "That product picture can't be used." }, { status: 400 });
   const refUrls = [...(productUrl ? [productUrl] : []), ...refs.map((r) => r.url)];
-  if (refs.length > 0) finalPrompt = `${referenceInstructions(refKinds)}\n${finalPrompt}`;
+  // "lock": the product picture is a video frame to correct, and the user's pictures follow it.
+  if (body.purpose === "lock" && productUrl && refs.length > 0) finalPrompt = `${lockInstructions(refKinds)}\n${finalPrompt}`;
+  else if (refs.length > 0) finalPrompt = `${referenceInstructions(refKinds, productUrl ? 1 : 0)}\n${finalPrompt}`;
 
   try {
     const { request_id } = await fal.queue.submit(model.id, {
-      input: model.buildInput({ prompt: finalPrompt, aspectRatio, duration, sourceUrl, sound: body.sound !== false, refUrls, avoid }),
+      input: model.buildInput({ prompt: finalPrompt, aspectRatio, duration, sourceUrl, sound: body.sound !== false, refUrls, avoid, scale: Number(body.scale) || undefined }),
     });
     return NextResponse.json({ status: "IN_QUEUE", requestId: request_id, modelId: model.id, aspectRatio, duration, enhancedPrompt, enhanceNote });
   } catch (err) {

@@ -7,6 +7,7 @@ export type ChatIntent =
   | { type: "final" }
   | { type: "sound" }
   | { type: "video" }
+  | { type: "hd" }
   | { type: "fix"; note: string };
 
 const CHECK =
@@ -14,6 +15,7 @@ const CHECK =
 const FINAL = /\b(final version|make (the |a )?final|best quality|higher quality|high quality|full quality)\b/i;
 const SOUND = /\b(add (some |the )?(sound|audio|music|sound effects)|with sound|needs? sound)\b/i;
 const VIDEO = /\b(animate( it| this)?|make (it |this )?(into )?(a )?video|bring (it |this )?to life|turn (it |this )?into (a )?video|make it move)\b/i;
+const HD = /\b(sharpen( it| this)?( to hd)?|in hd|to hd|make (it |this )?hd|full hd|1080p|upscale|higher resolution|more resolution|bigger file)\b/i;
 const SECONDS = /\b(\d{1,3})\s*(s|sec|secs|second|seconds)\b/i;
 const LONGER = /\b(longer|extend|lengthen)\b/i;
 
@@ -28,6 +30,7 @@ export function readChat(text: string, kind: "image" | "video"): ChatIntent {
     if (SOUND.test(t)) return { type: "sound" };
   }
   if (kind === "image" && VIDEO.test(t)) return { type: "video" };
+  if (HD.test(t) && t.split(/\s+/).length <= 8) return { type: "hd" };
   if (FINAL.test(t)) return { type: "final" };
   return { type: "fix", note: t };
 }

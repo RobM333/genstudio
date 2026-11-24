@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ADD_SOUND_MODEL, animateModelFor, costRange, EDIT_IMAGE_MODEL, estimateCost, KEYFRAME_MODEL_ID, REFERENCE_IMAGE_MODEL, formatCost, COST_NOTE, getModel, MODELS, type AspectRatio, type MediaKind } from "@/lib/models";
+import { ADD_SOUND_MODEL, animateModelFor, costRange, EDIT_IMAGE_MODEL, estimateCost, HD_IMAGE_MODEL, HD_VIDEO_MODEL, hdScaleFor, KEYFRAME_MODEL_ID, REFERENCE_IMAGE_MODEL, formatCost, COST_NOTE, getModel, MODELS, type AspectRatio, type MediaKind } from "@/lib/models";
+import { allClearlyWrong, extraCost, isNewImage, isTextToVideo, jobCost, pickBest, takesFor } from "@/lib/quality";
 import { autoAspectRatios, pickModel, type Quality } from "@/lib/router";
 import { fillTemplate, TEMPLATES, type Template } from "@/lib/templates";
 import type { AppMode } from "@/lib/config";
@@ -15,11 +16,11 @@ import BrandKit, { brandInfo, hasBrand, KIT_PICTURES, loadBrand, saveBrand, type
 import { brandLine, colorName } from "@/lib/brand";
 import type { Direction, DirectorReply } from "@/lib/director";
 import { describesSeveralShots, firstShot } from "@/lib/shots";
-import { addSoundTo, animateShot, joinShots, lastFrame, planStory, startPicture, type Story } from "./storyRunner";
+import { addSoundTo, animateShot, joinShots, lastFrame, lockFrame, planStory, startPicture, waitFor, type Story } from "./storyRunner";
 import { lengthAdvice, LONG_LENGTHS, MAX_STORY_SECONDS, type ShotPlan } from "@/lib/storyboard";
 import { nextLength, readChat } from "@/lib/chat";
 import { AD_LANGUAGES, AD_LENGTHS, AD_PRICES, AD_TONES, AD_VOICES, adCost, languageFromLocale, maxVoiceChars, checkCost, endCardSeconds, maxRedos, maxVoiceWords, redoCap, SCENE_SECONDS, sceneCount, sceneRemakeCost, type AdBrief, type AdPlan } from "@/lib/adplan";
-import { AD_T2V, buildAd, changedAdJob, newAdJob, type AdJob } from "./adRunner";
+import { AD_T2V, buildAd, changedAdJob, checkPart, newAdJob, type AdJob } from "./adRunner";
 import { ADVERTISE_PROMISE, asksForSpeech, decide, MONTHLY_CAP, promiseNote, type PromiseOutcome } from "@/lib/promise";
 import type { Analysis } from "@/lib/analyze";
 import { creditsFor } from "@/lib/pricing";
@@ -62,6 +63,8 @@ type Item = {
   refs?: RefItem[]; // the user's own reference pictures used for this picture
   story?: Story; // a longer video made from several linked shots
   ad?: AdJob; // a full ad: planned scenes, voiceover and music
+  takes?: Takes; // behind the scenes: checked first-frame pictures for a video, or two takes of a premium picture
+  scale?: number; // "Sharpen to HD": how much bigger the video gets
   creditUsd?: number; // what an ad version costs to make, worked out when it starts
   charged?: boolean; // its credits were counted (only once it finished, so failed jobs never use any)
   free?: boolean; // a remake given under the no wasted credits promise
@@ -76,6 +79,7 @@ type ChatAct =
   | { type: "final" }
   | { type: "sound" }
   | { type: "video" }
+  | { type: "hd" }
   | { type: "ad"; plan: AdPlan; note: string }
   | { type: "shape"; aspectRatio: AspectRatio };
 type ChatOffer = { label: string; cost: number; act: ChatAct; free?: boolean };
@@ -92,6 +96,21 @@ type ChatMsg = {
 };
 const CHAT_KEY = "genstudio.chat.v1";
 
+/**
+ * Work done before the result, behind the scenes. Videos: the first frame is made
+ * as a picture and checked before any video is paid for, then animated. Premium
+ * jobs make two takes and the checker keeps the better one.
+ */
+type Takes = {
+  count: number;
+  urls?: string[];
+  best?: string; // the take that was kept
+  bestIndex?: number;
+  redone?: boolean; // every take was clearly wrong, so one more was made with the fix
+  step?: string; // plain words for the progress label
+  animateModelId?: string; // video: the model that brings the picture to life
+};
+
 type KeyframePlan = {
   videoModelId: string;
   duration?: number;
@@ -105,7 +124,7 @@ type KeyframePlan = {
  * the scenes. Shots use a silent model; one soundtrack is added at the end.
  */
 function storyModels(videoModelId: string) {
-  const key = videoModelId.includes("hailuo") || videoModelId.includes("minimax") ? "hailuo" : "kling";
+  const key = videoModelId.includes("hailuo") || videoModelId.includes("minimax") ? "hailuo" : videoModelId.includes("kling/v4") ? "kling/v4" : "kling-video";
   const shot = animateModelFor(key);
   const first = MODELS.find((m) => m.kind === "video" && m.id.includes(key) && !m.takesImage) ?? shot;
   return { shot, first, seconds: shot.durations?.[0] ?? 5 };
@@ -115,7 +134,8 @@ function storyCost(videoModelId: string, shots: number, sound: boolean, withRefs
   return (
     shots * estimateCost(shot, seconds, false) +
     (sound ? estimateCost(ADD_SOUND_MODEL, shots * seconds, true) : 0) +
-    (withRefs ? estimateCost(REFERENCE_IMAGE_MODEL) : 0)
+    // With your own pictures: the opening picture, then one product check-and-correct before each later shot.
+    (withRefs ? shots * estimateCost(REFERENCE_IMAGE_MODEL) : 0)
   );
 }
 
@@ -137,6 +157,8 @@ type JobSpec = {
   purpose?: "keyframe" | "animate" | "refix";
   keyframeFor?: KeyframePlan;
   refs?: RefItem[];
+  scale?: number;
+  hasAudio?: boolean; // the source already has sound (Sharpen to HD keeps it)
 };
 
 const AUTO = "auto";
@@ -234,6 +256,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
   const [directorAnswers, setDirectorAnswers] = useState("");
   const [directorPicked, setDirectorPicked] = useState<number | null>(null);
   const polling = useRef(new Set<string>());
+  const takeRuns = useRef(new Set<string>());
   const madeHere = useRef(new Set<string>()); // jobs started on this page visit, so old gallery items are never counted again
   const nextFree = useRef(false); // the next job is a free remake under the promise
 
@@ -246,9 +269,10 @@ export default function Studio({ mode }: { mode: AppMode }) {
   const shapes = isAuto ? autoAspectRatios(kind) : model.aspectRatios;
   // The length to use right now (the stored one can lag a render behind a model change).
   const length = model.durations ? (model.durations.includes(duration ?? -1) ? duration : model.durations[0]) : undefined;
-  const cost = estimateCost(model, length, kind === "video" && sound);
-  const costWith = estimateCost(model, length, true);
-  const costWithout = estimateCost(model, length, false);
+  // Prices include the checked first picture of a video, and the second take on premium jobs.
+  const cost = jobCost(model, length, kind === "video" && sound);
+  const costWith = jobCost(model, length, true);
+  const costWithout = jobCost(model, length, false);
   const keyframeCost = estimateCost(getModel(KEYFRAME_MODEL_ID)!);
   const { seconds: shotSeconds } = storyModels(model.id);
   const storyShots = storyLen !== null ? Math.max(2, Math.round(storyLen / shotSeconds)) : 0;
@@ -420,6 +444,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
           sourceUrl,
           enhance: item.stage !== "sound" && item.enhance !== false,
           purpose: item.stage !== "sound" ? item.purpose : undefined,
+          scale: item.scale,
           refs: item.stage !== "sound" && item.refs?.length ? item.refs.map(({ url, kind, token }) => ({ url, kind, token })) : undefined,
         }),
       });
@@ -450,6 +475,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
   useEffect(() => {
     if (!loaded) return;
     items.filter((it) => it.status === "pending" && it.requestId && !it.story).forEach(poll);
+    items.filter((it) => it.status === "pending" && it.takes && !it.requestId && !it.story).forEach(runTakes);
     // Storyboards that were running when the page closed carry on from the first unfinished shot.
     items.filter((it) => it.status === "pending" && it.story).forEach(runStory);
     items.filter((it) => it.status === "pending" && it.ad).forEach(runAd);
@@ -466,17 +492,115 @@ export default function Studio({ mode }: { mode: AppMode }) {
       status: "pending",
       createdAt: Date.now(),
       wantSound,
-      hasAudio: Boolean(m.audio && wantSound),
+      hasAudio: spec.hasAudio ?? Boolean(m.audio && wantSound),
       stage: "video",
       free: nextFree.current || undefined,
     };
     nextFree.current = false;
     madeHere.current.add(item.id);
+    // Behind the scenes: a video made from words starts as a checked picture; premium pictures get two takes.
+    const plain = !spec.sourceUrl && !spec.purpose && !spec.refs?.length;
+    const takes = takesFor(m.id, spec.quality);
+    if (plain && isTextToVideo(m)) item.takes = { count: takes, animateModelId: animateModelFor(m.id).id };
+    else if (plain && isNewImage(m) && takes > 1) item.takes = { count: takes };
     setItems((prev) => [item, ...prev]);
     setSelectedId(item.id);
     setView("create");
     setComposing(false);
-    submitStep(item, spec.modelId, spec.sourceUrl);
+    if (item.takes) runTakes(item);
+    else submitStep(item, spec.modelId, spec.sourceUrl);
+  }
+
+  /** Makes one picture for the takes step and waits for it. */
+  async function makeTake(it: Item, modelId: string, prompt: string, video: boolean) {
+    const res = await fetch("/api/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        modelId,
+        prompt: video ? `${prompt}\nThis is the opening frame of the video: show the moment just before the main action.`.slice(0, 1990) : prompt,
+        aspectRatio: it.aspectRatio,
+        enhance: it.enhance !== false,
+        purpose: video ? "keyframe" : undefined,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error ?? "Something went wrong.");
+    const url = await waitFor(data.modelId ?? modelId, data);
+    return { url, demo: Boolean(data.demo), enhancedPrompt: data.enhancedPrompt as string | undefined, enhanceNote: data.enhanceNote as string | undefined };
+  }
+
+  /**
+   * The takes step. Makes the pictures, lets the checker pick the best, and for a
+   * video remakes the picture once if every take is clearly wrong, then animates
+   * it. Safe to call again after the page was closed.
+   */
+  async function runTakes(start: Item) {
+    if (!start.takes || takeRuns.current.has(start.id)) return;
+    takeRuns.current.add(start.id);
+    const t: Takes = { ...start.takes, urls: start.takes.urls ? [...start.takes.urls] : undefined };
+    const save = (patch: Partial<Item> = {}) => update(start.id, { takes: { ...t, urls: t.urls ? [...t.urls] : undefined }, ...patch });
+    const video = start.kind === "video";
+    const picModel = video ? KEYFRAME_MODEL_ID : start.modelId;
+    let info: { demo?: boolean; enhancedPrompt?: string; enhanceNote?: string } = {};
+    try {
+      if (!t.best) {
+        if (!t.urls?.length) {
+          t.step = video ? "Setting up the first shot" : `Making ${t.count} takes`;
+          save({ status: "pending", stepStartedAt: Date.now(), phase: "working", jobModelId: picModel });
+          const made = await Promise.allSettled(Array.from({ length: t.count }, () => makeTake(start, picModel, start.prompt, video)));
+          const ok = made.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
+          if (!ok.length) throw (made[0] as PromiseRejectedResult).reason;
+          info = ok[0];
+          t.urls = ok.map((x) => x.url);
+          save();
+        }
+        const urls = t.urls!;
+        t.step = urls.length > 1 ? "Picking the best take" : "Checking the shot";
+        save({ stepStartedAt: Date.now(), jobModelId: "fal-ai/any-llm/vision" });
+        const checks = await Promise.all(urls.map((u) => checkPart("image", u, basePrompt(start))));
+        let i = pickBest(checks);
+        if (video && !t.redone && allClearlyWrong(checks)) {
+          // Every picture is clearly wrong: one more, with the checker's fix, before any video is paid for.
+          t.redone = true;
+          t.step = "Fixing the first shot";
+          save({ stepStartedAt: Date.now(), jobModelId: picModel });
+          try {
+            const fix = (checks[i]?.fix || checks[i]?.problems.join(" ") || "").slice(0, 400);
+            const again = await makeTake(start, picModel, `${start.prompt}\nImportant: ${fix}`, true);
+            const c = await checkPart("image", again.url, basePrompt(start));
+            urls.push(again.url);
+            checks.push(c);
+            i = pickBest(checks);
+          } catch {
+            // keep the best of what we have
+          }
+        }
+        t.best = urls[i];
+        t.bestIndex = i;
+      }
+      t.step = undefined;
+      save();
+    } catch (e) {
+      t.step = undefined;
+      if (!video) {
+        save();
+        fail(start, (e as Error).message || "Something went wrong.");
+        takeRuns.current.delete(start.id);
+        return;
+      }
+      // The picture step failed: make the video straight from the words instead.
+      t.best = undefined;
+      save();
+      takeRuns.current.delete(start.id);
+      submitStep({ ...start, takes: t }, start.modelId);
+      return;
+    }
+    takeRuns.current.delete(start.id);
+    const next: Item = { ...start, takes: t, enhancedPrompt: info.enhancedPrompt ?? start.enhancedPrompt, enhanceNote: info.enhanceNote ?? start.enhanceNote };
+    if (!video) return stepDone(next, t.best!, info.demo);
+    // Animate the picture that was kept. The video model gets the user's words, not the picture's.
+    submitStep({ ...next, purpose: "animate" }, t.animateModelId ?? animateModelFor(start.modelId).id, t.best);
   }
 
   /** Adds sound to a silent video that's already in the gallery. */
@@ -935,7 +1059,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
     if (it.ad) return it.creditUsd ?? adCost(it.ad.plan, Boolean(it.ad.refs?.length), Boolean(it.ad.check?.on));
     if (it.story) return storyCost(it.story.firstModelId, Math.max(1, it.story.shots.length || it.story.wantShots || 1), it.story.sound, Boolean(it.story.refs?.length));
     const m = getModel(it.modelId);
-    return m ? estimateCost(m, it.duration, Boolean(it.wantSound)) : 0;
+    return m ? jobCost(m, it.duration, Boolean(it.wantSound), it.quality) : 0;
   }
 
   // The no wasted credits promise. A job's credits are only counted once it has
@@ -1140,9 +1264,22 @@ export default function Studio({ mode }: { mode: AppMode }) {
         shot.error = undefined;
         save({ stepStartedAt: Date.now(), jobModelId: story.shotModelId });
         try {
+          // Lock the product: the starting frame is checked against the user's own pictures first.
+          if (i > 0 && story.refs?.length && !story.shots[i - 1].lockedFrame) {
+            story.step = `Shot ${i + 1} of ${n}: keeping your product the same`;
+            save({ stepStartedAt: Date.now(), jobModelId: REFERENCE_IMAGE_MODEL.id });
+            await lockFrame(story, i, start.aspectRatio);
+            story.step = `Shot ${i + 1} of ${n}`;
+            save({ stepStartedAt: Date.now(), jobModelId: story.shotModelId });
+          }
           shot.url = await animateShot(story, i, start.aspectRatio);
           // The next shot continues from this one's last frame.
-          if (i < n - 1) shot.lastFrame = await lastFrame(shot.url);
+          if (i < n - 1) {
+            const f = await lastFrame(shot.url);
+            shot.lastFrame = f.url;
+            shot.lastFrameToken = f.token;
+            shot.lockedFrame = undefined;
+          }
           shot.status = "done";
         } catch (e) {
           shot.status = "failed";
@@ -1495,14 +1632,14 @@ export default function Studio({ mode }: { mode: AppMode }) {
         ? estimateCost(it.refs?.length ? REFERENCE_IMAGE_MODEL : getModel(KEYFRAME_MODEL_ID)!)
         : estimateCost(EDIT_IMAGE_MODEL);
     const m = getModel(it.modelId);
-    return m ? estimateCost(m, it.duration, it.wantSound !== false) : 0;
+    return m ? jobCost(m, it.duration, it.wantSound !== false, it.quality) : 0;
   }
 
   function finalCost(draft: Item): number {
     if (draft.refs?.length) return estimateCost(REFERENCE_IMAGE_MODEL);
     const pick = pickModel({ kind: draft.kind, prompt: draft.prompt, quality: "final", aspectRatio: draft.aspectRatio });
     const m = draft.purpose === "animate" ? animateModelFor(pick.model.id) : pick.model;
-    return estimateCost(m, fitDuration(m.durations, draft.duration), draft.kind === "video" && draft.wantSound !== false);
+    return jobCost(m, fitDuration(m.durations, draft.duration), draft.kind === "video" && draft.wantSound !== false, "final");
   }
 
   /** How a video gets to a new length: one clip if a model can do it, otherwise linked shots. */
@@ -1515,7 +1652,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
     const shots = Math.max(2, Math.round(seconds / shotLen));
     const total = single ? fitDuration(m!.durations, seconds)! : shots * shotLen;
     const snd = it.wantSound !== false;
-    const cost = single ? estimateCost(m!, total, snd) : storyCost(base, shots, snd, !!it.story?.refs?.length);
+    const cost = single ? jobCost(m!, total, snd, it.quality) : storyCost(base, shots, snd, !!it.story?.refs?.length);
     return { base, single, shots, total, cost };
   }
 
@@ -1557,6 +1694,38 @@ export default function Studio({ mode }: { mode: AppMode }) {
     const m = animateModelFor(pick.model.id);
     const d = m.durations?.[0];
     return { m, d, cost: estimateCost(m, d, true) };
+  }
+
+  /** "Sharpen to HD": how much it costs, or null when it's already sharp (or can't be done). */
+  function hdPlan(it: Item): { cost: number; scale?: number } | null {
+    if (!it.url || it.ad || it.status !== "done") return null;
+    if (it.kind === "image") return getModel(it.modelId)?.hd ? null : { cost: estimateCost(HD_IMAGE_MODEL) };
+    // The model that made the picture moving (the sound step afterwards doesn't change sharpness).
+    const base = it.story ? it.story.shotModelId : it.takes?.best && it.takes.animateModelId ? it.takes.animateModelId : it.modelId;
+    const scale = hdScaleFor(base);
+    return scale ? { cost: estimateCost(HD_VIDEO_MODEL, it.duration ?? 5), scale } : null;
+  }
+
+  /** Makes a sharper, full-size copy of a finished result. The original stays as it is. */
+  function doHd(it: Item) {
+    const p = hdPlan(it);
+    if (!p || !it.url) return;
+    const video = it.kind === "video";
+    runJob({
+      kind: it.kind,
+      modelId: video ? HD_VIDEO_MODEL.id : HD_IMAGE_MODEL.id,
+      prompt: basePrompt(it),
+      aspectRatio: it.aspectRatio,
+      duration: it.duration,
+      sourceUrl: it.url,
+      sound: video ? false : undefined,
+      hasAudio: video ? it.hasAudio : undefined,
+      scale: p.scale,
+      enhance: false,
+      parentId: it.id,
+      templateName: it.templateName,
+      autoReason: video ? "a sharper, full HD copy" : "a sharper copy, twice as big",
+    });
   }
 
   function doVideo(pic: Item) {
@@ -1672,6 +1841,18 @@ export default function Studio({ mode }: { mode: AppMode }) {
       }
       return;
     }
+    if (intent.type === "hd") {
+      const p = hdPlan(it);
+      if (!it.url) reply({ text: "This one didn't finish, so there's nothing to sharpen yet." });
+      else if (!p) reply({ text: "This one is already sharp and full size. Tell me what you'd like to change about it." });
+      else
+        reply({
+          text: `I'll make a sharper copy${it.kind === "video" ? " in full HD (1080p)" : ", twice as big"}. Your original stays as it is. That costs ${price(p.cost)}.`,
+          offers: [{ label: "✨ Sharpen to HD", cost: p.cost, act: { type: "hd" } }],
+          state: "open",
+        });
+      return;
+    }
     if (intent.type === "video") {
       if (!it.url) {
         reply({ text: "This picture didn't finish, so I can't turn it into a video yet." });
@@ -1739,6 +1920,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
     else if (a.type === "final") makeFinal(it);
     else if (a.type === "sound") addSound(it);
     else if (a.type === "video") doVideo(it);
+    else if (a.type === "hd") doHd(it);
     else if (a.type === "shape" && it.ad) makeShape(it, a.aspectRatio);
     else if (a.type === "ad" && it.ad) startAd(changedAdJob(it.ad, a.plan).job, { parentId: it.id, fixNote: a.note, aspectRatio: it.aspectRatio });
     if (offer.free) {
@@ -1779,6 +1961,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
       if ((selected.duration ?? 0) < MAX_STORY_SECONDS) chips.push({ label: `⏱️ Make it ${next}s`, text: `Make it ${next} seconds` });
       if (!selected.hasAudio) chips.push({ label: "🔊 Add sound", text: "Add sound" });
     } else chips.push({ label: "🎬 Turn into a video", text: "Turn it into a video" });
+    if (!selected.ad && hdPlan(selected)) chips.push({ label: "✨ Sharpen to HD", text: "Sharpen to HD" });
     if (selected.quality === "draft") chips.push({ label: "✦ Higher quality", text: "Make it higher quality" });
   }
 
@@ -2063,7 +2246,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
             {m.kind === "video" && !m.audio && <span className="sound-tag"> Sound can be added.</span>}
           </span>
           <span className="model-cost">
-            est. {formatCost(estimateCost(m, m.durations?.[0], false))} {m.kind === "video" ? `per ${m.durations?.[0]}s clip` : "per image"}
+            est. {formatCost(jobCost(m, m.durations?.[0], false))} {m.kind === "video" ? `per ${m.durations?.[0]}s clip` : "per image"}
           </span>
         </button>
       ))}
@@ -2733,6 +2916,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
           <dd>{new Date(selected.createdAt).toLocaleString()}</dd>
         </dl>
         {selected.enhanceNote && <p className="enhance-note">💡 {selected.enhanceNote}</p>}
+        {selected.status === "done" && selected.takes?.best && <p className="muted small">🎯 {takesNote(selected.kind, selected.takes)}</p>}
         {selected.promiseCheck === "running" && <p className="muted small promise-note">🔍 Checking it for clear faults…</p>}
         {selected.promise && <p className="promise-note">🛡️ {selected.promise.note}</p>}
         {selected.status === "done" && selected.url && selected.keyframeFor && <AnimateBox pic={selected} onAnimate={animate} />}
@@ -3243,8 +3427,29 @@ function PendingTile({ item }: { item: Item }) {
     );
   }
   const silentNeedsSound = item.kind === "video" && item.wantSound && !getModel(item.modelId)?.audio;
-  const steps = silentNeedsSound ? 2 : 1;
-  const step = item.stage === "sound" && steps === 2 ? 2 : 1;
+  // A video's checked first picture is its own step, before the video.
+  const pre = item.kind === "video" && item.takes ? 1 : 0;
+  if (item.takes?.step) {
+    const view = progressView({
+      phase: "working",
+      elapsedSec: (now - (item.stepStartedAt ?? now)) / 1000,
+      typicalSec: /check|pick/i.test(item.takes.step) ? 15 : 20,
+      step: 1,
+      steps: item.kind === "video" ? 1 + (silentNeedsSound ? 2 : 1) : 1,
+      stepLabel: item.takes.step,
+    });
+    return (
+      <div className="tile-state">
+        <span className="progress-label">{view.label}</span>
+        <div className="progress" role="progressbar" aria-valuenow={Math.round(view.percent)} aria-valuemin={0} aria-valuemax={100}>
+          <div className="progress-fill" style={{ width: `${view.percent}%` }} />
+        </div>
+        <span className="muted small">{view.timeLeft}</span>
+      </div>
+    );
+  }
+  const steps = (silentNeedsSound ? 2 : 1) + pre;
+  const step = (item.stage === "sound" && silentNeedsSound ? 2 : 1) + pre;
   const what = item.kind;
   const view = item.requestId
     ? progressView({
@@ -3266,6 +3471,15 @@ function PendingTile({ item }: { item: Item }) {
       <span className="muted small">{view.timeLeft}</span>
     </div>
   );
+}
+
+/** One plain line on the work done behind the scenes, shown with the result. */
+function takesNote(kind: MediaKind, t: Takes): string {
+  if (kind === "image") return `We made ${t.urls?.length ?? t.count} takes and our checker kept the best one.`;
+  const pics = t.urls?.length ?? 1;
+  return pics > 1
+    ? `We set up the first shot ${pics} ways, our checker kept the best one, then we brought it to life.`
+    : "We set up the first shot as a picture, our checker looked it over, then we brought it to life.";
 }
 
 function AnimateBox({ pic, onAnimate }: { pic: Item; onAnimate: (p: Item) => void }) {
