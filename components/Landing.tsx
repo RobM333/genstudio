@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { BRAND_LOGO, BRAND_NAME, LOGO_HAS_NAME, OFFER, TOTAL_SPOTS } from "@/lib/founding";
+import { BRAND_LOGO, BRAND_LOGO_SIZE, BRAND_NAME, LOGO_HAS_NAME, OFFER, TOTAL_SPOTS } from "@/lib/founding";
 import { dealColumns, makeLink, STUDIO_OPEN, STUDIO_PATH, templateLink, WALL, WALL_FILTERS, wallIn, type WallGroup, type WallItem } from "@/lib/landing";
 import { TEMPLATE_MEDIA } from "@/lib/showcase";
 import { sizeLabel, TEMPLATES } from "@/lib/templates";
@@ -28,7 +28,7 @@ export default function Landing({ signIn = false }: { signIn?: boolean }) {
         <Link href="/" className="l-brand" aria-label={`${BRAND_NAME} home`}>
           {BRAND_LOGO ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img className={LOGO_HAS_NAME ? "l-brand-wide" : undefined} src={BRAND_LOGO} alt="" width={LOGO_HAS_NAME ? 399 : 300} height={LOGO_HAS_NAME ? 100 : 315} />
+            <img className={LOGO_HAS_NAME ? "l-brand-logo" : undefined} src={BRAND_LOGO} alt="" {...BRAND_LOGO_SIZE} />
           ) : null}
           {!(BRAND_LOGO && LOGO_HAS_NAME) && <span>{BRAND_NAME}</span>}
         </Link>
