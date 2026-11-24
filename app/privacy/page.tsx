@@ -66,8 +66,19 @@ export default function Privacy() {
           They process it under their own terms and privacy policies.
         </li>
         <li>
+          <strong>Your ElevenLabs account</strong> (optional): if you connect it, your voiceover lines are sent to
+          ElevenLabs under your own ElevenLabs terms, and billed to your account there. Your ElevenLabs key is kept in
+          your browser. We don&apos;t store it, and when it has to pass through our servers for a request, we don&apos;t
+          keep or log it.
+        </li>
+        <li>
           <strong>Service providers</strong>: hosting (Netlify), and later our database and payment providers. They act
           on our instructions.
+        </li>
+        <li>
+          <strong>Your browser&apos;s voice typing</strong>: if you tap Speak, your browser turns your voice into text.
+          Some browsers (for example Chrome) do this on their maker&apos;s servers. We never receive or keep the
+          recording, only the words that appear in the box.
         </li>
         <li><strong>Authorities</strong>, when the law requires it or to protect people from serious harm.</li>
         <li><strong>A buyer or successor</strong>, if our business is sold or merged, under this policy.</li>
