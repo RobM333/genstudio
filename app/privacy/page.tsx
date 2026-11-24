@@ -70,12 +70,24 @@ export default function Privacy() {
         <li>To create your Outputs and run the Service.</li>
         <li>To keep the Service safe: filtering prompts, preventing abuse, and responding to reports.</li>
         <li>To fix problems and understand which features are used, using aggregated data.</li>
+        <li>To improve results for everyone, using your feedback (see below).</li>
         <li>
           To invite founding members and waitlist sign-ups, and email them about their spot and the founding offer. We
           don&apos;t add you to other mailing lists, and every email lets you ask to be removed.
         </li>
         <li>To meet legal obligations.</li>
       </ul>
+      <p>
+        <strong>Learning from feedback</strong>: when you fix, remake, check or rate a result, we note what kind of
+        problem it was (for example &quot;words on screen misspelled&quot;), whether it was a picture or a video, and
+        which model made it. When the same kind of problem keeps coming up for many different people, we update the
+        general instructions our prompt helper follows, so it happens less for everyone. To count different people
+        without knowing who they are, your browser sends a random number that we scramble. We don&apos;t keep your
+        name, email, pictures, faces or voice for this. If what you typed doesn&apos;t match a known problem, we keep a
+        short copy with contact details and links removed for up to 30 days so we can read it; the rest of these
+        notes are deleted after about four months. Your own words, pictures and results are never shown to other users
+        or added to their prompts, and this is not used to train AI models.
+      </p>
       <p>
         <strong>We do not use your content to train AI models, we don&apos;t sell your personal information, and we
         don&apos;t use it for targeted advertising.</strong>

@@ -6,6 +6,8 @@ import { fal } from "@/lib/fal";
 import { checkPrompt, checkWithPersonPhoto } from "@/lib/safety";
 import { isRefKind, lockInstructions, MAX_REFS, referenceInstructions, verify, type RefKind } from "@/lib/references";
 import { enhancePrompt } from "@/lib/enhance";
+import { lessonKind } from "@/lib/learn";
+import { lessonsFor } from "@/lib/learnStore";
 import { payForStep } from "@/lib/accounts/current";
 import { generateUsd } from "@/lib/accounts/credits";
 
@@ -14,7 +16,7 @@ export const dynamic = "force-dynamic";
 const MAX_PROMPT = 2000;
 
 export async function POST(req: Request) {
-  let body: { modelId?: string; prompt?: string; aspectRatio?: string; duration?: number; sourceUrl?: string; sound?: boolean; enhance?: boolean; purpose?: string; scale?: number; refs?: { url?: string; kind?: string; token?: string }[]; productUrl?: string; productToken?: string };
+  let body: { modelId?: string; prompt?: string; aspectRatio?: string; duration?: number; sourceUrl?: string; sound?: boolean; enhance?: boolean; purpose?: string; scale?: number; refs?: { url?: string; kind?: string; token?: string }[]; productUrl?: string; productToken?: string; lessons?: boolean };
   try {
     body = await req.json();
   } catch {
@@ -79,15 +81,20 @@ export async function POST(req: Request) {
   let enhancedPrompt: string | undefined;
   let enhanceNote: string | undefined;
   let avoid: string | undefined;
+  let lessonIds: string[] | undefined;
   if (body.enhance !== false && !model.needsSource) {
     const purpose =
       body.purpose === "refix" ? "refix" : body.purpose === "keyframe" ? "keyframe" : model.takesImage ? "animate" : "direct";
-    const e = await enhancePrompt(prompt, model, { live: mode === "live", sound: body.sound !== false, purpose, refKinds, seconds: duration });
+    // Rules learned from past fixes. "lessons: false" leaves them out, for side-by-side tests.
+    const lk = lessonKind(model.kind);
+    const lessons = body.lessons === false || !lk ? [] : await lessonsFor(lk);
+    const e = await enhancePrompt(prompt, model, { live: mode === "live", sound: body.sound !== false, purpose, refKinds, seconds: duration, lessons });
     if (e.by !== "none" && checkPrompt(e.prompt).ok && (!refKinds.includes("person") || checkWithPersonPhoto(e.prompt).ok)) {
       finalPrompt = e.prompt;
       enhancedPrompt = e.prompt;
       enhanceNote = e.note;
       avoid = e.avoid && checkPrompt(e.avoid).ok ? e.avoid : undefined;
+      if (lessons.length) lessonIds = lessons.map((l) => l.id);
     }
   }
 
@@ -103,6 +110,7 @@ export async function POST(req: Request) {
       duration,
       enhancedPrompt,
       enhanceNote,
+      lessons: lessonIds,
     });
   }
 
@@ -128,7 +136,7 @@ export async function POST(req: Request) {
       input: model.buildInput({ prompt: finalPrompt, aspectRatio, duration, sourceUrl, sound: body.sound !== false, refUrls, avoid, scale: Number(body.scale) || undefined }),
     });
     await pay.done(request_id);
-    return NextResponse.json({ status: "IN_QUEUE", requestId: request_id, modelId: model.id, aspectRatio, duration, enhancedPrompt, enhanceNote, credits: pay.credits || undefined });
+    return NextResponse.json({ status: "IN_QUEUE", requestId: request_id, modelId: model.id, aspectRatio, duration, enhancedPrompt, enhanceNote, lessons: lessonIds, credits: pay.credits || undefined });
   } catch (err) {
     await pay.undo();
     console.error("fal submit failed", err);
