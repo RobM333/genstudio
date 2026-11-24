@@ -1143,6 +1143,38 @@ select.text-input { appearance: auto; }
 .canva-drop.over { border-color: var(--accent); color: var(--text); }
 .canva-after { margin: 8px 0 0; }
 
+/* Learn from every fix: thumbs under a result, and the owner's /learn page */
+.rate-row { display: flex; align-items: center; gap: 6px; margin: 10px 0 0; }
+.rate-btn { background: rgba(255,255,255,0.05); border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; font-size: 0.95rem; cursor: pointer; color: inherit; }
+.rate-btn:hover { background: rgba(255,255,255,0.12); }
+.learn { max-width: 920px; }
+.learn-head h1 { font-size: clamp(2rem, 5vw, 2.8rem); margin: 0 0 8px; }
+.learn-head h1 em { font-family: var(--serif); font-weight: 400; }
+.learn-totals { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-top: 24px; }
+.learn-stat { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 12px 14px; display: flex; flex-direction: column; }
+.learn-stat strong { font-size: 1.5rem; }
+.learn-section { margin-top: 32px; }
+.learn-section h2 { font-size: 1.2rem; display: flex; align-items: center; gap: 8px; }
+.learn-count { background: var(--iris); color: #0a0a0f; border-radius: 999px; padding: 0 9px; font-size: 0.85rem; }
+.learn-card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 14px 16px; margin: 10px 0; }
+.learn-card-top { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.learn-tag { font-size: 0.75rem; border: 1px solid var(--line-strong); border-radius: 999px; padding: 1px 8px; color: var(--muted); }
+.learn-rule { margin: 8px 0; }
+.learn-measure { color: var(--ok); }
+.learn-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.learn-table { border: 1px solid var(--line); border-radius: var(--radius-sm); overflow: hidden; }
+.learn-row { display: grid; grid-template-columns: 2.4fr 0.8fr 0.7fr 0.7fr 2fr; gap: 8px; padding: 8px 12px; border-top: 1px solid var(--line); font-size: 0.9rem; }
+.learn-row-head { border-top: 0; color: var(--muted); font-size: 0.8rem; background: rgba(255,255,255,0.03); }
+@media (max-width: 640px) {
+  .learn-row { grid-template-columns: 1fr auto auto; }
+  .learn-row > span:nth-child(2), .learn-row > span:nth-child(5) { display: none; }
+}
+.learn-comments { padding-left: 18px; }
+.learn-comments li { margin: 6px 0; }
+.learn-form { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 14px 16px; }
+.learn-form-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.learn-form select, .learn-form textarea { background: var(--panel-2); color: var(--text); border: 1px solid var(--line-strong); border-radius: 10px; padding: 8px 10px; font: inherit; min-width: 0; max-width: 100%; }
+.learn-form button { align-self: flex-start; }
 /* Founding 100 sign-up page (public). */
 .founding { max-width: 1120px; margin: 0 auto; padding: 20px 16px 48px; }
 .founding-top { display: flex; justify-content: space-between; align-items: center; padding: 4px 0 8px; }
@@ -1312,6 +1344,72 @@ select.text-input { appearance: auto; }
   .l-viewer-media img, .l-viewer-media video { max-height: 60vh; }
 }
 
+/* ---------- Accounts: credits chip, sign-in, account and owner pages ---------- */
+.account-chip { display: grid; gap: 6px; padding: 10px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,0.03); }
+.credit-pill { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; color: var(--text); text-decoration: none; }
+.credit-pill strong { font-size: 18px; letter-spacing: -0.02em; }
+.credit-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 10px var(--ok); }
+.credit-pill.low .credit-dot { background: var(--warn); box-shadow: 0 0 10px var(--warn); }
+.account-line { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; min-width: 0; font-size: 12px; }
+.account-email { color: var(--muted); text-decoration: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.account-email:hover { color: var(--text); }
+.account-plan { flex: none; color: var(--faint); }
+.account-admin { font-size: 12px; color: var(--cyan); text-decoration: none; }
+@media (max-width: 900px) {
+  .account-chip { order: 2; padding: 6px 10px; border-radius: 999px; display: flex; align-items: center; }
+  .account-line, .account-admin { display: none; }
+  .credit-pill strong { font-size: 15px; }
+}
+
+.account-loading { min-height: 70vh; display: grid; place-content: center; justify-items: center; gap: 12px; color: var(--muted); padding: 16px; text-align: center; }
+
+.signin { min-height: 100vh; display: grid; place-items: center; padding: 24px 16px; }
+.signin-card { width: 100%; max-width: 420px; padding: 28px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); }
+.signin-card h1 { font-size: 26px; letter-spacing: -0.03em; margin: 18px 0 6px; }
+.signin-card form { display: grid; gap: 10px; }
+.signin-card input { width: 100%; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line-strong); background: var(--panel-2); color: var(--text); font: inherit; font-size: 16px; }
+.signin-card .generate { margin-top: 6px; justify-content: center; }
+.signin-brand { display: inline-flex; align-items: center; gap: 10px; color: var(--text); text-decoration: none; font-weight: 700; font-size: 20px; }
+.signin-brand img { width: 44px; height: auto; }
+.signin-label { font-size: 13px; color: var(--muted); margin-top: 6px; }
+.signin-code { letter-spacing: 0.4em; font-size: 22px !important; text-align: center; }
+.signin-error { color: var(--danger); margin: 12px 0 0; }
+.signin-note { color: var(--text); background: rgba(92,225,230,0.08); border: 1px solid rgba(92,225,230,0.25); border-radius: 12px; padding: 10px 12px; margin: 12px 0 0; }
+.signin-note a { color: var(--cyan); }
+.signin-again { font-size: 13px; color: var(--faint); margin: 6px 0 0; }
+.signin-again .link-btn { font-size: 13px; }
+.signin-foot { font-size: 12px; color: var(--faint); margin: 20px 0 0; }
+.signin-foot a { color: var(--muted); }
+
+.account-page { max-width: 760px; margin: 0 auto; padding: 24px 16px 64px; }
+.account-page h1 { font-size: 30px; letter-spacing: -0.03em; margin: 18px 0 2px; }
+.account-head { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.account-head .btn { text-decoration: none; }
+.account-card { margin-top: 18px; padding: 20px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); }
+.account-card h2 { font-size: 17px; margin: 0 0 10px; }
+.account-card p { margin: 0 0 10px; }
+.account-balance { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
+.account-big { font-size: 44px; font-weight: 700; letter-spacing: -0.04em; }
+.account-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.account-table td { padding: 8px 6px; border-top: 1px solid var(--line); vertical-align: middle; overflow-wrap: anywhere; }
+.account-table td.plus { color: var(--ok); text-align: right; white-space: nowrap; }
+.account-table td.minus { color: var(--muted); text-align: right; white-space: nowrap; }
+.account-confirm { margin-top: 8px; }
+.danger-zone { border-color: rgba(255,107,122,0.3); }
+.danger-zone input, .admin-form input { width: 100%; max-width: 320px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line-strong); background: var(--panel-2); color: var(--text); font: inherit; margin: 6px 0 12px; display: block; }
+.admin-form { display: grid; gap: 8px; }
+.admin-form input { margin: 0; max-width: none; }
+.admin-form .generate { justify-self: start; width: auto; padding: 11px 18px; }
+.admin-check { display: flex; align-items: center; gap: 8px; font-size: 14px; flex-wrap: wrap; }
+.admin-check input[type="radio"] { width: 16px; height: 16px; accent-color: var(--accent); margin: 0; }
+.admin-form .admin-num, .admin-num { width: 80px !important; display: inline-block !important; padding: 6px 8px !important; margin: 0 !important; border-radius: 8px; border: 1px solid var(--line-strong); background: var(--panel-2); color: var(--text); font: inherit; }
+.admin-add { white-space: nowrap; text-align: right; }
+.admin-add .btn { margin-left: 6px; }
+.admin-link { display: inline-block; margin-top: 6px; font-size: 12px; overflow-wrap: anywhere; color: var(--muted); }
+.l-signin { color: var(--muted); text-decoration: none; font-size: 14px; margin-left: auto; margin-right: 12px; }
+.l-signin:hover { color: var(--text); }
+@media (max-width: 720px) { .l-signin { margin-right: 4px; } }
+.l-signin + .l-top-cta { margin-left: 0 !important; }
 /* ---------- Film Set ---------- */
 .film-badge {
   font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;

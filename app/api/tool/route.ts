@@ -3,6 +3,8 @@ import { getMode } from "@/lib/config";
 import { fal } from "@/lib/fal";
 import { checkPrompt } from "@/lib/safety";
 import { AD_VOICES } from "@/lib/adplan";
+import { payForStep } from "@/lib/accounts/current";
+import { toolUsd } from "@/lib/accounts/credits";
 import { CARD_MOTION_MODEL, COMPOSE_MODEL, isFalMediaUrl, LAST_FRAME_MODEL, MERGE_VIDEOS_MODEL, MUSIC_MODEL, VOICE_MODEL } from "@/lib/models";
 
 export const dynamic = "force-dynamic";
@@ -113,14 +115,27 @@ export async function POST(req: Request) {
   if (mode === "demo") return NextResponse.json({ status: "COMPLETED", demo: true, url: demoUrl });
   if (!allUrls.every(isFalMediaUrl)) return NextResponse.json({ error: "Only results made in ToastyFly can be used." }, { status: 400 });
 
+  const pay = await payForStep(req, toolUsd(String(body.tool), { seconds, text: typeof input.text === "string" ? input.text : "" }), TOOL_NAMES[String(body.tool)] ?? "Video tool");
+  if (pay.error) return pay.error;
   try {
     const { request_id } = await fal.queue.submit(modelId, { input });
+    await pay.done(request_id);
     return NextResponse.json({ status: "IN_QUEUE", requestId: request_id, modelId });
   } catch (err) {
+    await pay.undo();
     console.error("tool submit failed", err);
     return NextResponse.json({ error: "The video tool had a problem. Please try again." }, { status: 502 });
   }
 }
+
+const TOOL_NAMES: Record<string, string> = {
+  "last-frame": "Next shot's start",
+  merge: "Joining shots",
+  voice: "Voiceover line",
+  music: "Music",
+  card: "End card",
+  mix: "Mixing the ad",
+};
 
 function bad() {
   return NextResponse.json({ error: "Bad request." }, { status: 400 });

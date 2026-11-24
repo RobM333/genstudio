@@ -34,9 +34,18 @@ import { ADVERTISE_PROMISE, asksForSpeech, decide, MONTHLY_CAP, promiseNote, typ
 import type { Analysis } from "@/lib/analyze";
 import { creditsFor } from "@/lib/pricing";
 import { logFreeRemake, logReturned, logUsed, usedThisMonth } from "./creditLog";
+import AccountChip from "./account/AccountChip";
 import { loadTalk, saveTalk, TalkForm, type TalkSetup } from "./TalkingVideo";
 import { buildTalk, type TalkJob } from "./talkRunner";
 import { MAX_TALK_SECONDS, talkCost, talkSeconds, TALK_VIDEO_MODEL_ID } from "@/lib/talk";
+import { report, type Report } from "./learnLog";
+
+/** The learned rules used across a result's steps, without repeats. */
+function joinLessons(a?: string[], b?: unknown): string[] | undefined {
+  const extra = Array.isArray(b) ? b.filter((x): x is string => typeof x === "string") : [];
+  const all = [...new Set([...(a ?? []), ...extra])];
+  return all.length ? all : undefined;
+}
 import { BRAND_MARK as BRAND_MARK_FILE, BRAND_NAME, FILM_NAME } from "@/lib/appBrand";
 import FilmSet, { draftFromJob } from "./FilmSet";
 import { buildFilm, changeShot, freshFilm, type FilmJob } from "./filmRunner";
@@ -90,6 +99,8 @@ type Item = {
   promiseCheck?: "running" | "done"; // the automatic check for clear faults
   promise?: { type: PromiseOutcome["type"]; note: string }; // what the promise did for this result
   design?: { from: "canva"; name: string; colors: string[]; token: string }; // a design the user brought in, not made here
+  lessons?: string[]; // the rules learned from past fixes that the prompt booster used for this result
+  rated?: "up" | "down"; // the person's thumbs up or down
 };
 
 /** Something the chat offers to do, always shown with its price first. */
@@ -498,6 +509,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
       soundError: undefined,
       enhancedPrompt: item.enhancedPrompt,
       enhanceNote: item.enhanceNote,
+      lessons: item.lessons,
     });
   }
 
@@ -524,7 +536,8 @@ export default function Studio({ mode }: { mode: AppMode }) {
       const duration = item.stage === "sound" ? item.duration : (data.duration ?? item.duration);
       const enhancedPrompt = item.stage === "sound" ? item.enhancedPrompt : (data.enhancedPrompt as string | undefined);
       const enhanceNote = item.stage === "sound" ? item.enhanceNote : (data.enhanceNote as string | undefined);
-      const next: Item = { ...item, jobModelId, duration, enhancedPrompt, enhanceNote };
+      const lessons = item.stage === "sound" ? item.lessons : joinLessons(item.lessons, data.lessons);
+      const next: Item = { ...item, jobModelId, duration, enhancedPrompt, enhanceNote, lessons };
       if (data.status === "COMPLETED") return stepDone(next, data.url, data.demo);
       update(item.id, {
         requestId: data.requestId as string,
@@ -532,6 +545,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
         duration,
         enhancedPrompt,
         enhanceNote,
+        lessons,
         stepStartedAt: Date.now(),
         phase: "queue",
         queuePosition: undefined,
@@ -600,7 +614,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error ?? "Something went wrong.");
     const url = await waitFor(data.modelId ?? modelId, data);
-    return { url, demo: Boolean(data.demo), enhancedPrompt: data.enhancedPrompt as string | undefined, enhanceNote: data.enhanceNote as string | undefined };
+    return { url, demo: Boolean(data.demo), enhancedPrompt: data.enhancedPrompt as string | undefined, enhanceNote: data.enhanceNote as string | undefined, lessons: data.lessons as string[] | undefined };
   }
 
   /**
@@ -615,7 +629,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
     const save = (patch: Partial<Item> = {}) => update(start.id, { takes: { ...t, urls: t.urls ? [...t.urls] : undefined }, ...patch });
     const video = start.kind === "video";
     const picModel = video ? KEYFRAME_MODEL_ID : start.modelId;
-    let info: { demo?: boolean; enhancedPrompt?: string; enhanceNote?: string } = {};
+    let info: { demo?: boolean; enhancedPrompt?: string; enhanceNote?: string; lessons?: string[] } = {};
     try {
       if (!t.best) {
         if (!t.urls?.length) {
@@ -670,7 +684,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
       return;
     }
     takeRuns.current.delete(start.id);
-    const next: Item = { ...start, takes: t, enhancedPrompt: info.enhancedPrompt ?? start.enhancedPrompt, enhanceNote: info.enhanceNote ?? start.enhanceNote };
+    const next: Item = { ...start, takes: t, enhancedPrompt: info.enhancedPrompt ?? start.enhancedPrompt, enhanceNote: info.enhanceNote ?? start.enhanceNote, lessons: joinLessons(start.lessons, info.lessons) };
     if (!video) return stepDone(next, t.best!, info.demo);
     // Animate the picture that was kept. The video model gets the user's words, not the picture's.
     submitStep({ ...next, purpose: "animate" }, t.animateModelId ?? animateModelFor(start.modelId).id, t.best);
@@ -1296,6 +1310,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
       if (!madeHere.current.has(it.id)) continue;
       if (it.status === "done" && !it.charged) {
         if (!it.free && mode === "live") logUsed(it.id, creditsFor(itemCost(it)), it.modelName);
+        if (!it.design) learn(it, "made");
         const check = mode === "live" && it.kind === "video" && Boolean(it.url) && !it.ad && !it.talk && !it.film && !it.demo;
         update(it.id, { charged: true, promise: undefined, promiseCheck: check ? "running" : undefined });
         if (check) autoCheck(it);
@@ -1318,7 +1333,9 @@ export default function Studio({ mode }: { mode: AppMode }) {
   async function autoCheck(it: Item) {
     const wantsSpeech = asksForSpeech(basePrompt(it));
     const [a, speech] = await Promise.all([analyzeItem(it).catch(() => null), it.hasAudio && !wantsSpeech ? speechCheck(it.url!) : Promise.resolve(false)]);
-    applyPromise(it, withSpeech(a, speech), rootOf(it.id), true);
+    const found = withSpeech(a, speech);
+    if (found?.problems.length) learn(it, "auto_check", { problems: found.problems, faults: found.faults });
+    applyPromise(it, found, rootOf(it.id), true);
   }
 
   /**
@@ -1876,6 +1893,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
   /** Makes a new take straight away, with the same prompt and settings. It joins the same history and chat. */
   function recreate(it: Item) {
     setRecreateAsk(null);
+    if (it.status === "done") learn(it, "recreate");
     if (it.film) {
       const job = freshFilm(it.film);
       const err = startFilm({ ...job, cast: job.cast.map((c) => ({ ...c, ...latestLook(c.id) })) }, it.id);
@@ -2163,6 +2181,29 @@ export default function Studio({ mode }: { mode: AppMode }) {
 
   const price = (c: number) => (mode === "demo" ? `nothing in demo mode (about ${formatCost(c)} live)` : `about ${formatCost(c)}`);
 
+  // ---------- Learn from every fix ----------
+
+  /** Tells the server what went wrong (or that a result finished), so common problems can be spotted. Free. */
+  function learn(it: Item, source: Report["source"], extra: Partial<Report> = {}) {
+    report({
+      source,
+      kind: it.ad ? "ad" : it.talk ? "talk" : it.kind,
+      model: it.story?.firstModelId ?? it.modelId,
+      result: it.id,
+      template: it.templateName,
+      lessons: it.lessons,
+      ...extra,
+    });
+  }
+
+  /** Thumbs up or down under a result. Down opens the chat with a question, so it can be fixed. */
+  function rateResult(it: Item, up: boolean) {
+    if (it.rated) return;
+    update(it.id, { rated: up ? "up" : "down" });
+    learn(it, up ? "thumbs_up" : "thumbs_down");
+    if (!up) say(rootOf(it.id), it.id, { text: "Sorry it missed. Tell me what's off and I'll fix it, or tap 🔍 Find what's wrong and I'll look for you." });
+  }
+
   function say(thread: string, itemId: string, msg: Partial<ChatMsg> & { text: string }): string {
     const id = crypto.randomUUID();
     setChat((prev) => [...prev, { id, thread, itemId, from: "ai", at: Date.now(), ...msg }]);
@@ -2307,6 +2348,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
       .then(([found, speech]) => {
         const a = withSpeech(found, speech)!;
         patchMsg(id, { state: "done" });
+        if (a.problems.length) learn(it, "check", { problems: a.problems, faults: a.faults });
         // A clear fault (or a borderline problem) is covered by the promise: credits back or a free remake.
         if (!it.ad && applyPromise(it, a, thread)) return;
         if (a.problems.length === 0) {
@@ -2536,6 +2578,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
       return;
     }
     if (offer.free) nextFree.current = true;
+    if (a.type === "fix" || a.type === "ad") learn(it, msg.problems?.length ? "find" : "fix", { note: a.note, problems: msg.problems });
     if (a.type === "fix") err = fixItem(it, a.note, a.newPrompt, a.how);
     else if (a.type === "length") doLength(it, a.seconds);
     else if (a.type === "final") makeFinal(it);
@@ -3692,6 +3735,19 @@ export default function Studio({ mode }: { mode: AppMode }) {
         {selected.status === "done" && selected.takes?.best && <p className="muted small">🎯 {takesNote(selected.kind, selected.takes)}</p>}
         {selected.promiseCheck === "running" && <p className="muted small promise-note">🔍 Checking it for clear faults…</p>}
         {selected.promise && <p className="promise-note">🛡️ {selected.promise.note}</p>}
+        {selected.status === "done" && selected.url && !selected.design && (
+          <p className="rate-row muted small">
+            {selected.rated ? (
+              selected.rated === "up" ? "Thanks! Glad it's right." : "Thanks. Tell me what's off in the chat and I'll fix it."
+            ) : (
+              <>
+                Is this what you wanted?
+                <button className="rate-btn" aria-label="Yes, it's right" title="Yes, it's right" onClick={() => rateResult(selected, true)}>👍</button>
+                <button className="rate-btn" aria-label="No, something's off" title="No, something's off" onClick={() => rateResult(selected, false)}>👎</button>
+              </>
+            )}
+          </p>
+        )}
         {selected.status === "done" && selected.url && selected.keyframeFor && <AnimateBox pic={selected} onAnimate={animate} />}
         {selected.story && selected.status !== "done" && (
           <StoryPanel item={selected} running={storyRuns.current.has(selected.id)} onResume={runStory} />
@@ -3995,6 +4051,8 @@ export default function Studio({ mode }: { mode: AppMode }) {
           </button>
           <ModeBadge mode={mode} />
         </div>
+
+        <AccountChip />
 
         <button
           className="new-btn"
