@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ADD_SOUND_MODEL, animateModelFor, costRange, EDIT_IMAGE_MODEL, estimateCost, KEYFRAME_MODEL_ID, REFERENCE_IMAGE_MODEL, formatCost, COST_NOTE, getModel, MODELS, type AspectRatio, type MediaKind } from "@/lib/models";
 import { autoAspectRatios, pickModel, type Quality } from "@/lib/router";
-import { fillTemplate, TEMPLATES, type Template } from "@/lib/templates";
+import { brandValues, coverCrop, fillTemplate, sizeLabel, TEMPLATE_CATEGORIES, templateByName, templatesIn, TEMPLATES, type Template, type TemplateCategory, type TemplateSize } from "@/lib/templates";
 import type { AppMode } from "@/lib/config";
 import { INSPIRATION, TEMPLATE_MEDIA, type ShowcaseMedia } from "@/lib/showcase";
 import { checkPrompt } from "@/lib/safety";
@@ -192,10 +192,12 @@ export default function Studio({ mode }: { mode: AppMode }) {
   const [duration, setDuration] = useState<number | undefined>(undefined);
   const [template, setTemplate] = useState<Template | null>(null);
   const [fields, setFields] = useState<Record<string, string>>({});
+  const [tplCat, setTplCat] = useState<TemplateCategory | "all">("all");
   const [items, setItems] = useState<Item[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [filter, setFilter] = useState<"all" | MediaKind>("all");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [recreateAsk, setRecreateAsk] = useState<string | null>(null); // a result waiting for "yes" before an expensive new take
   const [view, setView] = useState<View>("home");
   const [formError, setFormError] = useState<string | null>(null);
   const [refs, setRefs] = useState<RefItem[]>([]);
@@ -1241,12 +1243,15 @@ export default function Studio({ mode }: { mode: AppMode }) {
     setTemplate(t);
     setFormError(null);
     if (!t) return;
-    const empty: Record<string, string> = {};
-    setFields(empty);
+    const start = brandValues(t, brand);
+    setFields(start);
     setKind(t.kind);
     setAspectRatio(t.aspectRatio);
     setChoice(AUTO);
-    setPrompt(fillTemplate(t, empty));
+    setPrompt(fillTemplate(t, start));
+    // Business templates put the logo from the brand kit on the design.
+    const logo = t.category === "business" && brandOn ? brand.pictures.find((r) => r.kind === "logo") : undefined;
+    if (logo) setRefs((r) => (r.some((x) => x.url === logo.url) ? r : [...r, logo].slice(-4)));
   }
 
   function setField(key: string, value: string) {
@@ -1263,9 +1268,10 @@ export default function Studio({ mode }: { mode: AppMode }) {
 
   const shown = items.filter((it) => filter === "all" || it.kind === filter);
   const pendingCount = items.filter((it) => it.status === "pending").length;
-  const kindTemplates = TEMPLATES.filter((t) => t.kind === kind);
+  const kindTemplates = templatesIn(tplCat).filter((t) => t.kind === kind);
   const selected = items.find((it) => it.id === selectedId) ?? items[0] ?? null;
   const recent = items.slice(0, 12);
+  const selSize = selected ? sizedFor(selected) : undefined; // a picture made for an exact size (Teams background...)
 
   function go(v: View) {
     setView(v);
@@ -1316,6 +1322,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
     if (it.quality) setQuality(it.quality);
     setAspectRatio(it.aspectRatio);
     setPrompt(basePrompt(it).split(BRAND_MARK)[0]);
+    setEnhance(it.enhance !== false);
     if (it.kind === "video") {
       if (it.story && (it.duration ?? 0) > 10) setStoryLen(LONG_LENGTHS.find((d) => d >= (it.duration ?? 0)) ?? MAX_STORY_SECONDS);
       else {
@@ -1326,6 +1333,74 @@ export default function Studio({ mode }: { mode: AppMode }) {
     setComposing(true);
     go("create");
     setTimeout(() => document.getElementById("prompt")?.focus(), 80);
+  }
+
+  /** Opens the Create form with the improved prompt in the box, ready to change and generate. It isn't improved again. */
+  function editEnhanced(it: Item) {
+    if (!it.enhancedPrompt) return;
+    reuse(it);
+    setPrompt(it.enhancedPrompt.slice(0, 2000));
+    setEnhance(false);
+  }
+
+  /** How many shots a linked-shot video was planned with. */
+  function storyShotCount(it: Item): number {
+    return Math.max(1, it.story?.wantShots || it.story?.shots.length || 1);
+  }
+
+  /** Estimated price of a new take of this result, or null if it can't be made again. */
+  function recreateCost(it: Item): number | null {
+    if (it.ad) return adCost(it.ad.plan, !!it.ad.refs?.length, !!it.ad.check?.on);
+    if (it.story) return storyCost(it.story.firstModelId, storyShotCount(it), it.story.sound, !!it.story.refs?.length);
+    const m = getModel(it.modelId);
+    if (!m) return null;
+    if (m.needsSource || m.takesImage) {
+      if (!it.sourceUrl) return null; // the picture it was made from is gone
+    }
+    return estimateCost(m, it.duration, it.kind === "video" && it.wantSound !== false);
+  }
+
+  /** Makes a new take straight away, with the same prompt and settings. It joins the same history and chat. */
+  function recreate(it: Item) {
+    setRecreateAsk(null);
+    if (it.ad) {
+      const job = newAdJob(it.ad.brief, JSON.parse(JSON.stringify(it.ad.plan)) as AdPlan, it.ad.refs, !!it.ad.check?.on);
+      startAd(job, { parentId: it.id, aspectRatio: it.aspectRatio });
+      return;
+    }
+    if (it.story) {
+      const n = storyShotCount(it);
+      const planned = it.story.shots.map((s) => s.prompt).filter(Boolean);
+      startStory(it.prompt, planned.length === n ? planned : [], n, {
+        refs: it.story.refs as RefItem[] | undefined,
+        templateName: it.templateName,
+        parentId: it.id,
+        fixNote: it.fixNote,
+        videoModelId: it.story.firstModelId,
+        sound: it.story.sound,
+        aspectRatio: it.aspectRatio,
+      });
+      return;
+    }
+    runJob({
+      kind: it.kind,
+      modelId: it.modelId,
+      prompt: it.prompt,
+      aspectRatio: it.aspectRatio,
+      duration: it.duration,
+      quality: it.quality,
+      autoReason: it.autoReason,
+      parentId: it.id,
+      templateName: it.templateName,
+      sound: it.kind === "video" ? it.wantSound !== false : undefined,
+      enhance: it.enhance !== false,
+      sourceUrl: it.sourceUrl,
+      editPrompt: it.editPrompt,
+      fixNote: it.fixNote,
+      purpose: it.purpose,
+      keyframeFor: it.keyframeFor,
+      refs: it.refs,
+    });
   }
 
   function switchKind(k: MediaKind) {
@@ -1354,6 +1429,16 @@ export default function Studio({ mode }: { mode: AppMode }) {
     </div>
   );
 
+  const categoryChips = (
+    <div className="tpl-cats" role="tablist" aria-label="Template groups">
+      {([{ id: "all", label: "All" }, ...TEMPLATE_CATEGORIES] as { id: TemplateCategory | "all"; label: string }[]).map((c) => (
+        <button key={c.id} role="tab" aria-selected={tplCat === c.id} className={tplCat === c.id ? "chip active" : "chip"} onClick={() => setTplCat(c.id)}>
+          {c.label}
+        </button>
+      ))}
+    </div>
+  );
+
   const templateCard = (t: Template) => (
     <button
       key={t.id}
@@ -1363,11 +1448,15 @@ export default function Studio({ mode }: { mode: AppMode }) {
       style={{ "--hue": String((TEMPLATES.indexOf(t) * 47 + 190) % 360) } as React.CSSProperties}
     >
       <span className="template-art" aria-hidden>
-        <Showcase media={TEMPLATE_MEDIA[t.id]} />
+        {TEMPLATE_MEDIA[t.id] ? (
+          <Showcase media={TEMPLATE_MEDIA[t.id]} fit={!!t.size && t.size.w / t.size.h > 1.2} />
+        ) : (
+          <TemplateMock t={t} colors={t.category === "business" && brandOn ? brand.colors : undefined} name={t.category === "business" && brandOn ? brand.name : undefined} />
+        )}
       </span>
       <span className="template-ar">
         {t.kind === "video" ? "Video · " : ""}
-        {t.aspectRatio}
+        {t.size ? sizeLabel(t.size) : t.aspectRatio}
       </span>
       <span className="template-meta">
         <span className="template-name">{t.name}</span>
@@ -2019,6 +2108,22 @@ export default function Studio({ mode }: { mode: AppMode }) {
               </button>
             </span>
           </div>
+          {template.size && (
+            <p className="muted small tpl-size">
+              📐 Comes out at {sizeLabel(template.size)} pixels, the right size for {template.use}.
+            </p>
+          )}
+          {template.category === "business" &&
+            (brandOn ? (
+              <p className="muted small tpl-size">
+                🎨 Uses your brand kit{brand.name ? ` (${brand.name})` : ""}: colours and style
+                {brand.pictures.some((r) => r.kind === "logo") ? ", and your logo is added below" : ". Add your logo to the kit to put it on the design"}.
+              </p>
+            ) : (
+              <button className="link-btn brand-setup" onClick={() => go("brand")}>
+                🎨 {hasBrand(brand) ? "Switch on “Use my brand kit” in step 1" : "Set up your brand kit"} so this uses your name, colours and logo
+              </button>
+            ))}
           {template.fields.map((f) => (
             <label key={f.key} className="field">
               <span>{f.label}</span>
@@ -2600,9 +2705,11 @@ export default function Studio({ mode }: { mode: AppMode }) {
             <div className="g-or">
               <span>or start from a template</span>
             </div>
+            {categoryChips}
             <div className="templates g-templates" id="templates">
               {kindTemplates.map(templateCard)}
             </div>
+            {!kindTemplates.length && <p className="muted small">No {kind} templates in this group yet. Pick another group.</p>}
           </>
         )}
       </section>
@@ -2663,9 +2770,26 @@ export default function Studio({ mode }: { mode: AppMode }) {
     </div>
   );
 
+  // A new take of the selected result, priced before anything is spent. Big jobs ask once more.
+  const reCost = selected && selected.status !== "pending" && mode !== "locked" ? recreateCost(selected) : null;
+  const rePrice = reCost === null ? "" : mode === "demo" ? "free in demo" : `est. ${formatCost(reCost)}`;
+  const reAsking = !!selected && recreateAsk === selected.id && reCost !== null;
+  const reButton = selected && reCost !== null && (
+    <button
+      className="btn btn-recreate"
+      title="Make a new take right away, with the same prompt and settings"
+      onClick={() => (mode !== "demo" && reCost >= 1 ? setRecreateAsk(selected.id) : recreate(selected))}
+    >
+      {selected.status === "failed" ? "Try again" : "Re-create"} <span className="btn-price">{rePrice}</span>
+    </button>
+  );
+
   const stage = selected ? (
     <div className="canvas-wrap">
-      <div className={`canvas canvas-${selected.aspectRatio.replace(":", "x")}`}>
+      <div
+        className={`canvas canvas-${selected.aspectRatio.replace(":", "x")}${selSize ? " canvas-sized" : ""}`}
+        style={selSize ? ({ aspectRatio: `${selSize.w} / ${selSize.h}`, "--ar": selSize.w / selSize.h } as React.CSSProperties) : undefined}
+      >
         {selected.status === "pending" && <PendingTile item={selected} />}
         {selected.status === "failed" && (
           <div className="tile-state failed">
@@ -2689,11 +2813,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
               <p>{selected.enhancedPrompt}</p>
               <button
                 className="btn"
-                onClick={() => {
-                  setTemplate(null);
-                  setPrompt(selected.enhancedPrompt!);
-                  setEnhance(false);
-                }}
+                onClick={() => editEnhanced(selected)}
               >
                 Edit this prompt
               </button>
@@ -2710,6 +2830,20 @@ export default function Studio({ mode }: { mode: AppMode }) {
             <>
               <dt>Template</dt>
               <dd>{selected.templateName}</dd>
+              {selSize && (
+                <>
+                  <dt>Size</dt>
+                  <dd>
+                    {sizeLabel(selSize)} px <span className="muted small">(Download gives this exact size)</span>
+                  </dd>
+                  {templateByName(selected.templateName)?.tip && (
+                    <>
+                      <dt>How to use</dt>
+                      <dd>{templateByName(selected.templateName)!.tip}</dd>
+                    </>
+                  )}
+                </>
+              )}
             </>
           )}
           {selected.kind === "video" && (
@@ -2749,6 +2883,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
               Download
             </button>
           )}
+          {!reAsking && reButton}
           <button className="btn" onClick={() => reuse(selected)}>
             Reuse prompt
           </button>
@@ -2756,6 +2891,23 @@ export default function Studio({ mode }: { mode: AppMode }) {
             Delete
           </button>
         </div>
+        {reAsking && (
+          <div className="recreate-ask">
+            <p>
+              Make a new take of this {selected.ad ? "ad" : selected.kind} with the same prompt and settings? Estimated cost{" "}
+              <strong>{formatCost(reCost!)}</strong>
+              {selected.ad?.check?.on ? ", plus a little more only if the quality check has to fix a scene" : ""}. {COST_NOTE}
+            </p>
+            <div className="viewer-actions">
+              <button className="btn btn-light" onClick={() => recreate(selected)}>
+                Yes, make it
+              </button>
+              <button className="btn" onClick={() => setRecreateAsk(null)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   ) : (
@@ -2916,14 +3068,21 @@ export default function Studio({ mode }: { mode: AppMode }) {
     <div className="page">
       <div className="page-head">
         <h1>Templates</h1>
-        <p className="muted">Ready-made ads for stores, socials and YouTube. Pick one, fill in the blanks, and generate.</p>
+        <p className="muted">Ready-made designs for your business, your socials and your ads, already the right size. Pick one, fill in the blanks, and generate.</p>
+        {categoryChips}
       </div>
-      {(["image", "video"] as MediaKind[]).map((k) => (
-        <section key={k} className="home-section">
+      {TEMPLATE_CATEGORIES.filter((c) => tplCat === "all" || tplCat === c.id).map((c) => (
+        <section key={c.id} className="home-section">
           <div className="section-head">
-            <h2>{k === "image" ? "Images" : "Videos"}</h2>
+            <h2>{c.label}</h2>
           </div>
-          <div className="template-grid">{TEMPLATES.filter((t) => t.kind === k).map(templateCard)}</div>
+          <p className="muted small tpl-hint">{c.hint}</p>
+          {c.id === "business" && !hasBrand(brand) && (
+            <button className="link-btn brand-setup" onClick={() => go("brand")}>
+              🎨 Set up your brand kit first, so these use your name, colours and logo
+            </button>
+          )}
+          <div className="template-grid">{templatesIn(c.id).map(templateCard)}</div>
         </section>
       ))}
     </div>
@@ -3118,7 +3277,8 @@ function IconFolder() {
 }
 
 /** Real example media when we have it, otherwise a moving colour field. */
-function Showcase({ media }: { media?: ShowcaseMedia }) {
+/** fit: show the whole picture (wide banners and backgrounds) instead of filling the card. */
+function Showcase({ media, fit }: { media?: ShowcaseMedia; fit?: boolean }) {
   const [failed, setFailed] = useState(false);
   if (media && !failed) {
     if (media.kind === "video")
@@ -3135,7 +3295,7 @@ function Showcase({ media }: { media?: ShowcaseMedia }) {
         />
       );
     // eslint-disable-next-line @next/next/no-img-element
-    return <img className="showcase" src={media.src} alt="" loading="lazy" onError={() => setFailed(true)} />;
+    return <img className={fit ? "showcase showcase-fit" : "showcase"} src={media.src} alt="" loading="lazy" onError={() => setFailed(true)} />;
   }
   return (
     <span className="mesh">
@@ -3406,6 +3566,20 @@ function PlayOnce({ src }: { src: string }) {
 
 async function download(item: Item) {
   if (!item.url) return;
+  // Pictures made from a sized template (a Teams background, an Instagram post...) come out at that exact size.
+  const t = templateByName(item.templateName);
+  const size = sizedFor(item);
+  if (t && size) {
+    const sized = await toSize(item.url, size).catch(() => null);
+    if (sized) {
+      const a = document.createElement("a");
+      a.href = sized;
+      a.download = `${t.id}-${size.w}x${size.h}-${item.id.slice(0, 6)}.png`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(sized), 5000);
+      return;
+    }
+  }
   const ext = item.url.startsWith("data:image/svg") ? "svg" : item.kind === "video" ? "mp4" : "png";
   const name = `genstudio-${item.kind}-${item.id.slice(0, 8)}.${ext}`;
   let href = item.url;
@@ -3425,6 +3599,56 @@ async function download(item: Item) {
   a.download = name;
   a.click();
   if (revoke) setTimeout(() => URL.revokeObjectURL(href), 5000);
+}
+
+/** The exact size a picture should come out at: only when it was made from a sized template in the template's own shape. */
+function sizedFor(item: Item): TemplateSize | undefined {
+  const t = item.kind === "image" ? templateByName(item.templateName) : undefined;
+  return t?.size && t.aspectRatio === item.aspectRatio ? t.size : undefined;
+}
+
+/** Trims a picture to the template's shape (keeping the middle) and resizes it to the exact size. Returns a PNG link. */
+async function toSize(url: string, size: TemplateSize): Promise<string> {
+  const src = url.startsWith("data:") ? url : URL.createObjectURL(await (await fetch(url)).blob());
+  try {
+    const img = new Image();
+    img.src = src;
+    await img.decode();
+    const w = img.naturalWidth || size.w;
+    const h = img.naturalHeight || size.h;
+    const { sx, sy, sw, sh } = coverCrop(w, h, size);
+    const canvas = document.createElement("canvas");
+    canvas.width = size.w;
+    canvas.height = size.h;
+    const ctx = canvas.getContext("2d")!;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, size.w, size.h);
+    const blob = await new Promise<Blob | null>((ok) => canvas.toBlob(ok, "image/png"));
+    if (!blob) throw new Error("could not make the picture");
+    return URL.createObjectURL(blob);
+  } finally {
+    if (src !== url) URL.revokeObjectURL(src);
+  }
+}
+
+/** A drawn preview for a template without an example yet: its real shape, in the brand's colours when there are some. */
+function TemplateMock({ t, colors, name }: { t: Template; colors?: string[]; name?: string }) {
+  const ratio = t.size ? t.size.w / t.size.h : t.aspectRatio === "16:9" ? 16 / 9 : t.aspectRatio === "9:16" ? 9 / 16 : 1;
+  const [c1, c2, c3] = colors?.length ? [colors[0], colors[1] ?? colors[0], colors[2] ?? colors[1] ?? colors[0]] : [];
+  const call = t.id === "teams-background" || t.id === "zoom-background";
+  return (
+    <span className="mesh tpl-mock-wrap" style={c1 ? ({ "--b1": c1, "--b2": c2, "--b3": c3 } as React.CSSProperties) : undefined}>
+      <span className="blob b1" />
+      <span className="blob b2" />
+      <span className="blob b3" />
+      <span className={ratio >= 1 ? "tpl-mock wide" : "tpl-mock tall"} style={{ aspectRatio: String(ratio) }}>
+        {call && <span className="tpl-person" />}
+        <span className="tpl-mock-label">
+          {t.emoji} {name && t.category === "business" ? name : ""}
+        </span>
+      </span>
+    </span>
+  );
 }
 
 /** The user's own words, without any "Fix:" notes added later. */
