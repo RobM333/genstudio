@@ -4,7 +4,7 @@ import { getModel, isFalMediaUrl, REFERENCE_IMAGE_MODEL, type AspectRatio } from
 import { makeDemoMedia } from "@/lib/demo";
 import { fal } from "@/lib/fal";
 import { checkPrompt, checkWithPersonPhoto } from "@/lib/safety";
-import { isRefKind, lockInstructions, MAX_REFS, referenceInstructions, verify, type RefKind } from "@/lib/references";
+import { isRefKind, lockInstructions, MAX_REFS, referenceInstructions, refName, sceneInstructions, verify, type RefKind } from "@/lib/references";
 import { enhancePrompt } from "@/lib/enhance";
 import { lessonKind } from "@/lib/learn";
 import { lessonsFor } from "@/lib/learnStore";
@@ -16,7 +16,7 @@ export const dynamic = "force-dynamic";
 const MAX_PROMPT = 2000;
 
 export async function POST(req: Request) {
-  let body: { modelId?: string; prompt?: string; aspectRatio?: string; duration?: number; sourceUrl?: string; sound?: boolean; enhance?: boolean; purpose?: string; scale?: number; refs?: { url?: string; kind?: string; token?: string }[]; productUrl?: string; productToken?: string; lessons?: boolean };
+  let body: { modelId?: string; prompt?: string; aspectRatio?: string; duration?: number; sourceUrl?: string; sound?: boolean; enhance?: boolean; purpose?: string; scale?: number; refs?: { url?: string; kind?: string; token?: string; name?: string }[]; productUrl?: string; productToken?: string; lessons?: boolean; sameScene?: boolean };
   try {
     body = await req.json();
   } catch {
@@ -29,7 +29,7 @@ export async function POST(req: Request) {
   // The user's own reference pictures (product, logo, person). Only for new pictures.
   const rawRefs = Array.isArray(body.refs) ? body.refs.slice(0, MAX_REFS + 1) : [];
   if (rawRefs.length > MAX_REFS) return NextResponse.json({ error: `Use up to ${MAX_REFS} reference pictures.` }, { status: 400 });
-  const refs = rawRefs.map((r) => ({ url: String(r?.url ?? ""), kind: r?.kind, token: String(r?.token ?? "") }));
+  const refs = rawRefs.map((r) => ({ url: String(r?.url ?? ""), kind: r?.kind, token: String(r?.token ?? ""), name: r?.kind === "person" ? refName(r?.name) : undefined }));
   if (refs.some((r) => !isRefKind(r.kind))) return NextResponse.json({ error: "Bad reference picture." }, { status: 400 });
   const refKinds = refs.map((r) => r.kind as RefKind);
   // A product picture ToastyFly made earlier (signed when it finished), reused so every scene of an ad shows the same product.
@@ -124,8 +124,10 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "That product picture can't be used." }, { status: 400 });
   const refUrls = [...(productUrl ? [productUrl] : []), ...refs.map((r) => r.url)];
   // "lock": the product picture is a video frame to correct, and the user's pictures follow it.
+  const refNames = refs.map((r) => r.name);
   if (body.purpose === "lock" && productUrl && refs.length > 0) finalPrompt = `${lockInstructions(refKinds)}\n${finalPrompt}`;
-  else if (refs.length > 0) finalPrompt = `${referenceInstructions(refKinds, productUrl ? 1 : 0)}\n${finalPrompt}`;
+  else if (body.sameScene === true && productUrl) finalPrompt = `${sceneInstructions(refKinds, refNames)}\n${finalPrompt}`;
+  else if (refs.length > 0) finalPrompt = `${referenceInstructions(refKinds, productUrl ? 1 : 0, refNames)}\n${finalPrompt}`;
 
   // With accounts on, the credits for this step come off the person's balance first.
   const pay = await payForStep(req, generateUsd(model, duration, body.sound !== false), duration ? `${model.name}, ${duration}s` : model.name);

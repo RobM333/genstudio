@@ -342,7 +342,7 @@ export async function listUsers(): Promise<User[]> {
 // ---------- saved work (gallery, Brand kit and the rest) ----------
 
 /** The parts of the studio saved to the account. The ElevenLabs connection holds a key, so it is stored encrypted. */
-export const DATA_NAMES = ["gallery", "chat", "brand", "refs", "ideas", "talk", "elevenlabs"] as const;
+export const DATA_NAMES = ["gallery", "chat", "brand", "refs", "ideas", "talk", "elevenlabs", "film"] as const;
 export type DataName = (typeof DATA_NAMES)[number];
 const SECRET_DATA: DataName[] = ["elevenlabs"];
 export const MAX_DATA_BYTES = 1_500_000;

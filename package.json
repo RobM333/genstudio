@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "tsc --noEmit",
-    "test": "tsx tests/safety.test.ts && tsx tests/enhance.test.ts && tsx tests/progress.test.ts && tsx tests/storyboard.test.ts && tsx tests/chat.test.ts && tsx tests/adplan.test.ts && tsx tests/brand.test.ts && tsx tests/director.test.ts && tsx tests/shots.test.ts && tsx tests/templates.test.ts && tsx tests/promise.test.ts && tsx tests/quality.test.ts && tsx tests/ideas.test.ts && tsx tests/kind.test.ts && tsx tests/elevenlabs.test.ts && tsx tests/canva.test.ts && tsx tests/talk.test.ts && tsx tests/landing.test.ts && tsx tests/founding.test.ts && tsx tests/learn.test.ts && tsx --conditions=react-server tests/accounts.test.ts",
+    "test": "tsx tests/safety.test.ts && tsx tests/enhance.test.ts && tsx tests/progress.test.ts && tsx tests/storyboard.test.ts && tsx tests/chat.test.ts && tsx tests/adplan.test.ts && tsx tests/brand.test.ts && tsx tests/director.test.ts && tsx tests/shots.test.ts && tsx tests/templates.test.ts && tsx tests/promise.test.ts && tsx tests/quality.test.ts && tsx tests/ideas.test.ts && tsx tests/kind.test.ts && tsx tests/elevenlabs.test.ts && tsx tests/canva.test.ts && tsx tests/talk.test.ts && tsx tests/landing.test.ts && tsx tests/founding.test.ts && tsx tests/learn.test.ts && tsx tests/filmset.test.ts && tsx --conditions=react-server tests/accounts.test.ts",
     "prebuild": "node scripts/fetch-showcase.mjs",
     "predev": "node scripts/fetch-showcase.mjs"
   },
