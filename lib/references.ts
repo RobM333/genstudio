@@ -6,8 +6,11 @@
 
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-export type RefKind = "product" | "logo" | "person" | "style";
-export const REF_KINDS: RefKind[] = ["product", "logo", "person", "style"];
+// "character": the user's own mascot or invented character (a cartoon, an animal,
+// a toy, a slice of toast in sunglasses). It skips the human-face check, but a
+// photo of a real person, a child or a famous character is never allowed as one.
+export type RefKind = "product" | "logo" | "person" | "character" | "style";
+export const REF_KINDS: RefKind[] = ["product", "logo", "person", "character", "style"];
 export type Reference = { url: string; kind: RefKind; token: string; name?: string };
 
 export const MAX_REFS = 4;
@@ -35,7 +38,7 @@ export function verify(token: string, ...parts: string[]): boolean {
 
 /** What the checking AI looks for. Children are never allowed in uploads. */
 export function refCheckInstructions(kind: RefKind): string {
-  return `You check pictures that users upload to an ad generator, before they are used. The user says this is: ${kind === "person" ? "a photo of a person (who agreed to be used)" : kind === "logo" ? "their logo" : kind === "style" ? "a style reference" : "a product photo"}.
+  return `You check pictures that users upload to an ad generator, before they are used. The user says this is: ${kind === "person" ? "a photo of a person (who agreed to be used)" : kind === "logo" ? "their logo" : kind === "style" ? "a style reference" : kind === "character" ? "their own mascot or invented character (a cartoon, animal, creature, toy or object with a face)" : "a product photo"}.
 Answer these about the picture:
 - minor: does it show anyone who could be under 18 (a child, a baby or a teenager)?
 - nudity: does it show nudity, underwear-only, or sexual content?
@@ -43,7 +46,9 @@ Answer these about the picture:
 - people: how many people are visible (0 if none)?
 - matches: does it plausibly match what the user says it is?
 - famous: does it show a widely recognisable public figure (a celebrity, politician, athlete or other famous person)? Answer false for ordinary people.
-Reply with JSON only: {"minor": false, "nudity": false, "gore": false, "people": 0, "matches": true, "famous": false}`;
+- real_person_photo: is it a photo, or a photo-realistic picture, of a real human being (not a cartoon, mascot, toy or stylised character)?
+- known_character: is it a well-known character owned by someone else (from a film, TV show, game, comic or another company's mascot)? Answer false for original characters.
+Reply with JSON only: {"minor": false, "nudity": false, "gore": false, "people": 0, "matches": true, "famous": false, "real_person_photo": false, "known_character": false}`;
 }
 
 export type RefCheck = { ok: true } | { ok: false; reason: string };
@@ -66,6 +71,12 @@ export function judgeRefCheck(raw: string, kind: RefKind): RefCheck {
   if (kind === "person" && people > 1) return { ok: false, reason: "Please use a photo of just one person, so we know who agreed to it." };
   // Famous people can't be used as a person reference: they can't agree to it here.
   if (kind === "person" && j.famous === true) return { ok: false, reason: "This looks like a well-known person. You can only use photos of yourself or of people who agreed to it, never public figures." };
+  // A character or mascot skips the face check, so a real person can't be slipped in under it.
+  if (kind === "character" && (j.real_person_photo === true || j.famous === true))
+    return { ok: false, reason: "This looks like a photo of a real person. Add people as Person instead, so we can check they agreed to it." };
+  if (kind === "character" && j.known_character === true)
+    return { ok: false, reason: "This looks like a well-known character that belongs to someone else. Use your own original character or mascot." };
+  if (kind === "character" && j.matches === false) return { ok: false, reason: "We couldn't see a character in this picture. Try a clear picture of your mascot or character on its own." };
   return { ok: true };
 }
 
@@ -73,6 +84,7 @@ const LABEL: Record<RefKind, string> = {
   product: "the user's product",
   logo: "the user's logo",
   person: "the person to feature",
+  character: "the user's own character or mascot",
   style: "the look and style to follow",
 };
 
@@ -80,7 +92,7 @@ const LABEL: Record<RefKind, string> = {
 export function referenceInstructions(kinds: RefKind[], offset = 0, names: (string | undefined)[] = []): string {
   const lines = kinds.map((k, i) => {
     // A saved character carries a name, so a scene with two people knows who is who.
-    const what = k === "person" && names[i] ? `${names[i]}, a person to feature` : LABEL[k];
+    const what = k === "person" && names[i] ? `${names[i]}, a person to feature` : k === "character" && names[i] ? `${names[i]}, the user's own character or mascot` : LABEL[k];
     const how =
       k === "product"
         ? "keep its exact shape, colours, materials, label and any text"
@@ -88,6 +100,8 @@ export function referenceInstructions(kinds: RefKind[], offset = 0, names: (stri
           ? "reproduce it exactly, same shapes, colours and lettering, placed where it naturally belongs (on the product, a sign or a corner), not distorted"
           : k === "person"
             ? "keep the same face and identity; same age; dressed appropriately; no change to body shape"
+            : k === "character"
+              ? "it is a character, not a product: keep its exact design, shape, colours, face, outfit and accessories (anything it wears, such as glasses, stays on); it can move, pose and show expressions, and is never shown on a screen, poster or package"
             : "match its colours, lighting and mood, but not its content";
     return `Image ${i + 1 + offset} is ${what}: ${how}.`;
   });

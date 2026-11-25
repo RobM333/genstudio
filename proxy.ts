@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { isPublicPath, isSignInPath } from "./lib/publicPaths";
+import { isCronPath, isPublicPath, isSignInPath } from "./lib/publicPaths";
 import { accountsOn } from "./lib/accounts/config";
 import { readSession, SESSION_COOKIE } from "./lib/accounts/session";
 
@@ -18,7 +18,7 @@ import { readSession, SESSION_COOKIE } from "./lib/accounts/session";
 // public can spend credit.
 export function proxy(req: NextRequest) {
   const path = req.nextUrl.pathname;
-  if (isPublicPath(path)) return NextResponse.next();
+  if (isPublicPath(path) || isCronPath(path)) return NextResponse.next();
 
   if (accountsOn()) {
     if (isSignInPath(path)) return NextResponse.next();

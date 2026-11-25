@@ -47,3 +47,14 @@ export function cookieFrom(header: string | null | undefined, name = SESSION_COO
   }
   return null;
 }
+
+/** The key the daily job (netlify/functions/founding-daily.mts) shows to run the founding reminders. */
+export function cronKey(): string {
+  return createHmac("sha256", authSecret()).update("founding-daily").digest("hex");
+}
+
+export function isCronKey(given: string | null | undefined): boolean {
+  const want = Buffer.from(cronKey());
+  const got = Buffer.from(String(given ?? ""));
+  return want.length === got.length && timingSafeEqual(want, got);
+}

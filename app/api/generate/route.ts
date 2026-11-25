@@ -10,13 +10,14 @@ import { lessonKind } from "@/lib/learn";
 import { lessonsFor } from "@/lib/learnStore";
 import { payForStep } from "@/lib/accounts/current";
 import { generateUsd } from "@/lib/accounts/credits";
+import { SCENE_AVOID } from "@/lib/adplan";
 
 export const dynamic = "force-dynamic";
 
 const MAX_PROMPT = 2000;
 
 export async function POST(req: Request) {
-  let body: { modelId?: string; prompt?: string; aspectRatio?: string; duration?: number; sourceUrl?: string; sound?: boolean; enhance?: boolean; purpose?: string; scale?: number; refs?: { url?: string; kind?: string; token?: string; name?: string }[]; productUrl?: string; productToken?: string; lessons?: boolean; sameScene?: boolean };
+  let body: { modelId?: string; prompt?: string; aspectRatio?: string; duration?: number; sourceUrl?: string; sound?: boolean; enhance?: boolean; purpose?: string; scale?: number; refs?: { url?: string; kind?: string; token?: string; name?: string }[]; productUrl?: string; productToken?: string; lessons?: boolean; sameScene?: boolean; noText?: boolean };
   try {
     body = await req.json();
   } catch {
@@ -29,7 +30,7 @@ export async function POST(req: Request) {
   // The user's own reference pictures (product, logo, person). Only for new pictures.
   const rawRefs = Array.isArray(body.refs) ? body.refs.slice(0, MAX_REFS + 1) : [];
   if (rawRefs.length > MAX_REFS) return NextResponse.json({ error: `Use up to ${MAX_REFS} reference pictures.` }, { status: 400 });
-  const refs = rawRefs.map((r) => ({ url: String(r?.url ?? ""), kind: r?.kind, token: String(r?.token ?? ""), name: r?.kind === "person" ? refName(r?.name) : undefined }));
+  const refs = rawRefs.map((r) => ({ url: String(r?.url ?? ""), kind: r?.kind, token: String(r?.token ?? ""), name: r?.kind === "person" || r?.kind === "character" ? refName(r?.name) : undefined }));
   if (refs.some((r) => !isRefKind(r.kind))) return NextResponse.json({ error: "Bad reference picture." }, { status: 400 });
   const refKinds = refs.map((r) => r.kind as RefKind);
   // A product picture ToastyFly made earlier (signed when it finished), reused so every scene of an ad shows the same product.
@@ -128,6 +129,9 @@ export async function POST(req: Request) {
   if (body.purpose === "lock" && productUrl && refs.length > 0) finalPrompt = `${lockInstructions(refKinds)}\n${finalPrompt}`;
   else if (body.sameScene === true && productUrl) finalPrompt = `${sceneInstructions(refKinds, refNames)}\n${finalPrompt}`;
   else if (refs.length > 0) finalPrompt = `${referenceInstructions(refKinds, productUrl ? 1 : 0, refNames)}\n${finalPrompt}`;
+
+  // Ad scenes carry no writing unless the person asked for it: the video model is told to leave it out.
+  if (body.noText === true && model.kind === "video") avoid = [avoid, SCENE_AVOID].filter(Boolean).join(", ").slice(0, 400);
 
   // With accounts on, the credits for this step come off the person's balance first.
   const pay = await payForStep(req, generateUsd(model, duration, body.sound !== false), duration ? `${model.name}, ${duration}s` : model.name);

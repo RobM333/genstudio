@@ -9,8 +9,11 @@ import { PLAN_NAMES, signOut, type Me } from "./Account";
 import { clearDevice, SYNCED } from "./sync";
 import { BRAND_NAME } from "@/lib/founding";
 import { MONTHLY_CAP } from "@/lib/promise";
+import { foundingPriceLines, SHARE_LINE } from "@/lib/foundingOffer";
 
 type Line = { at: number; type: string; credits: number; balance: number; what: string };
+type Referral = { code: string | null; joined: number; credited: number; waiting: number; max: number; bonus: number };
+type Stage = { stage: "active" | "ending-soon" | "ended"; endsOn: string; daysLeft: number } | null;
 
 const when = (at: number) => new Date(at).toLocaleString(undefined, { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
 const day = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" });
@@ -24,6 +27,9 @@ export default function AccountPage() {
   const [confirmText, setConfirmText] = useState("");
   const [deleting, setDeleting] = useState(false);
   const [done, setDone] = useState<string | null>(null);
+  const [referral, setReferral] = useState<Referral | null>(null);
+  const [stage, setStage] = useState<Stage>(null);
+  const [copied, setCopied] = useState(false);
 
   async function load() {
     const r = await fetch("/api/me?history=1", { cache: "no-store" }).catch(() => null);
@@ -35,6 +41,8 @@ export default function AccountPage() {
     if (!d?.user) return setError("We couldn't load your account. Please reload the page.");
     setMe(d.user);
     setLines(d.history ?? []);
+    setReferral(d.referral ?? null);
+    setStage(d.founding ?? null);
   }
 
   useEffect(() => {
@@ -109,6 +117,11 @@ export default function AccountPage() {
           {me.founding ? " (Founding member)" : ""}
           {me.planUntil ? `, free until ${day(me.planUntil)}` : ""}.
         </p>
+        {me.founding && me.planUntil && (
+          <p className="muted small">
+            Your free month comes with a set number of credits, not unlimited use. When they run out, you can still see and download everything you made, but new jobs stop. Nothing is ever charged.
+          </p>
+        )}
         <p className="muted small">
           Each job shows its price as an estimated range before it starts. Credits come off as each step starts, and any step that fails gives its credits
           straight back. Buying more credits is coming soon{me.admin ? "" : `. If you run low, reply to your invite email and we'll top you up`}.
@@ -117,6 +130,41 @@ export default function AccountPage() {
           Automatic refunds and free remakes used this month: {me.promiseUsed} of {MONTHLY_CAP}.
         </p>
       </section>
+
+      {stage && stage.stage !== "active" && (
+        <section className="account-card">
+          <h2>{stage.stage === "ended" ? "Your free Founding month has ended" : "Your free Founding month ends soon"}</h2>
+          {foundingPriceLines(stage.endsOn, stage.stage === "ended").map((l) => (
+            <p key={l}>{l}</p>
+          ))}
+          <p className="muted small">Paying isn&apos;t open yet. If you&apos;d like to stay, reply to any of our emails and we&apos;ll let you know as soon as you can.</p>
+        </section>
+      )}
+
+      {referral?.code && (
+        <section className="account-card">
+          <h2>Invite friends</h2>
+          <p>{SHARE_LINE} Their bonus is added once they have an account too.</p>
+          <div className="account-invite">
+            <code>{`${typeof window !== "undefined" ? window.location.origin : ""}/founding?ref=${referral.code}`}</code>
+            <button
+              className="btn"
+              onClick={() => {
+                void navigator.clipboard?.writeText(`${window.location.origin}/founding?ref=${referral.code}`);
+                setCopied(true);
+              }}
+            >
+              {copied ? "Copied" : "Copy link"}
+            </button>
+          </div>
+          <p className="muted small">
+            {referral.joined === 0
+              ? "No friends have joined with your link yet."
+              : `${referral.joined} joined with your link. Bonus added for ${referral.credited} of ${referral.max}${referral.waiting ? `, ${referral.waiting} waiting for their account` : ""}.`}
+            {referral.credited >= referral.max ? " You've had the most bonuses there are. Friends can still join with your link." : ""}
+          </p>
+        </section>
+      )}
 
       <section className="account-card">
         <h2>Where your credits went</h2>

@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { BRAND_LOGO, BRAND_LOGO_SIZE, BRAND_NAME, LOGO_HAS_NAME, MAKES, OFFER, spotsLine, TOTAL_SPOTS } from "@/lib/founding";
+import { BRAND_LOGO, BRAND_LOGO_SIZE, BRAND_NAME, cleanRefCode, LOGO_HAS_NAME, MAKES, OFFER, REFERRAL, spotsLine, TOTAL_SPOTS } from "@/lib/founding";
+import { FREE_MONTH_MAKES, foundingPriceShort, SHARE_LINE } from "@/lib/foundingOffer";
 
 // Public "Founding 100" sign-up page. Works without the app password.
 // Sign-ups go to /api/founding (kept in Netlify Blobs) and a copy goes to
@@ -23,11 +24,15 @@ const EXAMPLES: Example[] = [
 const PERKS = [
   {
     title: `${OFFER.freeMonths} month of ${OFFER.freePlan}, free`,
-    text: `${OFFER.freeCredits} credits to make pictures and videos with every model in the app. No card needed to claim your spot.`,
+    text: `${OFFER.freeCredits} credits to use with every model in the app. That makes ${FREE_MONTH_MAKES}. No card needed.`,
   },
   {
     title: "A founding price after that",
-    text: `If you decide to stay, you keep a founding price for as long as you stay, planned at ${OFFER.foundingDiscount} off. We confirm the exact price before you pay anything.`,
+    text: `If you decide to stay, you keep a founding price for as long as you stay, planned at ${OFFER.foundingDiscount} off: ${foundingPriceShort("creator")}, or ${foundingPriceShort("pro")}. These are estimates. We confirm the exact price before you pay anything.`,
+  },
+  {
+    title: "Bonus credits for sharing",
+    text: `You get your own invite link. ${SHARE_LINE}`,
   },
   {
     title: "A direct line to us",
@@ -36,15 +41,24 @@ const PERKS = [
 ];
 
 const STEPS = [
-  "Leave your email below to hold your spot.",
+  "Leave your email below to hold your spot. You'll get your own invite link to share if you like.",
   "We invite founding members in small groups as accounts open. We'll email you when yours is ready.",
-  "Use your free month. If you like what you made, we'd be grateful for an honest review or a result we can show. Only if you want to.",
+  `Use your free month and its ${OFFER.freeCredits} credits. If you like what you made, we'd be grateful for an honest review or a result we can show. Only if you want to.`,
+  `A few days before the month ends, we'll send you a short note with your founding price. If you don't stay, you move to the ${OFFER.afterPlan} plan (${OFFER.afterCredits} credits a month) and keep everything you made.`,
 ];
 
 const NOTES = [
   {
     q: "Do I have to pay anything?",
-    a: "No. Claiming a spot is free and needs no card. After your free month you choose whether to stay. Nothing renews by itself.",
+    a: "No. Claiming a spot is free and we don't ask for a card, so nobody is charged by surprise. After your free month you choose whether to stay. Nothing renews by itself.",
+  },
+  {
+    q: "Is the free month unlimited?",
+    a: `No. It's the ${OFFER.freePlan} plan with ${OFFER.freeCredits} credits, which makes ${FREE_MONTH_MAKES}. Every job shows its estimated credits before it starts. When the credits are used up, new jobs stop until you choose a plan, and you can still see and download everything you made.`,
+  },
+  {
+    q: "How do the bonus credits for friends work?",
+    a: `Share your personal link. When a friend joins with it, you each get ${REFERRAL.bonus} bonus credits once you both have accounts, for up to ${REFERRAL.maxFriends} friends. Your own second email doesn't count, and nor do throwaway inboxes.`,
   },
   {
     q: "When can I start?",
@@ -56,7 +70,11 @@ const NOTES = [
   },
 ];
 
-type Status = { kind: "idle" } | { kind: "sending" } | { kind: "done"; already: boolean; number: number | null } | { kind: "error"; message: string };
+type Status =
+  | { kind: "idle" }
+  | { kind: "sending" }
+  | { kind: "done"; already: boolean; number: number | null; refCode: string | null }
+  | { kind: "error"; message: string };
 
 export default function Founding() {
   const [left, setLeft] = useState<number | null>(null);
@@ -66,8 +84,20 @@ export default function Founding() {
   const [agree, setAgree] = useState(false);
   const [website, setWebsite] = useState(""); // hidden from people, catches bots
   const [status, setStatus] = useState<Status>({ kind: "idle" });
+  const [ref, setRef] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
+    // Came through a friend's invite link?
+    try {
+      const fromUrl = cleanRefCode(new URLSearchParams(window.location.search).get("ref"));
+      if (fromUrl) {
+        setRef(fromUrl);
+        sessionStorage.setItem("tf_ref", fromUrl);
+      } else setRef(cleanRefCode(sessionStorage.getItem("tf_ref")));
+    } catch {
+      // no storage: the link in the address bar is enough
+    }
     fetch("/api/founding", { cache: "no-store" })
       .then((r) => r.json())
       .then((d) => setLeft(typeof d.left === "number" ? d.left : null))
@@ -84,7 +114,7 @@ export default function Founding() {
       const res = await fetch("/api/founding", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, name, makes, agree, website }),
+        body: JSON.stringify({ email, name, makes, agree, website, ref }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -100,7 +130,12 @@ export default function Founding() {
           body: new URLSearchParams({ "form-name": "founding", email, name, makes }).toString(),
         }).catch(() => {});
       }
-      setStatus({ kind: "done", already: data.status === "already", number: typeof data.number === "number" ? data.number : null });
+      setStatus({
+        kind: "done",
+        already: data.status === "already",
+        number: typeof data.number === "number" ? data.number : null,
+        refCode: cleanRefCode(data.refCode),
+      });
     } catch {
       setStatus({ kind: "error", message: "We couldn't reach the server. Please check your connection and try again." });
     }
@@ -144,7 +179,8 @@ export default function Founding() {
           </p>
           <ul className="founding-perks-short">
             <li>✓ {OFFER.freeMonths} month of {OFFER.freePlan} free ({OFFER.freeCredits} credits)</li>
-            <li>✓ A founding price if you stay</li>
+            <li>✓ A founding price if you stay, no card needed now</li>
+            <li>✓ {REFERRAL.bonus} bonus credits for each friend you bring (up to {REFERRAL.maxFriends})</li>
             <li>✓ A direct line to the people building it</li>
           </ul>
         </div>
@@ -161,7 +197,27 @@ export default function Founding() {
                     ? "All founding spots were taken, so you're first in line for what comes next. We'll email you."
                     : "We'll email you when your account is ready. Nothing to pay, nothing else to do for now."}
               </p>
-              <p className="muted small">Know someone who&apos;d use it? Send them this page.</p>
+              {status.refCode ? (
+                <div className="founding-share">
+                  <p className="small">
+                    <strong>Your invite link</strong>
+                  </p>
+                  <code>{`${window.location.origin}/founding?ref=${status.refCode}`}</code>
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => {
+                      void navigator.clipboard?.writeText(`${window.location.origin}/founding?ref=${status.refCode}`);
+                      setCopied(true);
+                    }}
+                  >
+                    {copied ? "Copied" : "Copy link"}
+                  </button>
+                  <p className="muted small">{SHARE_LINE} The credits are added once you both have accounts.</p>
+                </div>
+              ) : (
+                <p className="muted small">Know someone who&apos;d use it? Send them this page.</p>
+              )}
             </div>
           ) : (
             <form onSubmit={submit} noValidate={false}>
@@ -178,6 +234,11 @@ export default function Founding() {
                 )}
               </div>
               <h2>{full ? "Join the waitlist" : "Claim a founding spot"}</h2>
+              {ref && (
+                <p className="founding-friend">
+                  A friend sent you this link. Once you both have accounts, you each get {REFERRAL.bonus} bonus credits.
+                </p>
+              )}
               <label className="founding-field">
                 <span>Email</span>
                 <input type="email" required autoComplete="email" placeholder="you@example.com" value={email} onChange={(e) => setEmail(e.target.value)} />
@@ -223,7 +284,7 @@ export default function Founding() {
               <button type="submit" className="generate small" disabled={status.kind === "sending"}>
                 {status.kind === "sending" ? "Saving your spot…" : full ? "Join the waitlist" : "Claim my founding spot"}
               </button>
-              <p className="muted small founding-fine">Free to claim. No card. No launch date promised.</p>
+              <p className="muted small founding-fine">Free to claim. No card, so nothing can be charged. No launch date promised.</p>
             </form>
           )}
         </div>

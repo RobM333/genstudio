@@ -38,7 +38,8 @@ export default function Terms() {
         range; credits come off as each step of the job starts. If a step fails on the AI service, its credits come
         back automatically. Credits are not money, have no cash value, can&apos;t be transferred or sold, and (unless
         the law says otherwise, or our &quot;no wasted credits&quot; promise applies) are not refunded. Free credits,
-        such as a Founding member&apos;s free month, may have an end date that we tell you about. We may correct a
+        such as a Founding member&apos;s free month or bonus credits for inviting friends, may have an end date that we
+        tell you about. We may correct a
         balance that is wrong because of a mistake or misuse. You can delete your account at any time on your account
         page; unused credits are lost when you do.
       </p>
@@ -110,6 +111,25 @@ export default function Terms() {
       </ul>
 
       <h2>7. Credits, payments and refunds</h2>
+      <p>
+        <strong>The Founding offer.</strong> Founding members get one month of the Creator plan free, starting the day
+        they first sign in. It comes with a set number of credits (currently 500), not unlimited use: when they are used
+        up, new jobs stop until the month ends or you choose a plan. We don&apos;t ask for a card for the free month, so
+        it can&apos;t renew into a paid plan by itself. A few days before it ends we email you the founding price we
+        plan to offer, which is shown as an estimate. Nothing is charged unless you choose a paid plan later and confirm
+        its exact price at that time. If you don&apos;t, your account moves to the Free plan when the month ends, which
+        currently tops your balance up to 50 credits at the start of each month (unused Free credits don&apos;t add
+        up), and you keep your saved work and any credits left over. We may change the Free plan and the founding price
+        before paid plans launch, and will tell you before any change that affects you.
+      </p>
+      <p>
+        <strong>Invite links.</strong> You may share your personal invite link. When someone who doesn&apos;t already
+        have an account joins the waitlist with it, you and they each get bonus credits (currently 100) once you both
+        have accounts, for up to 5 people per person. The first link someone joins with is the one that counts.
+        Inviting yourself (for example with a second address or a throwaway inbox), making up people, or spamming your
+        link is not allowed; we may withhold or remove bonus credits that came from misuse and may end the reward at any
+        time without affecting bonuses already fairly earned. Bonus credits follow the same rules as other credits.
+      </p>
       <p>
         [To be completed when paid plans launch: prices, credits and whether they expire, billing and renewals, taxes,
         cancellation, and refunds. Payments will be handled by our payment processor, and we will not store your card

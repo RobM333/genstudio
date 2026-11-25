@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
-import { adCost, adPlanWithRules, endCardSeconds, parseAdPlan, sceneCount } from "../lib/adplan";
-import { changedAdJob, newAdJob } from "../components/adRunner";
+import { AD_PRICES, AD_VOICES, adCost, adPlanWithRules, endCardSeconds, fitLine, parseAdPlan, sceneCount, scenePrompt, speaksOnScreen, wantsOnScreenText, withoutDialogue } from "../lib/adplan";
+import { judgeRefCheck, referenceInstructions } from "../lib/references";
+import { parseAnalysis } from "../lib/analyze";
+import { cardLength, changedAdJob, newAdJob } from "../components/adRunner";
 
 assert.equal(sceneCount(15), 2);
 assert.equal(endCardSeconds(15), 5);
@@ -41,4 +43,63 @@ assert.equal(changed.card, false);
 assert.equal(changed.job.clips[0].url, "a");
 assert.equal(changed.job.clips[1].url, undefined);
 assert.equal(changed.job.joinedUrl, undefined);
+// Lines said on screen: the planner marks them, the lips are matched, and the price follows the line's length.
+const talkRaw = JSON.stringify({
+  title: "Toasty",
+  concept: "c",
+  look: "toast in sunglasses",
+  music: "fun",
+  voice: "Roger",
+  scenes: [
+    { visual: 'Toasty shouts "Quiet on set! Aaand... action!" into a megaphone on a film set', camera: "medium", text: "", voice: "Quiet on set! Aaand... action!", speaker: "character" },
+    { visual: "Toasty leans to camera", camera: "close-up", text: "", voice: "You could direct your own movie. Just get ToastyFly.", speaker: "character" },
+  ],
+  endCard: { headline: "ToastyFly", tagline: "Direct your own movie", voice: "ToastyFly." },
+});
+const talk = parseAdPlan(talkRaw, { ...brief, refKinds: ["character"], refNames: ["Toasty"] })!;
+assert.ok(talk.scenes.every(speaksOnScreen));
+// A real person's photo is never made to say words in one of our voices.
+const withPerson = parseAdPlan(talkRaw, { ...brief, refKinds: ["person"] })!;
+assert.ok(!withPerson.scenes.some(speaksOnScreen));
+// Spoken words are taken out of the picture description, so no speech bubble is drawn.
+assert.equal(withoutDialogue('Toasty shouts "Quiet on set!" into a megaphone.'), "Toasty shouts into a megaphone");
+const sp = scenePrompt(talk, 0);
+assert.ok(!sp.includes("Quiet on set"), sp);
+assert.ok(/speech bubbles/i.test(sp) && /black bars/i.test(sp), sp);
+assert.ok(/Nobody on screen talks/.test(scenePrompt(plan, 0)));
+assert.ok(!wantsOnScreenText("a toast mascot ad") && wantsOnScreenText("add captions please"));
+const talkCost = adCost(talk, true);
+const asVoiceover = adCost({ ...talk, scenes: talk.scenes.map((x) => ({ ...x, speaker: "voiceover" as const })) }, true);
+assert.ok(talkCost > asVoiceover && talkCost - asVoiceover < 2 * (8.5 * AD_PRICES.talkPerSecond), `${talkCost} ${asVoiceover}`);
+
+// Voice lines are never cut mid-sentence.
+assert.equal(fitLine("You could direct your own movie. Just get ToastyFly.", 5), "You could direct your own movie. Just get ToastyFly.");
+assert.equal(fitLine("You could direct your own movie today. Just get ToastyFly and start filming tonight with friends.", 5), "You could direct your own movie today.");
+const longOne = fitLine("This one very long sentence goes on and on without any stop at all because it keeps going forever", 5);
+assert.ok(longOne.endsWith(".") && longOne.split(" ").length <= 10, longOne);
+
+// Voices say their accent, and the default is American.
+assert.ok(AD_VOICES.every((v) => v.label.includes(v.accent)));
+assert.equal(AD_VOICES.find((v) => v.id === "Charlie")?.accent, "Australian");
+assert.equal(parseAdPlan(raw.replace('"Brian"', '"Nobody"'), brief)!.voice, "Rachel");
+
+// Characters and mascots skip the face check, but real people and famous characters can't come in that way.
+const ok = '{"minor":false,"nudity":false,"gore":false,"people":0,"matches":true,"famous":false,"real_person_photo":false,"known_character":false}';
+assert.deepEqual(judgeRefCheck(ok, "character"), { ok: true });
+assert.equal(judgeRefCheck(ok, "person").ok, false);
+assert.equal(judgeRefCheck(ok.replace('"real_person_photo":false', '"real_person_photo":true'), "character").ok, false);
+assert.equal(judgeRefCheck(ok.replace('"known_character":false', '"known_character":true'), "character").ok, false);
+assert.ok(referenceInstructions(["character"], 0, ["Toasty"]).includes("Toasty, the user's own character"));
+
+// A "garbled words" finding with no letters actually seen is dropped.
+const ghost = parseAnalysis('{"problems":["The sign has garbled words."],"seen_text":"","faults":["garbled_text"],"serious":true,"fix":"x","prompt":"p"}')!;
+assert.equal(ghost.problems.length, 0);
+assert.equal(ghost.serious, false);
+assert.deepEqual(ghost.faults, []);
+const real = parseAnalysis('{"problems":["The sign has garbled words."],"seen_text":"SUMR SAEL","faults":["garbled_text"],"serious":true,"fix":"x","prompt":"p"}')!;
+assert.deepEqual(real.faults, ["garbled_text"]);
+// Talking scenes are shorter, so the end card holds a little longer (at most 2 extra seconds).
+assert.equal(cardLength(plan, [5, 5]), 5);
+assert.equal(cardLength(plan, [2.7, 3.2]), 7);
+assert.equal(cardLength(plan, [4.5, 4]), 6.5);
 console.log("ad plan tests passed");

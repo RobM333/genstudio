@@ -27,22 +27,22 @@ export type Story = {
   interrupted?: boolean;
 };
 
-type Job = { status?: string; url?: string; requestId?: string; modelId?: string; error?: string; resultToken?: string };
+type Job = { status?: string; url?: string; requestId?: string; modelId?: string; error?: string; resultToken?: string; seconds?: number };
 
 export async function waitFor(modelId: string, job: Job): Promise<string> {
   return (await waitForResult(modelId, job)).url;
 }
 
 /** Waits for a job and also returns the server's signature for the result. */
-export async function waitForResult(modelId: string, job: Job): Promise<{ url: string; token: string }> {
-  if (job.status === "COMPLETED" && job.url) return { url: job.url, token: job.resultToken ?? "" };
+export async function waitForResult(modelId: string, job: Job): Promise<{ url: string; token: string; seconds?: number }> {
+  if (job.status === "COMPLETED" && job.url) return { url: job.url, token: job.resultToken ?? "", seconds: job.seconds };
   if (!job.requestId) throw new Error(job.error ?? "Something went wrong.");
   const started = Date.now();
   while (Date.now() - started < 15 * 60 * 1000) {
     await new Promise((r) => setTimeout(r, 4000));
     const res = await fetch(`/api/status?modelId=${encodeURIComponent(modelId)}&requestId=${encodeURIComponent(job.requestId)}`);
     const data = (await res.json().catch(() => ({}))) as Job;
-    if (data.status === "COMPLETED" && data.url) return { url: data.url, token: data.resultToken ?? "" };
+    if (data.status === "COMPLETED" && data.url) return { url: data.url, token: data.resultToken ?? "", seconds: typeof data.seconds === "number" ? data.seconds : undefined };
     if (data.status === "FAILED" || !res.ok) throw new Error(data.error ?? "Something went wrong.");
   }
   throw new Error("This took too long. Please try again.");

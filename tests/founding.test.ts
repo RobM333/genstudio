@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { cleanEmail, cleanMakes, cleanText, MAKES, spotsLeft, spotsLine, TOTAL_SPOTS } from "../lib/founding";
+import { cleanEmail, cleanMakes, cleanRefCode, cleanText, foundingPriceText, inboxOf, isThrowawayEmail, MAKES, spotsLeft, spotsLine, TOTAL_SPOTS } from "../lib/founding";
+import { whatCreditsMake } from "../lib/pricing";
+import { foundingPriceLines, FREE_MONTH_MAKES } from "../lib/foundingOffer";
 import { isPublicPath } from "../lib/publicPaths";
 
 // Emails
@@ -35,5 +37,25 @@ for (const p of ["/", "/founding", "/founding/", "/api/founding", "/privacy", "/
 for (const p of ["/studio", "/studio/", "/pricing", "/api/founding/list", "/api/generate", "/foundingx", "/founding/list", "/api/founding/../generate"]) {
   assert.equal(isPublicPath(p), false, p);
 }
+
+// The offer's words: estimates only, and what 500 credits really makes at today's rates.
+assert.equal(foundingPriceText(19), "about $13");
+assert.equal(foundingPriceText(49), "about $34");
+const made = whatCreditsMake(500);
+assert.ok(made.pictures >= 100 && made.pictures <= 125, String(made.pictures));
+assert.ok(made.videosLow >= 10 && made.videosHigh <= 16, `${made.videosLow}-${made.videosHigh}`);
+assert.equal(FREE_MONTH_MAKES, made.text);
+const lines = foundingPriceLines("2026-12-24").join(" ");
+assert.ok(lines.includes("about $13") && lines.includes("estimates") && lines.includes("nothing is charged"), lines);
+assert.ok(!/\$\d+\.\d\d/.test(lines), "never an exact price");
+
+// Invite links
+assert.equal(cleanRefCode("Ab3dEf7h"), "Ab3dEf7h");
+assert.equal(cleanRefCode("short"), null);
+assert.equal(cleanRefCode("../../x1"), null);
+assert.equal(inboxOf("Sam.Smith+promo@GoogleMail.com"), "samsmith@gmail.com");
+assert.equal(inboxOf("sam.smith+x@example.com"), "sam.smith@example.com");
+assert.ok(isThrowawayEmail("a@mailinator.com") && isThrowawayEmail("a@x.yopmail.com"));
+assert.ok(!isThrowawayEmail("a@gmail.com"));
 
 console.log("founding tests passed");
