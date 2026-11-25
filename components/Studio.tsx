@@ -298,7 +298,15 @@ export default function Studio({ mode }: { mode: AppMode }) {
   // Brand kit, saved in this browser and switched on per project.
   const [brand, setBrand] = useState<Brand>({ pictures: [] });
   const [eleven, setEleven] = useState<ElevenConnection | null>(null); // the user's own ElevenLabs voices, in this browser only
-  const [useBrand, setUseBrand] = useState(true);
+  // Whether this creation uses the Brand kit. Remembered in this browser; switching it never changes the kit itself.
+  const [useBrand, setUseBrandState] = useState(true);
+  useEffect(() => {
+    try {
+      if (localStorage.getItem(USE_BRAND_KEY) === "off") setUseBrandState(false);
+    } catch {
+      // storage blocked: the kit stays on
+    }
+  }, []);
   // Start an ad from a product page.
   const [productLink, setProductLink] = useState("");
   const [productBusy, setProductBusy] = useState<string | null>(null);
@@ -324,6 +332,22 @@ export default function Studio({ mode }: { mode: AppMode }) {
   const brandOn = useBrand && hasBrand(brand);
   // Saved characters work anywhere reference pictures do, as people with a name.
   const kitPics = brandOn ? [...brand.pictures, ...characterRefs(brand.characters).filter((c) => !brand.pictures.some((p) => p.url === c.url))] : undefined;
+  /**
+   * Switches the Brand kit on or off for what is being made. Off means nothing from the kit is used: its pictures
+   * leave the references, and its name, colours, style and voice are not added.
+   */
+  function setUseBrand(on: boolean) {
+    setUseBrandState(on);
+    try {
+      localStorage.setItem(USE_BRAND_KEY, on ? "on" : "off");
+    } catch {
+      // storage blocked: the choice lasts for this visit
+    }
+    if (!on) {
+      const kitUrls = new Set([...brand.pictures, ...characterRefs(brand.characters)].map((r) => r.url));
+      setRefs((r) => r.filter((x) => !kitUrls.has(x.url)));
+    }
+  }
   const saveToKit = (r: RefItem) => setBrand((b) => ({ ...b, pictures: [...b.pictures.filter((x) => x.url !== r.url), r].slice(-KIT_PICTURES) }));
   const auto = pickModel({ kind, prompt, quality, aspectRatio });
   const model = isAuto ? auto.model : (getModel(choice) ?? models[0]);
@@ -2864,7 +2888,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
         </span>
       </span>
     </label>
-    <ReferencesBox refs={refs} onChange={setRefs} mode={mode} kit={kitPics} onSave={saveToKit} openSignal={refsSignal} />
+    <ReferencesBox refs={refs} onChange={setRefs} mode={mode} kit={kitPics} kitSwitch={hasBrand(brand) ? { on: useBrand, name: brand.name, onChange: setUseBrand } : undefined} onSave={saveToKit} openSignal={refsSignal} />
     {!template && (
       <div className="examples">
         <span className="examples-label">Try:</span>
@@ -3108,19 +3132,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
   // ---------- Brand kit switch, shown in step 1 ----------
 
   const brandChip = hasBrand(brand) ? (
-    <label className="brand-chip">
-      <input type="checkbox" checked={useBrand} onChange={(e) => setUseBrand(e.target.checked)} />
-      <span>
-        Use my brand kit
-        {brand.name ? <strong> · {brand.name}</strong> : null}
-        {(brand.colors ?? []).map((c) => (
-          <span key={c} className="brand-dot" style={{ background: c }} title={colorName(c)} />
-        ))}
-      </span>
-      <button className="link-btn" onClick={(e) => { e.preventDefault(); go("brand"); }}>
-        Edit
-      </button>
-    </label>
+    <BrandSwitch brand={brand} on={useBrand} onChange={setUseBrand} onEdit={() => go("brand")} />
   ) : (
     <button className="link-btn brand-setup" onClick={() => go("brand")}>
       🎨 Set up a brand kit, so everything you make uses your name, colours and pictures
@@ -3202,7 +3214,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
           value={brief.audience}
           onChange={(e) => setBrief({ ...brief, audience: e.target.value })}
         />
-        <ReferencesBox refs={refs} onChange={setRefs} mode={mode} kit={kitPics} onSave={saveToKit} />
+        <ReferencesBox refs={refs} onChange={setRefs} mode={mode} kit={kitPics} kitSwitch={hasBrand(brand) ? { on: useBrand, name: brand.name, onChange: setUseBrand } : undefined} onSave={saveToKit} />
       </section>
 
       <section className="g-step">
@@ -3867,8 +3879,9 @@ export default function Studio({ mode }: { mode: AppMode }) {
           </p>
         )}
         {voiceError && <p className="notice warn small-notice">{voiceError}</p>}
+        {hasBrand(brand) && <BrandSwitch brand={brand} on={useBrand} onChange={setUseBrand} onEdit={() => go("brand")} compact />}
         {(homeRefsOpen || refs.length > 0) && (
-          <ReferencesBox refs={refs} onChange={setRefs} mode={mode} kit={kitPics} onSave={saveToKit} openSignal={refsSignal} />
+          <ReferencesBox refs={refs} onChange={setRefs} mode={mode} kit={kitPics} kitSwitch={hasBrand(brand) ? { on: useBrand, name: brand.name, onChange: setUseBrand } : undefined} onSave={saveToKit} openSignal={refsSignal} />
         )}
         <div className="lite-bar">
           <div className="lite-left">
@@ -4784,4 +4797,36 @@ function StoryPanel({ item, running, onResume }: { item: Item; running: boolean;
       </div>
     );
   return null;
+}
+
+const USE_BRAND_KEY = "genstudio.useBrand.v1";
+
+/**
+ * The Brand kit switch: says plainly whether this creation uses the kit. Off
+ * leaves out the kit's pictures, name, colours, style and voice for what is
+ * being made now; the saved kit itself never changes.
+ */
+function BrandSwitch({ brand, on, onChange, onEdit, compact = false }: { brand: Brand; on: boolean; onChange: (on: boolean) => void; onEdit: () => void; compact?: boolean }) {
+  return (
+    <div className={`brand-switch${on ? " on" : ""}${compact ? " compact" : ""}`}>
+      <button type="button" role="switch" aria-checked={on} className="brand-toggle" onClick={() => onChange(!on)}>
+        <span className="brand-toggle-knob" />
+      </button>
+      <span className="brand-switch-text">
+        <strong>Brand kit {on ? "on" : "off"}</strong>
+        {brand.name ? <span> · {brand.name}</span> : null}
+        {on && (brand.colors ?? []).map((c) => <span key={c} className="brand-dot" style={{ background: c }} title={colorName(c)} />)}
+        {!compact && (
+          <span className="muted small brand-switch-hint">
+            {on
+              ? " Uses your brand name, colours, style, voice and pictures. Switch off to make something separate."
+              : " Nothing from your brand kit is used for this. Your kit stays saved."}
+          </span>
+        )}
+      </span>
+      <button type="button" className="link-btn" onClick={onEdit}>
+        Edit kit
+      </button>
+    </div>
+  );
 }
