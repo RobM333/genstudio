@@ -3,6 +3,7 @@ import { getMode } from "@/lib/config";
 import { checkPrompt } from "@/lib/safety";
 import { cleanBrand } from "@/lib/brand";
 import {
+  aboutBusiness,
   adaptInstructions,
   adaptWithRules,
   ideasInstructions,
@@ -99,7 +100,7 @@ export async function POST(req: Request) {
   if (mode === "week") {
     if (live) {
       try {
-        const raw = await ask(weekInstructions(days, season || "this week", brand), `The business:\n${business || brand?.name}`);
+        const raw = await ask(weekInstructions(days, season || "this week", brand), aboutBusiness(business, brand?.name));
         const ideas = parseIdeas(raw, days);
         if (ideas && ideas.every((i) => safe(i.prompt))) return NextResponse.json({ ideas, by: "ai" });
       } catch (err) {

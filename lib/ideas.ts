@@ -267,3 +267,11 @@ export function adaptWithRules(
   }
   return { prompt: `${strip(example)}. Show ${product} as the main subject instead of the original product, in exactly the same style, light and framing.${tailFor(brand)}` };
 }
+
+/** What we tell the AI about the business. A bare brand name says nothing about what
+ * they sell, so the AI must not invent a product (it once turned "ToastyFly" into a heater). */
+export function aboutBusiness(business: string, name?: string): string {
+  const known = business && business.toLowerCase() !== (name ?? "").trim().toLowerCase();
+  if (known) return `The business:\n${business}`;
+  return `The brand: ${name || business}\nThey haven't said what they sell. Do not invent a product or say what the business sells; build every post on the brand name and the brand style above.`;
+}

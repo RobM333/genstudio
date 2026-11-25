@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { adaptInstructions, adaptWithRules, ideasWithRules, parseAdapt, parseIdeas, seasonFor, weekDays, weekInstructions, weekWithRules } from "../lib/ideas";
+import { aboutBusiness, adaptInstructions, adaptWithRules, ideasWithRules, parseAdapt, parseIdeas, seasonFor, weekDays, weekInstructions, weekWithRules } from "../lib/ideas";
 
 // Five ideas: bad ones dropped, shapes and lengths kept valid.
 const five = parseIdeas(
@@ -52,3 +52,8 @@ const w = weekWithRules(days, "", { name: "Crumb" });
 assert.equal(w.length, 7);
 assert.match(w[0].prompt, /Crumb/);
 console.log("ideas tests passed");
+
+// A bare brand name must not make the AI invent a product.
+assert.match(aboutBusiness("ToastyFly", "ToastyFly"), /Do not invent a product/);
+assert.match(aboutBusiness("", "ToastyFly"), /The brand: ToastyFly/);
+assert.equal(aboutBusiness("handmade candles", "Glow"), "The business:\nhandmade candles");
