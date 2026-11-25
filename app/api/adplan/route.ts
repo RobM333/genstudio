@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { getMode } from "@/lib/config";
 import { checkPrompt } from "@/lib/safety";
 import { cleanBrand } from "@/lib/brand";
-import { adLanguage, AD_LENGTHS, AD_TONES, adPlanInstructions, adPlanWithRules, parseAdPlan, planTexts, revisePlanInstructions, type AdBrief, type AdPlan } from "@/lib/adplan";
+import { refName } from "@/lib/references";
+import { PLAN_REF_KINDS, adLanguage, AD_LENGTHS, AD_TONES, adPlanInstructions, adPlanWithRules, parseAdPlan, planTexts, revisePlanInstructions, type AdBrief, type AdPlan } from "@/lib/adplan";
 
 export const dynamic = "force-dynamic";
 
@@ -23,7 +24,9 @@ export async function POST(req: Request) {
     audience: String(b.audience ?? "").trim().slice(0, 300),
     seconds: AD_LENGTHS.includes(Number(b.seconds) as 15) ? Number(b.seconds) : 15,
     tone: (AD_TONES as readonly string[]).includes(String(b.tone)) ? String(b.tone) : "Friendly",
-    refKinds: Array.isArray(b.refKinds) ? b.refKinds.map(String).filter((k) => ["product", "logo", "person", "style"].includes(k)).slice(0, 4) : [],
+    refKinds: Array.isArray(b.refKinds) ? b.refKinds.map(String).filter((k) => PLAN_REF_KINDS.includes(k)).slice(0, 4) : [],
+    // Only a character's short name is passed on, so the planner can call it by name.
+    refNames: Array.isArray(b.refNames) ? b.refNames.slice(0, 4).map((n) => refName(n) ?? "") : [],
     brand: cleanBrand(b.brand),
     language: adLanguage(b.language),
   };

@@ -13,6 +13,7 @@ import {
   MERGE_VIDEOS_MODEL,
   MUSIC_MODEL,
   unitPrice,
+  TALK_VIDEO_MODEL,
   VOICE_MODEL,
   type ModelInfo,
 } from "../models";
@@ -53,6 +54,10 @@ export function toolUsd(tool: string, opts: { seconds?: number; text?: string })
       return unitPrice(MERGE_VIDEOS_MODEL);
     case "last-frame":
       return unitPrice(LAST_FRAME_MODEL);
+    case "talk-scene":
+      return secs * unitPrice(TALK_VIDEO_MODEL);
+    case "join":
+      return secs * unitPrice(COMPOSE_MODEL);
     default:
       return 0;
   }

@@ -28,7 +28,7 @@ import { DESIGN_MOTION_PROMPT, nearestShape } from "@/lib/canva";
 import { addSoundTo, animateShot, joinShots, lastFrame, lockFrame, planStory, startPicture, waitFor, type Story } from "./storyRunner";
 import { lengthAdvice, LONG_LENGTHS, MAX_STORY_SECONDS, type ShotPlan } from "@/lib/storyboard";
 import { nextLength, readChat } from "@/lib/chat";
-import { AD_LANGUAGES, AD_LENGTHS, AD_PRICES, AD_TONES, AD_VOICES, adCost, languageFromLocale, maxVoiceChars, checkCost, endCardSeconds, maxRedos, maxVoiceWords, redoCap, SCENE_SECONDS, sceneCount, sceneRemakeCost, type AdBrief, type AdPlan } from "@/lib/adplan";
+import { AD_LANGUAGES, AD_LENGTHS, AD_PRICES, AD_TONES, AD_VOICES, adCost, languageFromLocale, maxVoiceChars, checkCost, endCardSeconds, maxRedos, maxVoiceWords, redoCap, SCENE_SECONDS, sceneCount, sceneRemakeCost, sceneVideoCost, speaksOnScreen, type AdBrief, type AdPlan } from "@/lib/adplan";
 import { AD_T2V, buildAd, changedAdJob, checkPart, newAdJob, type AdJob } from "./adRunner";
 import { ADVERTISE_PROMISE, asksForSpeech, decide, MONTHLY_CAP, promiseNote, type PromiseOutcome } from "@/lib/promise";
 import type { Analysis } from "@/lib/analyze";
@@ -298,7 +298,15 @@ export default function Studio({ mode }: { mode: AppMode }) {
   // Brand kit, saved in this browser and switched on per project.
   const [brand, setBrand] = useState<Brand>({ pictures: [] });
   const [eleven, setEleven] = useState<ElevenConnection | null>(null); // the user's own ElevenLabs voices, in this browser only
-  const [useBrand, setUseBrand] = useState(true);
+  // Whether this creation uses the Brand kit. Remembered in this browser; switching it never changes the kit itself.
+  const [useBrand, setUseBrandState] = useState(true);
+  useEffect(() => {
+    try {
+      if (localStorage.getItem(USE_BRAND_KEY) === "off") setUseBrandState(false);
+    } catch {
+      // storage blocked: the kit stays on
+    }
+  }, []);
   // Start an ad from a product page.
   const [productLink, setProductLink] = useState("");
   const [productBusy, setProductBusy] = useState<string | null>(null);
@@ -324,6 +332,22 @@ export default function Studio({ mode }: { mode: AppMode }) {
   const brandOn = useBrand && hasBrand(brand);
   // Saved characters work anywhere reference pictures do, as people with a name.
   const kitPics = brandOn ? [...brand.pictures, ...characterRefs(brand.characters).filter((c) => !brand.pictures.some((p) => p.url === c.url))] : undefined;
+  /**
+   * Switches the Brand kit on or off for what is being made. Off means nothing from the kit is used: its pictures
+   * leave the references, and its name, colours, style and voice are not added.
+   */
+  function setUseBrand(on: boolean) {
+    setUseBrandState(on);
+    try {
+      localStorage.setItem(USE_BRAND_KEY, on ? "on" : "off");
+    } catch {
+      // storage blocked: the choice lasts for this visit
+    }
+    if (!on) {
+      const kitUrls = new Set([...brand.pictures, ...characterRefs(brand.characters)].map((r) => r.url));
+      setRefs((r) => r.filter((x) => !kitUrls.has(x.url)));
+    }
+  }
   const saveToKit = (r: RefItem) => setBrand((b) => ({ ...b, pictures: [...b.pictures.filter((x) => x.url !== r.url), r].slice(-KIT_PICTURES) }));
   const auto = pickModel({ kind, prompt, quality, aspectRatio });
   const model = isAuto ? auto.model : (getModel(choice) ?? models[0]);
@@ -991,7 +1015,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
 
   /** The brief as sent to the planner: with the kinds of pictures given and, when it's on, the brand kit. */
   function adBriefNow(): AdBrief {
-    return { ...brief, refKinds: refs.map((r) => r.kind), brand: brandOn ? brandInfo(brand) : undefined };
+    return { ...brief, refKinds: refs.map((r) => r.kind), refNames: refs.map((r) => (r.kind === "character" ? (r.name ?? "") : "")), brand: brandOn ? brandInfo(brand) : undefined };
   }
 
   /** Reads the user's product page: fills in the brief and offers its pictures (free, no AI). */
@@ -1386,7 +1410,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
     const c = changedAdJob(old, plan);
     const withRefs = Boolean(old.refs?.length);
     return (
-      c.scenes * (AD_PRICES.scene + AD_PRICES.picture) +
+      c.sceneUsd + c.scenes * AD_PRICES.picture +
       (c.card ? AD_PRICES.picture + endCardSeconds(plan.seconds) * AD_PRICES.cardPerSecond : 0) +
       (!withRefs && old.plan.look !== plan.look ? AD_PRICES.picture : 0) +
       (isOwnVoice(plan.voice) ? 0 : (c.voiceChars / 1000) * AD_PRICES.voicePer1000Chars) +
@@ -1399,7 +1423,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
   function shapeCost(job: AdJob): number {
     const n = job.plan.scenes.length;
     return (
-      n * (AD_PRICES.scene + AD_PRICES.picture) +
+      job.plan.scenes.reduce((t, s) => t + sceneVideoCost(s, job.brief.language), 0) + n * AD_PRICES.picture +
       AD_PRICES.picture +
       endCardSeconds(job.plan.seconds) * AD_PRICES.cardPerSecond +
       job.plan.seconds * AD_PRICES.editPerSecond * 2 +
@@ -2864,7 +2888,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
         </span>
       </span>
     </label>
-    <ReferencesBox refs={refs} onChange={setRefs} mode={mode} kit={kitPics} onSave={saveToKit} openSignal={refsSignal} />
+    <ReferencesBox refs={refs} onChange={setRefs} mode={mode} kit={kitPics} kitSwitch={hasBrand(brand) ? { on: useBrand, name: brand.name, onChange: setUseBrand } : undefined} onSave={saveToKit} openSignal={refsSignal} />
     {!template && (
       <div className="examples">
         <span className="examples-label">Try:</span>
@@ -3108,19 +3132,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
   // ---------- Brand kit switch, shown in step 1 ----------
 
   const brandChip = hasBrand(brand) ? (
-    <label className="brand-chip">
-      <input type="checkbox" checked={useBrand} onChange={(e) => setUseBrand(e.target.checked)} />
-      <span>
-        Use my brand kit
-        {brand.name ? <strong> · {brand.name}</strong> : null}
-        {(brand.colors ?? []).map((c) => (
-          <span key={c} className="brand-dot" style={{ background: c }} title={colorName(c)} />
-        ))}
-      </span>
-      <button className="link-btn" onClick={(e) => { e.preventDefault(); go("brand"); }}>
-        Edit
-      </button>
-    </label>
+    <BrandSwitch brand={brand} on={useBrand} onChange={setUseBrand} onEdit={() => go("brand")} />
   ) : (
     <button className="link-btn brand-setup" onClick={() => go("brand")}>
       🎨 Set up a brand kit, so everything you make uses your name, colours and pictures
@@ -3202,7 +3214,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
           value={brief.audience}
           onChange={(e) => setBrief({ ...brief, audience: e.target.value })}
         />
-        <ReferencesBox refs={refs} onChange={setRefs} mode={mode} kit={kitPics} onSave={saveToKit} />
+        <ReferencesBox refs={refs} onChange={setRefs} mode={mode} kit={kitPics} kitSwitch={hasBrand(brand) ? { on: useBrand, name: brand.name, onChange: setUseBrand } : undefined} onSave={saveToKit} />
       </section>
 
       <section className="g-step">
@@ -3323,6 +3335,19 @@ export default function Studio({ mode }: { mode: AppMode }) {
                 <VoiceCount line={sc.voice} seconds={SCENE_SECONDS} language={brief.language} />
                 <input className="text-input" maxLength={200} value={sc.voice} onChange={(e) => editScene(i, { voice: e.target.value })} />
               </label>
+              <label className="ad-label">
+                Who says it
+                <select
+                  className="text-input"
+                  value={speaksOnScreen(sc) && !refs.some((r) => r.kind === "person") ? "character" : "voiceover"}
+                  onChange={(e) => editScene(i, { speaker: e.target.value === "character" ? "character" : "voiceover" })}
+                >
+                  <option value="voiceover">A voiceover (nobody on screen talks)</option>
+                  <option value="character" disabled={refs.some((r) => r.kind === "person")}>
+                    Said on screen, lips matched to the voice
+                  </option>
+                </select>
+              </label>
             </li>
           ))}
           <li className="ad-scene ad-card">
@@ -3362,6 +3387,14 @@ export default function Studio({ mode }: { mode: AppMode }) {
           </label>
         </div>
         {isOwnVoice(adPlan.voice) && <p className="muted small g-hint">Your ElevenLabs voice reads the voiceover, billed to your ElevenLabs account, so it isn&apos;t in our price.</p>}
+        {adPlan.scenes.some((sc) => speaksOnScreen(sc)) && !refs.some((r) => r.kind === "person") && (
+          <p className="muted small g-hint">
+            Lines said on screen are recorded first, then the scene is made from that recording, so the mouth moves with the words. One voice is used for every line.
+          </p>
+        )}
+        {refs.some((r) => r.kind === "person") && (
+          <p className="muted small g-hint">With a real person&apos;s photo, lines are read as a voiceover. To have yourself talk in your own voice, use You, talking.</p>
+        )}
       </section>
 
       <section className="g-step">
@@ -3401,7 +3434,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
             <span className="muted small">
               An AI looks at every shot before it&apos;s filmed and at every finished scene, then fixes clearly wrong ones on its own (wrong product, broken hands,
               impossible movement). It remakes at most {maxRedos(adPlan.scenes.length)} scene{maxRedos(adPlan.scenes.length) > 1 ? "s" : ""}, so it never costs more than
-              up to ${costRange(redoCap(adPlan.scenes.length))[1].toFixed(2)} extra, and only if something needs fixing. The check itself is included in the price.
+              up to ${costRange(redoCap(adPlan.scenes.length, adPlan))[1].toFixed(2)} extra, and only if something needs fixing. The check itself is included in the price.
             </span>
           </span>
         </label>
@@ -3846,8 +3879,9 @@ export default function Studio({ mode }: { mode: AppMode }) {
           </p>
         )}
         {voiceError && <p className="notice warn small-notice">{voiceError}</p>}
+        {hasBrand(brand) && <BrandSwitch brand={brand} on={useBrand} onChange={setUseBrand} onEdit={() => go("brand")} compact />}
         {(homeRefsOpen || refs.length > 0) && (
-          <ReferencesBox refs={refs} onChange={setRefs} mode={mode} kit={kitPics} onSave={saveToKit} openSignal={refsSignal} />
+          <ReferencesBox refs={refs} onChange={setRefs} mode={mode} kit={kitPics} kitSwitch={hasBrand(brand) ? { on: useBrand, name: brand.name, onChange: setUseBrand } : undefined} onSave={saveToKit} openSignal={refsSignal} />
         )}
         <div className="lite-bar">
           <div className="lite-left">
@@ -4717,7 +4751,7 @@ function AdSummary({ job }: { job: AdJob }) {
       <ol>
         {job.plan.scenes.map((s, i) => (
           <li key={i}>
-            <strong>Scene {i + 1}.</strong> {s.visual} <span className="muted">🎙️ {s.voice}</span>
+            <strong>Scene {i + 1}.</strong> {s.visual} <span className="muted">{speaksOnScreen(s) ? "🗣️ said on screen:" : "🎙️"} {s.voice}</span>
           </li>
         ))}
         <li>
@@ -4763,4 +4797,36 @@ function StoryPanel({ item, running, onResume }: { item: Item; running: boolean;
       </div>
     );
   return null;
+}
+
+const USE_BRAND_KEY = "genstudio.useBrand.v1";
+
+/**
+ * The Brand kit switch: says plainly whether this creation uses the kit. Off
+ * leaves out the kit's pictures, name, colours, style and voice for what is
+ * being made now; the saved kit itself never changes.
+ */
+function BrandSwitch({ brand, on, onChange, onEdit, compact = false }: { brand: Brand; on: boolean; onChange: (on: boolean) => void; onEdit: () => void; compact?: boolean }) {
+  return (
+    <div className={`brand-switch${on ? " on" : ""}${compact ? " compact" : ""}`}>
+      <button type="button" role="switch" aria-checked={on} className="brand-toggle" onClick={() => onChange(!on)}>
+        <span className="brand-toggle-knob" />
+      </button>
+      <span className="brand-switch-text">
+        <strong>Brand kit {on ? "on" : "off"}</strong>
+        {brand.name ? <span> · {brand.name}</span> : null}
+        {on && (brand.colors ?? []).map((c) => <span key={c} className="brand-dot" style={{ background: c }} title={colorName(c)} />)}
+        {!compact && (
+          <span className="muted small brand-switch-hint">
+            {on
+              ? " Uses your brand name, colours, style, voice and pictures. Switch off to make something separate."
+              : " Nothing from your brand kit is used for this. Your kit stays saved."}
+          </span>
+        )}
+      </span>
+      <button type="button" className="link-btn" onClick={onEdit}>
+        Edit kit
+      </button>
+    </div>
+  );
 }

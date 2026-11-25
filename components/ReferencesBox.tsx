@@ -7,7 +7,7 @@ import type { AppMode } from "@/lib/config";
 // ads show the real thing instead of a made-up look-alike. Each upload is
 // checked on the server before it can be used.
 
-export type RefKindClient = "product" | "logo" | "person" | "style";
+export type RefKindClient = "product" | "logo" | "person" | "character" | "style";
 export type RefItem = { url: string; kind: RefKindClient; token: string; name?: string };
 
 const STORE = "genstudio.refs.v1";
@@ -19,6 +19,7 @@ const KINDS: { kind: RefKindClient; label: string; hint: string }[] = [
   { kind: "product", label: "📦 Product", hint: "Your real product, kept exactly as it looks." },
   { kind: "logo", label: "🏷️ Logo", hint: "Your logo, reproduced faithfully." },
   { kind: "person", label: "🙂 Person", hint: "One adult who agreed to appear. Clear face photo." },
+  { kind: "character", label: "🧸 Character or mascot", hint: "Your own cartoon, mascot or invented character. It can act and talk in ads. Not a photo of a real person." },
   { kind: "style", label: "🎨 Style", hint: "A picture whose colours and mood you want to match." },
 ];
 
@@ -85,6 +86,7 @@ export default function ReferencesBox({
   onSave,
   library,
   openSignal,
+  kitSwitch,
 }: {
   refs: RefItem[];
   onChange: (refs: RefItem[]) => void;
@@ -94,6 +96,8 @@ export default function ReferencesBox({
   onSave?: (r: RefItem) => void; // saves a picture into the brand kit
   library?: boolean; // shown on the brand kit page: names can be edited
   openSignal?: number; // changes when the Reference button on the prompt box is pressed
+  /** The Brand kit switch, so its pictures can be turned off right where they are offered. */
+  kitSwitch?: { on: boolean; name?: string; onChange: (on: boolean) => void };
 }) {
   const [open, setOpen] = useState(refs.length > 0 || !!library || (kit?.length ?? 0) > 0);
   const [kind, setKind] = useState<RefKindClient>("product");
@@ -201,9 +205,24 @@ export default function ReferencesBox({
         </div>
       )}
 
+      {kitSwitch && !kitSwitch.on && (
+        <p className="muted small refs-kit">
+          Brand kit is off, so its pictures aren&apos;t offered here.{" "}
+          <button className="link-btn" onClick={() => kitSwitch.onChange(true)}>
+            Switch it on
+          </button>
+        </p>
+      )}
       {!full && fromKit.length > 0 && (
         <div className="refs-kit">
-          <span className="muted small">From your brand kit:</span>
+          <span className="muted small">
+            From your brand kit{kitSwitch?.name ? ` (${kitSwitch.name})` : ""}, tap one to use it:{" "}
+            {kitSwitch && (
+              <button className="link-btn" onClick={() => kitSwitch.onChange(false)}>
+                Don&apos;t use my brand kit for this
+              </button>
+            )}
+          </span>
           <div className="refs-list">
             {fromKit.map((k) => (
               <button key={k.url} className="ref-thumb ref-pick" title="Use in this project" onClick={() => onChange([...refs, k].slice(0, max))}>
