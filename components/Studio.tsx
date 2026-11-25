@@ -4683,8 +4683,10 @@ async function analyzeItem(item: Item): Promise<Analysis> {
   return data.analysis as Analysis;
 }
 
+// Only shown when something is off (demo or locked). Rob asked for no "Live" badge (2026-11-25).
 function ModeBadge({ mode }: { mode: AppMode }) {
-  const text = mode === "live" ? "Live" : mode === "locked" ? "Needs password" : "Demo mode";
+  if (mode === "live") return null;
+  const text = mode === "locked" ? "Needs password" : "Demo mode";
   return (
     <span className={`badge badge-${mode}`}>
       <span className="badge-dot" aria-hidden /> {text}
