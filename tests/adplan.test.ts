@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { AD_PRICES, AD_VOICES, adCost, endCardPrompt, nativeTalk, sceneVideoCost, talkScenePrompt, voiceInWords, frameLead, NO_TEXT, adPlanWithRules, endCardSeconds, fitLine, parseAdPlan, sceneCount, scenePrompt, speaksOnScreen, wantsOnScreenText, withoutDialogue } from "../lib/adplan";
 import { judgeRefCheck, referenceInstructions } from "../lib/references";
 import { parseAnalysis } from "../lib/analyze";
+import { cardLines, cleanWebsite, inkFor, wrapWords } from "../lib/endcard";
 import { barsIn, cardLength, changedAdJob, newAdJob } from "../components/adRunner";
 
 assert.equal(sceneCount(15), 2);
@@ -138,7 +139,28 @@ console.log("ad plan tests passed");
   assert.ok(!barsIn(pic(false), w, h));
 }
 // The end card keeps a character's own outfit.
-assert.match(endCardPrompt(plan, true, undefined, ["character"]), /same outfit/);
+// The end card keeps a character's own outfit (Toasty lost his hoodie) and leaves the words to the app.
+assert.match(endCardPrompt(plan, true, undefined, ["character"]), /remove nothing/);
+assert.match(endCardPrompt(plan, true, undefined, ["character"]), /hoodie/);
+assert.doesNotMatch(endCardPrompt(plan, true, undefined, ["character"]), /reads exactly/);
+assert.match(endCardPrompt(plan, false), /No text, no letters/);
 assert.match(endCardPrompt(plan, true, undefined, ["product"]), /product from the reference/);
 assert.match(frameLead(["character"]), /never standing on top of furniture/);
+{
+  // End-card words typed by the app: a fixed-width fake measure (10px per letter at size 10).
+  const m = (t: string, size: number) => t.length * size * 0.55;
+  assert.equal(cleanWebsite("https://www.ToastyFly.com/studio?x=1"), "toastyfly.com");
+  assert.equal(cleanWebsite("not a site"), "");
+  assert.equal(cleanWebsite(""), "");
+  const lines = cardLines(720, 1280, { headline: "Social posts done. One tap.", tagline: "Make yours at ToastyFly", website: "toastyfly.com" }, m);
+  assert.ok(lines.every((l) => m(l.text, l.size) <= 720 * 0.86 + 1), "every line fits");
+  assert.equal(lines[lines.length - 1].text, "toastyfly.com");
+  assert.ok(lines[lines.length - 1].pill);
+  assert.ok(lines[lines.length - 1].y < 1280 * 0.45, "words stay in the empty top part");
+  assert.ok(lines.filter((l) => l.weight === 800).length <= 3);
+  assert.deepEqual(wrapWords("a b c", 1000, (t) => t.length), ["a b c"]);
+  assert.equal(inkFor("#ffffff"), "#111111");
+  assert.equal(inkFor("#1f2a44"), "#ffffff");
+  assert.equal(cardLines(720, 1280, { headline: "Hi" }, m).length, 1);
+}
 console.log("bars and end card tests passed");

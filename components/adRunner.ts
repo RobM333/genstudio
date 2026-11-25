@@ -8,6 +8,8 @@
 // scenes are filmed with nobody talking and the voice laid over them.
 // Progress is saved on the item, so a closed page carries on where it stopped.
 
+import { cardLines, inkFor } from "@/lib/endcard";
+import { finishReference } from "@/components/ReferencesBox";
 import { endCardPrompt, endCardSeconds, frameLead, lineSeconds, maxRedos, nativeTalk, SCENE_SECONDS, sceneVideoCost, scenePrompt, speaksOnScreen, talkScenePrompt, withoutDialogue, type AdBrief, type AdPlan } from "@/lib/adplan";
 import type { Analysis } from "@/lib/analyze";
 import { faultText, type FaultCode } from "@/lib/promise";
@@ -262,6 +264,83 @@ async function cardImage(job: AdJob, aspectRatio: string): Promise<string> {
   return waitFor(res.modelId ?? modelId, res);
 }
 
+/**
+ * Types the end card's words onto the picture in the browser (picture models
+ * misspell words), then uploads it through the usual picture safety check.
+ */
+export async function withCardText(url: string, words: { headline: string; tagline?: string; website?: string }, colors: string[] = []): Promise<string> {
+  if (typeof document === "undefined") return url;
+  const img = new Image();
+  img.crossOrigin = "anonymous";
+  await new Promise<void>((ok, bad) => {
+    img.onload = () => ok();
+    img.onerror = () => bad(new Error("We couldn't load the end card picture. Please try again."));
+    img.src = url;
+  });
+  try {
+    await document.fonts?.load('800 40px "Inter Tight"');
+  } catch {
+    // the fallback sans-serif font is used
+  }
+  const w = img.naturalWidth;
+  const h = img.naturalHeight;
+  const c = document.createElement("canvas");
+  c.width = w;
+  c.height = h;
+  const ctx = c.getContext("2d")!;
+  ctx.drawImage(img, 0, 0, w, h);
+  const font = (size: number, weight: number) => `${weight} ${size}px "Inter Tight", ui-sans-serif, system-ui, sans-serif`;
+  const measure = (t: string, size: number, weight: number) => {
+    ctx.font = font(size, weight);
+    return ctx.measureText(t).width;
+  };
+  const lines = cardLines(w, h, words, measure);
+  const last = lines[lines.length - 1];
+  // A soft dark fade behind the words keeps them readable on any background.
+  const fade = ctx.createLinearGradient(0, 0, 0, Math.min(h, (last?.y ?? 0) + h * 0.12));
+  fade.addColorStop(0, "rgba(0,0,0,0.55)");
+  fade.addColorStop(0.75, "rgba(0,0,0,0.35)");
+  fade.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = fade;
+  ctx.fillRect(0, 0, w, Math.min(h, (last?.y ?? 0) + h * 0.12));
+  ctx.textAlign = "center";
+  ctx.textBaseline = "alphabetic";
+  const accent = colors.find((x) => /^#?[0-9a-f]{6}$/i.test(x)) ?? "#f5a623";
+  for (const l of lines) {
+    ctx.font = font(l.size, l.weight);
+    if (l.pill) {
+      const tw = ctx.measureText(l.text).width;
+      const padX = l.size * 0.7;
+      const ph = l.size * 1.7;
+      const x = w / 2 - tw / 2 - padX;
+      const top = l.y - l.size * 1.2;
+      ctx.shadowColor = "transparent";
+      ctx.fillStyle = accent.startsWith("#") ? accent : `#${accent}`;
+      ctx.beginPath();
+      ctx.roundRect(x, top, tw + padX * 2, ph, ph / 2);
+      ctx.fill();
+      ctx.fillStyle = inkFor(accent);
+      ctx.fillText(l.text, w / 2, l.y);
+      continue;
+    }
+    ctx.shadowColor = "rgba(0,0,0,0.5)";
+    ctx.shadowBlur = l.size * 0.25;
+    ctx.shadowOffsetY = l.size * 0.05;
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText(l.text, w / 2, l.y);
+  }
+  const blob = await new Promise<Blob | null>((ok) => c.toBlob(ok, "image/jpeg", 0.92));
+  if (!blob) throw new Error("We couldn't finish the end card. Please try again.");
+  const form = new FormData();
+  form.append("file", blob, "end-card.jpg");
+  form.append("kind", "style");
+  form.append("consent", "yes");
+  const res = await fetch("/api/reference", { method: "POST", body: form });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error ?? "We couldn't finish the end card. Please try again.");
+  return (await finishReference(data, "style")).url;
+}
+
 /** Holds the end card on screen with a gentle, nearly still move. */
 async function cardClip(job: AdJob, seconds: number): Promise<string> {
   return tool({ tool: "card", imageUrl: job.cardImage, seconds }, "fal-ai/ltxv-13b-098-distilled/image-to-video");
@@ -456,11 +535,13 @@ export async function buildAd(
     save(job);
   }
 
-  const cardKey = `${plan.endCard.headline}|${plan.endCard.tagline}${cardSecs !== endCardSeconds(plan.seconds) ? `|${cardSecs}` : ""}`;
+  const cardKey = `text2|${plan.endCard.headline}|${plan.endCard.tagline}|${job.brief.brand?.website ?? ""}${cardSecs !== endCardSeconds(plan.seconds) ? `|${cardSecs}` : ""}`;
   if (!job.cardClip || job.cardFor !== cardKey) {
     if (!job.cardImage || job.cardFor !== cardKey) {
       step("Designing the end card", "fal-ai/nano-banana");
-      job.cardImage = await cardImage(job, aspectRatio);
+      const picture = await cardImage(job, aspectRatio);
+      step("Writing the end card words", "fal-ai/nano-banana");
+      job.cardImage = await withCardText(picture, { ...plan.endCard, website: job.brief.brand?.website }, job.brief.brand?.colors);
     }
     step("Finishing the end card", "fal-ai/ltxv-13b-098-distilled/image-to-video");
     job.cardClip = await cardClip(job, cardSecs);

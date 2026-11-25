@@ -387,13 +387,12 @@ export function withoutDialogue(visual: string): string {
 export function endCardPrompt(plan: AdPlan, withRefs: boolean, brand?: BrandInfo, kinds: string[] = []): string {
   const b = brandLine(brand);
   const subject = !withRefs
-    ? `${plan.look}. Show the product centred, `
+    ? `${plan.look}. Show the product `
     : kinds.includes("character") && !kinds.includes("product")
-      ? "Show the character from the reference picture exactly as it is (same outfit and accessories, nothing added such as hats, caps or jackets), centred, "
-      : "Show the product from the reference picture exactly as it is, centred, ";
-  return `A clean, premium end card for a video ad.${b ? ` ${b}; use the brand colours for the background and type.` : ""} ${subject}on a simple background that matches this palette. Large bold headline text that reads exactly "${plan.endCard.headline}"${
-    plan.endCard.tagline ? ` and smaller text underneath that reads exactly "${plan.endCard.tagline}"` : ""
-  }. Spell every word exactly, nothing else written anywhere. Modern sans-serif type, plenty of space.`;
+      ? "Show the character from the reference picture exactly as it is: keep every piece of clothing and every accessory it wears there (for example its hoodie, jacket, glasses or hat), remove nothing and add nothing new. Show it "
+      : "Show the product from the reference picture exactly as it is. Show it ";
+  // The words are typed onto the picture afterwards by the app, so the picture leaves room for them and has none of its own.
+  return `A clean, premium end card picture for a video ad.${b ? ` ${b}; use the brand colours for the background.` : ""} ${subject}in the lower half of the picture, centred, on a simple background that matches this palette. Keep the top 40 percent of the picture plain and empty, with no objects, so words can be placed there later. No text, no letters, no words, no numbers, no logo, no signs anywhere in the picture.`;
 }
 
 /** How the opening frame is told to use the reference pictures: a mascot is kept as a character, not as "the product". */

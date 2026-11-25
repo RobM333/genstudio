@@ -46,13 +46,13 @@ export function saveBrand(b: Brand) {
 
 /** True when the kit has something to use. */
 export function hasBrand(b: Brand): boolean {
-  return Boolean(b.name || b.style || b.colors?.length || b.voice || b.pictures.length || b.characters?.some((c) => c.sheetUrl));
+  return Boolean(b.name || b.website || b.style || b.colors?.length || b.voice || b.pictures.length || b.characters?.some((c) => c.sheetUrl));
 }
 
 /** The words part of the kit, sent to planners and added to prompts. */
 export function brandInfo(b: Brand): BrandInfo | undefined {
-  if (!b.name && !b.style && !b.colors?.length) return undefined;
-  return { name: b.name || undefined, colors: b.colors?.length ? b.colors : undefined, style: b.style || undefined };
+  if (!b.name && !b.style && !b.colors?.length && !b.website) return undefined;
+  return { name: b.name || undefined, colors: b.colors?.length ? b.colors : undefined, style: b.style || undefined, website: b.website || undefined };
 }
 
 export default function BrandKit({
@@ -112,6 +112,17 @@ export default function BrandKit({
           placeholder="e.g. handmade soy candles in glass jars, sold online"
           value={brand.business ?? ""}
           onChange={(e) => onChange({ ...brand, business: e.target.value })}
+        />
+        <label className="sub-label" htmlFor="brand-website">
+          Website <span className="step-opt">shown on the end card of your ads</span>
+        </label>
+        <input
+          id="brand-website"
+          className="text-input"
+          maxLength={80}
+          placeholder="e.g. glowcandles.com"
+          value={brand.website ?? ""}
+          onChange={(e) => onChange({ ...brand, website: e.target.value })}
         />
         <div className="sub-label">Brand colours (up to 3)</div>
         <div className="brand-colors">
