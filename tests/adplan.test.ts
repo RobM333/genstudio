@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { AD_PRICES, AD_VOICES, adCost, nativeTalk, sceneVideoCost, talkScenePrompt, voiceInWords, frameLead, NO_TEXT, adPlanWithRules, endCardSeconds, fitLine, parseAdPlan, sceneCount, scenePrompt, speaksOnScreen, wantsOnScreenText, withoutDialogue } from "../lib/adplan";
+import { AD_PRICES, AD_VOICES, adCost, endCardPrompt, nativeTalk, sceneVideoCost, talkScenePrompt, voiceInWords, frameLead, NO_TEXT, adPlanWithRules, endCardSeconds, fitLine, parseAdPlan, sceneCount, scenePrompt, speaksOnScreen, wantsOnScreenText, withoutDialogue } from "../lib/adplan";
 import { judgeRefCheck, referenceInstructions } from "../lib/references";
 import { parseAnalysis } from "../lib/analyze";
-import { cardLength, changedAdJob, newAdJob } from "../components/adRunner";
+import { barsIn, cardLength, changedAdJob, newAdJob } from "../components/adRunner";
 
 assert.equal(sceneCount(15), 2);
 assert.equal(endCardSeconds(15), 5);
@@ -122,3 +122,23 @@ console.log("ad plan tests passed");
   assert.match(frameLead([]), /product must look/);
   assert.match(NO_TEXT, /director's chair back is plain/);
 }
+
+// Black bars: a letterboxed frame is spotted from its pixels, a normal or dark-centred one isn't.
+{
+  const w = 10, h = 20;
+  const pic = (bars: boolean) => {
+    const px: number[] = [];
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const v = bars && (y < 3 || y >= h - 3) ? 0 : 120;
+      px.push(v, v, v, 255);
+    }
+    return px;
+  };
+  assert.ok(barsIn(pic(true), w, h));
+  assert.ok(!barsIn(pic(false), w, h));
+}
+// The end card keeps a character's own outfit.
+assert.match(endCardPrompt(plan, true, undefined, ["character"]), /same outfit/);
+assert.match(endCardPrompt(plan, true, undefined, ["product"]), /product from the reference/);
+assert.match(frameLead(["character"]), /never standing on top of furniture/);
+console.log("bars and end card tests passed");

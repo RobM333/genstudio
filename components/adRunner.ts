@@ -97,7 +97,66 @@ async function productPicture(job: AdJob, aspectRatio: string): Promise<{ url: s
 }
 
 /** A scene's first frame, showing the product from the user's photo or from our product picture. */
+/**
+ * True when a picture has black bars along the top and bottom (or the sides):
+ * the picture model sometimes letterboxes a frame, and the checking AI can miss it.
+ * Looks at the pixels in the browser, so it costs nothing. Unknown means no.
+ */
+export async function hasBlackBars(url: string): Promise<boolean> {
+  try {
+    if (typeof document === "undefined") return false;
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    await new Promise<void>((ok, bad) => {
+      img.onload = () => ok();
+      img.onerror = () => bad(new Error("load"));
+      img.src = url;
+    });
+    const w = 64;
+    const h = Math.max(1, Math.round((img.naturalHeight / img.naturalWidth) * w));
+    const c = document.createElement("canvas");
+    c.width = w;
+    c.height = h;
+    const ctx = c.getContext("2d");
+    if (!ctx) return false;
+    ctx.drawImage(img, 0, 0, w, h);
+    const px = ctx.getImageData(0, 0, w, h).data;
+    return barsIn(px, w, h);
+  } catch {
+    return false;
+  }
+}
+
+/** Pixels (RGBA) of a small copy of the picture: are the outer bands, top and bottom or left and right, almost black? */
+export function barsIn(px: Uint8ClampedArray | number[], w: number, h: number): boolean {
+  const dark = (x0: number, y0: number, x1: number, y1: number) => {
+    let sum = 0;
+    let n = 0;
+    for (let y = y0; y < y1; y++)
+      for (let x = x0; x < x1; x++) {
+        const k = (y * w + x) * 4;
+        sum += Math.max(px[k], px[k + 1], px[k + 2]);
+        n++;
+      }
+    return n > 0 && sum / n < 14;
+  };
+  const band = (n: number) => Math.max(1, Math.round(n * 0.08));
+  const bh = band(h);
+  const bw = band(w);
+  return (dark(0, 0, w, bh) && dark(0, h - bh, w, h)) || (dark(0, 0, bw, h) && dark(w - bw, 0, w, h));
+}
+
+const NO_BARS = "Fill the whole frame edge to edge: no black bars, borders or letterboxing at the top, bottom or sides.";
+
+/** The scene's opening picture; made once more if it came out with black bars. */
 async function sceneFrame(job: AdJob, i: number, aspectRatio: string, fix = ""): Promise<string> {
+  const url = await sceneFrameOnce(job, i, aspectRatio, fix);
+  if (!(await hasBlackBars(url))) return url;
+  job.check?.log.push(`Scene ${i + 1}: the opening picture had black bars, so it was made again.`);
+  return sceneFrameOnce(job, i, aspectRatio, `${NO_BARS} ${fix}`.trim());
+}
+
+async function sceneFrameOnce(job: AdJob, i: number, aspectRatio: string, fix = ""): Promise<string> {
   const res = await post("/api/generate", {
     modelId: "fal-ai/nano-banana/edit",
     prompt: `${frameLead((job.refs ?? []).map((r) => r.kind))} ${fix ? `Important: ${fix} ` : ""}${scenePrompt(job.plan, i)}`.slice(0, 1990),
@@ -192,7 +251,7 @@ async function cardImage(job: AdJob, aspectRatio: string): Promise<string> {
   const modelId = withPicture ? "fal-ai/nano-banana/edit" : "fal-ai/nano-banana";
   const res = await post("/api/generate", {
     modelId,
-    prompt: endCardPrompt(job.plan, withPicture, job.brief.brand),
+    prompt: endCardPrompt(job.plan, withPicture, job.brief.brand, (job.refs ?? []).map((r) => r.kind)),
     aspectRatio,
     enhance: false,
     refs: job.refs,

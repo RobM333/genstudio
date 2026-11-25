@@ -383,9 +383,14 @@ export function withoutDialogue(visual: string): string {
     .replace(/[.]+$/, "");
 }
 
-export function endCardPrompt(plan: AdPlan, withRefs: boolean, brand?: BrandInfo): string {
+export function endCardPrompt(plan: AdPlan, withRefs: boolean, brand?: BrandInfo, kinds: string[] = []): string {
   const b = brandLine(brand);
-  return `A clean, premium end card for a video ad.${b ? ` ${b}; use the brand colours for the background and type.` : ""} ${withRefs ? "Show the product from the reference picture exactly as it is, centred, " : `${plan.look}. Show the product centred, `}on a simple background that matches this palette. Large bold headline text that reads exactly "${plan.endCard.headline}"${
+  const subject = !withRefs
+    ? `${plan.look}. Show the product centred, `
+    : kinds.includes("character") && !kinds.includes("product")
+      ? "Show the character from the reference picture exactly as it is (same outfit and accessories, nothing added such as hats, caps or jackets), centred, "
+      : "Show the product from the reference picture exactly as it is, centred, ";
+  return `A clean, premium end card for a video ad.${b ? ` ${b}; use the brand colours for the background and type.` : ""} ${subject}on a simple background that matches this palette. Large bold headline text that reads exactly "${plan.endCard.headline}"${
     plan.endCard.tagline ? ` and smaller text underneath that reads exactly "${plan.endCard.tagline}"` : ""
   }. Spell every word exactly, nothing else written anywhere. Modern sans-serif type, plenty of space.`;
 }
@@ -393,7 +398,7 @@ export function endCardPrompt(plan: AdPlan, withRefs: boolean, brand?: BrandInfo
 /** How the opening frame is told to use the reference pictures: a mascot is kept as a character, not as "the product". */
 export function frameLead(kinds: string[]): string {
   const parts: string[] = [];
-  if (kinds.includes("character")) parts.push("The character from the reference picture is the star: keep its exact look (face, shape, colours, outfit and accessories) and keep it a character, never a real person.");
+  if (kinds.includes("character")) parts.push("The character from the reference picture is the star: keep its exact look (face, shape, colours, outfit and accessories) and keep it a character, never a real person. It is life-size for its world and stands naturally on the floor or sits on a seat: behind a counter or table, never standing on top of furniture or floating.");
   if (kinds.includes("product") || !kinds.length) parts.push("The product must look exactly like the product in the reference picture.");
   if (kinds.includes("logo")) parts.push("Only use the logo where the scene says so.");
   return `Opening frame of a video ad scene. ${parts.join(" ")}`;
