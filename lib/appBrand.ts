@@ -4,6 +4,18 @@
 /** The app's name, shown everywhere a visitor can see it. */
 export const BRAND_NAME = "ToastyFly";
 
+/**
+ * Who owns the name, logo and Toasty character. Rob personally for now;
+ * switch to "Toasty Fly LLC" once the company is filed (planned January 2027).
+ */
+export const BRAND_OWNER = "Rob Magnano";
+
+/** Year shown in the copyright line. */
+export const COPYRIGHT_YEAR = 2026;
+
+/** The copyright and trademark line shown in page footers. */
+export const COPYRIGHT_NOTICE = `© ${COPYRIGHT_YEAR} ${BRAND_OWNER}. ${BRAND_NAME}™ and the Toasty character are trademarks of ${BRAND_OWNER}.`;
+
 /** Social media handle (same on every platform). */
 export const BRAND_HANDLE = "@toastyflystudio";
 

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { BRAND_LOGO, BRAND_LOGO_SIZE, BRAND_NAME, cleanRefCode, LOGO_HAS_NAME, MAKES, OFFER, REFERRAL, spotsLine, TOTAL_SPOTS } from "@/lib/founding";
+import { COPYRIGHT_NOTICE } from "@/lib/appBrand";
 import { FREE_MONTH_MAKES, foundingPriceShort, SHARE_LINE } from "@/lib/foundingOffer";
 
 // Public "Founding 100" sign-up page. Works without the app password.
@@ -350,8 +351,9 @@ export default function Founding() {
       </section>
 
       <footer className="founding-foot muted small">
-        © {BRAND_NAME} · <Link href="/privacy">Privacy</Link> · <Link href="/terms">Terms</Link> ·{" "}
+        <Link href="/privacy">Privacy</Link> · <Link href="/terms">Terms</Link> ·{" "}
         <Link href="/acceptable-use">Acceptable use</Link>
+        <span className="l-foot-legal">{COPYRIGHT_NOTICE}</span>
       </footer>
     </div>
   );

@@ -46,7 +46,7 @@ function joinLessons(a?: string[], b?: unknown): string[] | undefined {
   const all = [...new Set([...(a ?? []), ...extra])];
   return all.length ? all : undefined;
 }
-import { BRAND_LOGO, BRAND_LOGO_SIZE, BRAND_MARK as BRAND_MARK_FILE, BRAND_NAME, FILM_NAME, LOGO_HAS_NAME } from "@/lib/appBrand";
+import { BRAND_LOGO, BRAND_LOGO_SIZE, BRAND_MARK as BRAND_MARK_FILE, BRAND_NAME, COPYRIGHT_NOTICE, FILM_NAME, LOGO_HAS_NAME } from "@/lib/appBrand";
 import FilmSet, { draftFromJob } from "./FilmSet";
 import { buildFilm, changeShot, freshFilm, type FilmJob } from "./filmRunner";
 import { filmCost, shotSecondsFor, STILL_MODEL_ID } from "@/lib/filmset";
@@ -4282,6 +4282,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
           <Link href="/terms">Terms</Link> · <Link href="/acceptable-use">Acceptable use</Link> ·{" "}
           <Link href="/privacy">Privacy</Link>
           <span className="side-foot-note">You are responsible for what you create with {BRAND_NAME}.</span>
+          <span className="side-foot-note">{COPYRIGHT_NOTICE}</span>
         </footer>
       </aside>
 

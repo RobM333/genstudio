@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { BRAND_LOGO, BRAND_LOGO_SIZE, BRAND_NAME, LOGO_HAS_NAME, OFFER, TOTAL_SPOTS } from "@/lib/founding";
+import { COPYRIGHT_NOTICE } from "@/lib/appBrand";
 import { dealColumns, makeLink, STUDIO_OPEN, STUDIO_PATH, templateLink, WALL, WALL_FILTERS, wallIn, type WallGroup, type WallItem } from "@/lib/landing";
 import { TEMPLATE_MEDIA } from "@/lib/showcase";
 import { sizeLabel, TEMPLATES } from "@/lib/templates";
@@ -196,8 +197,9 @@ export default function Landing({ signIn = false }: { signIn?: boolean }) {
       </section>
 
       <footer className="l-foot muted small">
-        © {BRAND_NAME} · <Link href="/privacy">Privacy</Link> · <Link href="/terms">Terms</Link> ·{" "}
+        <Link href="/privacy">Privacy</Link> · <Link href="/terms">Terms</Link> ·{" "}
         <Link href="/acceptable-use">Acceptable use</Link> · <a href={STUDIO_PATH}>Members: open the studio</a>
+        <span className="l-foot-legal">{COPYRIGHT_NOTICE}</span>
       </footer>
 
       {open ? <Viewer item={open} onClose={() => setOpen(null)} /> : null}
