@@ -1,5 +1,6 @@
 import "server-only";
 import { BRAND } from "./config";
+import { COPYRIGHT_NOTICE } from "../appBrand";
 import { whatCreditsMake } from "../pricing";
 import { foundingPriceLines, longDay } from "../foundingOffer";
 
@@ -17,7 +18,8 @@ export async function sendEmail(to: string, subject: string, text: string, html:
     const r = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ from: process.env.EMAIL_FROM?.trim() || FROM_DEFAULT, to: [to], subject, text, html }),
+      // Every email ends with the copyright and trademark line (plain-text version; wrap() adds it to the HTML).
+      body: JSON.stringify({ from: process.env.EMAIL_FROM?.trim() || FROM_DEFAULT, to: [to], subject, text: `${text}\n\n${COPYRIGHT_NOTICE}`, html }),
       signal: AbortSignal.timeout(10000),
     });
     if (r.ok) return { ok: true };
@@ -33,7 +35,7 @@ export async function sendEmail(to: string, subject: string, text: string, html:
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
 function wrap(inner: string): string {
-  return `<div style="font-family:Arial,Helvetica,sans-serif;max-width:480px;margin:0 auto;padding:24px;color:#14141a">${inner}<p style="color:#777;font-size:12px;margin-top:32px">${BRAND}. If you didn't ask for this, you can ignore this email.</p></div>`;
+  return `<div style="font-family:Arial,Helvetica,sans-serif;max-width:480px;margin:0 auto;padding:24px;color:#14141a">${inner}<p style="color:#777;font-size:12px;margin-top:32px">${BRAND}. If you didn't ask for this, you can ignore this email.</p><p style="color:#999;font-size:11px;margin-top:8px">${esc(COPYRIGHT_NOTICE)}</p></div>`;
 }
 
 export function codeEmail(code: string) {
