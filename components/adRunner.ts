@@ -8,7 +8,7 @@
 // scenes are filmed with nobody talking and the voice laid over them.
 // Progress is saved on the item, so a closed page carries on where it stopped.
 
-import { cardLines, inkFor } from "@/lib/endcard";
+import { cardLines, contentBox, coverCrop, inkFor } from "@/lib/endcard";
 import { finishReference } from "@/components/ReferencesBox";
 import { endCardPrompt, endCardSeconds, frameLead, lineSeconds, maxRedos, nativeTalk, SCENE_SECONDS, sceneVideoCost, scenePrompt, speaksOnScreen, talkScenePrompt, withoutDialogue, type AdBrief, type AdPlan } from "@/lib/adplan";
 import type { Analysis } from "@/lib/analyze";
@@ -163,7 +163,7 @@ async function sceneFrame(job: AdJob, i: number, aspectRatio: string, fix = ""):
 async function sceneFrameOnce(job: AdJob, i: number, aspectRatio: string, fix = "", modelId = "fal-ai/nano-banana/edit"): Promise<string> {
   const res = await post("/api/generate", {
     modelId,
-    prompt: `${frameLead((job.refs ?? []).map((r) => r.kind))} ${fix ? `Important: ${fix} ` : ""}${scenePrompt(job.plan, i)}`.slice(0, 1990),
+    prompt: `${frameLead((job.refs ?? []).map((r) => r.kind), job.brief.brand)} ${fix ? `Important: ${fix} ` : ""}${scenePrompt(job.plan, i)}`.slice(0, 1990),
     aspectRatio,
     enhance: false,
     purpose: "keyframe",
@@ -291,7 +291,20 @@ export async function drawCardText(url: string, words: CardWords, colors: string
   c.width = w;
   c.height = h;
   const ctx = c.getContext("2d")!;
-  ctx.drawImage(img, 0, 0, w, h);
+  // Black bars from the picture model are cut off and the picture fills the card (no new picture needed).
+  const sw = 96;
+  const sh = Math.max(1, Math.round((h / w) * sw));
+  const small = document.createElement("canvas");
+  small.width = sw;
+  small.height = sh;
+  const sctx = small.getContext("2d")!;
+  sctx.drawImage(img, 0, 0, sw, sh);
+  const box = contentBox(sctx.getImageData(0, 0, sw, sh).data, sw, sh);
+  const k = w / sw;
+  // Trim a little extra so no dark edge line is left.
+  const inset = box.w < sw || box.h < sh ? 1 : 0;
+  const src = coverCrop({ x: (box.x + inset) * k, y: (box.y + inset) * (h / sh), w: (box.w - inset * 2) * k, h: (box.h - inset * 2) * (h / sh) }, w, h);
+  ctx.drawImage(img, src.x, src.y, src.w, src.h, 0, 0, w, h);
   const font = (size: number, weight: number) => `${weight} ${size}px "Inter Tight", ui-sans-serif, system-ui, sans-serif`;
   const measure = (t: string, size: number, weight: number) => {
     ctx.font = font(size, weight);

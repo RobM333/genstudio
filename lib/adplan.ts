@@ -390,16 +390,22 @@ export function endCardPrompt(plan: AdPlan, withRefs: boolean, brand?: BrandInfo
   const subject = !withRefs
     ? `${plan.look}. Show the product `
     : kinds.includes("character") && !kinds.includes("product")
-      ? "Show the character from the reference picture exactly as it is: keep every piece of clothing and every accessory it wears there (for example its hoodie, jacket, glasses or hat), remove nothing and add nothing new. Show it "
+      ? `Show the character from the reference picture exactly as it is: keep every piece of clothing and every accessory it wears there (for example its hoodie, jacket, glasses or hat), remove nothing and add nothing new.${outfitLine(brand)} Show it `
       : "Show the product from the reference picture exactly as it is. Show it ";
   // The words are typed onto the picture afterwards by the app, so the picture leaves room for them and has none of its own.
   return `A clean, premium end card picture for a video ad.${b ? ` ${b}; use the brand colours for the background.` : ""} ${subject}in the lower half of the picture, centred, on a simple background that matches this palette. Keep the top 40 percent of the picture plain and empty, with no objects, so words can be placed there later. No text, no letters, no words, no numbers, no logo, no signs anywhere in the picture.`;
 }
 
+/** The brand style's own words about what the character wears (e.g. "always wears a blue hoodie"), which win over the reference picture. */
+export function outfitLine(brand?: BrandInfo): string {
+  const parts = (brand?.style ?? "").split(/[;.]/).map((p) => p.trim()).filter((p) => /\b(wears?|wearing|dressed|outfit|hoodie|jacket|shirt|hat|cap|glasses|sunglasses)\b/i.test(p));
+  return parts.length ? ` Its outfit must match this, even if the reference picture differs: ${parts.join("; ").slice(0, 200)}.` : "";
+}
+
 /** How the opening frame is told to use the reference pictures: a mascot is kept as a character, not as "the product". */
-export function frameLead(kinds: string[]): string {
+export function frameLead(kinds: string[], brand?: BrandInfo): string {
   const parts: string[] = [];
-  if (kinds.includes("character")) parts.push("The character from the reference picture is the star: keep its exact look (face, shape, colours, outfit and accessories) and keep it a character, never a real person. It is life-size for its world and stands naturally on the floor or sits on a seat: behind a counter or table, never standing on top of furniture or floating.");
+  if (kinds.includes("character")) parts.push("The character from the reference picture is the star: keep its exact look (face, shape, colours, outfit and accessories) and keep it a character, never a real person. It is life-size for its world and stands naturally on the floor or sits on a seat: behind a counter or table, never standing on top of furniture or floating." + outfitLine(brand));
   if (kinds.includes("product") || !kinds.length) parts.push("The product must look exactly like the product in the reference picture.");
   if (kinds.includes("logo")) parts.push("Only use the logo where the scene says so.");
   return `Opening frame of a video ad scene. ${parts.join(" ")}`;

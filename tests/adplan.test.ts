@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { AD_PRICES, AD_VOICES, adCost, endCardPrompt, nativeTalk, sceneVideoCost, talkScenePrompt, voiceInWords, frameLead, NO_TEXT, adPlanWithRules, endCardSeconds, fitLine, parseAdPlan, sceneCount, scenePrompt, speaksOnScreen, wantsOnScreenText, withoutDialogue } from "../lib/adplan";
+import { AD_PRICES, AD_VOICES, adCost, endCardPrompt, nativeTalk, sceneVideoCost, talkScenePrompt, voiceInWords, frameLead, outfitLine, NO_TEXT, adPlanWithRules, endCardSeconds, fitLine, parseAdPlan, sceneCount, scenePrompt, speaksOnScreen, wantsOnScreenText, withoutDialogue } from "../lib/adplan";
 import { judgeRefCheck, referenceInstructions } from "../lib/references";
 import { parseAnalysis } from "../lib/analyze";
-import { cardLines, cleanWebsite, inkFor, wrapWords } from "../lib/endcard";
+import { cardLines, cleanWebsite, contentBox, coverCrop, inkFor, wrapWords } from "../lib/endcard";
 import { barsIn, cardLength, changedAdJob, newAdJob } from "../components/adRunner";
 
 assert.equal(sceneCount(15), 2);
@@ -184,5 +184,25 @@ assert.match(frameLead(["character"]), /never standing on top of furniture/);
   assert.equal(inkFor("#ffffff"), "#111111");
   assert.equal(inkFor("#1f2a44"), "#ffffff");
   assert.equal(cardLines(720, 1280, { headline: "Hi" }, m).length, 1);
+}
+{
+  // Black bars on the card picture are cut off for free.
+  const W = 20, H = 36;
+  const px = (barTop: number, barBottom: number) => {
+    const a: number[] = [];
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const dark = y < barTop || y >= H - barBottom; a.push(dark ? 3 : 150, dark ? 3 : 120, dark ? 3 : 90, 255); }
+    return a;
+  };
+  assert.deepEqual(contentBox(px(4, 4), W, H), { x: 0, y: 4, w: W, h: 28 });
+  assert.deepEqual(contentBox(px(0, 0), W, H), { x: 0, y: 0, w: W, h: H });
+  assert.deepEqual(contentBox(px(2, 0), W, H), { x: 0, y: 2, w: W, h: 34 });
+  assert.deepEqual(contentBox(px(30, 0), W, H), { x: 0, y: 0, w: W, h: H }, "mostly dark pictures are left alone");
+  const crop = coverCrop({ x: 0, y: 4, w: 20, h: 28 }, 720, 1280);
+  assert.ok(Math.abs(crop.w / crop.h - 720 / 1280) < 0.001 && crop.y === 4 && crop.x > 0);
+  // The brand style's outfit wins over the reference picture (Toasty's picture has no hoodie).
+  const toasty = { style: "fun and cheeky; Toasty always keeps his black sunglasses on and wears a blue hoodie" };
+  assert.match(endCardPrompt(plan, true, toasty, ["character"]), /blue hoodie/);
+  assert.match(frameLead(["character"], toasty), /even if the reference picture differs/);
+  assert.equal(outfitLine({ style: "clean and bright" }), "");
 }
 console.log("bars and end card tests passed");

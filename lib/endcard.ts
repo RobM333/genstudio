@@ -82,3 +82,61 @@ export function inkFor(hex: string): string {
   const lum = (0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255;
   return lum > 0.6 ? "#111111" : "#ffffff";
 }
+
+export type Box = { x: number; y: number; w: number; h: number };
+
+/**
+ * The part of a picture inside any black bars (pixels RGBA of a small copy).
+ * Picture models sometimes letterbox a tall picture; the end card is then
+ * cropped to this part and filled edge to edge, for free. Only rows or
+ * columns that are black across their whole width count as bars.
+ */
+export function contentBox(px: Uint8ClampedArray | number[], w: number, h: number): Box {
+  const lum = (x: number, y: number) => {
+    const i = (y * w + x) * 4;
+    return 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2];
+  };
+  const darkRow = (y: number) => {
+    let sum = 0;
+    let max = 0;
+    for (let x = 0; x < w; x++) {
+      const l = lum(x, y);
+      sum += l;
+      max = Math.max(max, l);
+    }
+    return sum / w < 14 && max < 40;
+  };
+  const darkCol = (x: number, y0: number, y1: number) => {
+    let sum = 0;
+    let max = 0;
+    for (let y = y0; y < y1; y++) {
+      const l = lum(x, y);
+      sum += l;
+      max = Math.max(max, l);
+    }
+    return sum / Math.max(1, y1 - y0) < 14 && max < 40;
+  };
+  let top = 0;
+  while (top < h - 1 && darkRow(top)) top++;
+  let bottom = h;
+  while (bottom > top + 1 && darkRow(bottom - 1)) bottom--;
+  let left = 0;
+  while (left < w - 1 && darkCol(left, top, bottom)) left++;
+  let right = w;
+  while (right > left + 1 && darkCol(right - 1, top, bottom)) right--;
+  // Ignore pictures that are almost all dark (a night scene, not bars).
+  if ((bottom - top) * (right - left) < w * h * 0.4) return { x: 0, y: 0, w, h };
+  const box = { x: left, y: top, w: right - left, h: bottom - top };
+  return box;
+}
+
+/** The part of the source box to draw so it covers a w by h frame without stretching (cut evenly from the long sides). */
+export function coverCrop(box: Box, w: number, h: number): Box {
+  const want = w / h;
+  if (box.w / box.h > want) {
+    const cw = box.h * want;
+    return { x: box.x + (box.w - cw) / 2, y: box.y, w: cw, h: box.h };
+  }
+  const ch = box.w / want;
+  return { x: box.x, y: box.y + (box.h - ch) / 2, w: box.w, h: ch };
+}
