@@ -1,6 +1,7 @@
 import "server-only";
 import { createHash } from "node:crypto";
 import { MAX_PER_IP_PER_DAY, type FoundingSignup } from "./founding";
+import { safeGetJSON } from "./blobsSafe";
 
 // Where founding sign-ups are kept: Netlify Blobs, which every Netlify site
 // has built in (no extra account or secret). When running on a computer
@@ -33,7 +34,7 @@ async function store(): Promise<Store> {
     const { getStore } = await import("@netlify/blobs");
     const blobs = getStore({ name: "founding", consistency: "strong" });
     cached = {
-      get: (key) => blobs.get(key, { type: "json" }),
+      get: (key) => safeGetJSON(blobs, key),
       set: async (key, value) => {
         await blobs.setJSON(key, value);
       },
