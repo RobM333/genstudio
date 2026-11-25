@@ -4,6 +4,19 @@
 /** The app's name, shown everywhere a visitor can see it. */
 export const BRAND_NAME = "ToastyFly";
 
+/**
+ * The name shown as owner in the copyright line. Rob doesn't want his own name
+ * on the site, so the brand name is used. Switch to "Toasty Fly LLC" once the
+ * company is filed (planned January 2027).
+ */
+export const BRAND_OWNER = BRAND_NAME;
+
+/** Year shown in the copyright line. */
+export const COPYRIGHT_YEAR = 2026;
+
+/** The copyright and trademark line shown in page footers. */
+export const COPYRIGHT_NOTICE = `© ${COPYRIGHT_YEAR} ${BRAND_OWNER}. All rights reserved. ${BRAND_NAME}™ and the Toasty character are trademarks of ${BRAND_OWNER}.`;
+
 /** Social media handle (same on every platform). */
 export const BRAND_HANDLE = "@toastyflystudio";
 
