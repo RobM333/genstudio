@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { AD_PRICES, AD_VOICES, adCost, adPlanWithRules, endCardSeconds, fitLine, parseAdPlan, sceneCount, scenePrompt, speaksOnScreen, wantsOnScreenText, withoutDialogue } from "../lib/adplan";
+import { AD_PRICES, AD_VOICES, adCost, frameLead, NO_TEXT, adPlanWithRules, endCardSeconds, fitLine, parseAdPlan, sceneCount, scenePrompt, speaksOnScreen, wantsOnScreenText, withoutDialogue } from "../lib/adplan";
 import { judgeRefCheck, referenceInstructions } from "../lib/references";
 import { parseAnalysis } from "../lib/analyze";
 import { cardLength, changedAdJob, newAdJob } from "../components/adRunner";
@@ -103,3 +103,11 @@ assert.equal(cardLength(plan, [5, 5]), 5);
 assert.equal(cardLength(plan, [2.7, 3.2]), 7);
 assert.equal(cardLength(plan, [4.5, 4]), 6.5);
 console.log("ad plan tests passed");
+
+// Opening frames treat a mascot as a character, not as "the product".
+{
+  assert.match(frameLead(["character"]), /character from the reference/);
+  assert.doesNotMatch(frameLead(["character"]), /product must look/);
+  assert.match(frameLead([]), /product must look/);
+  assert.match(NO_TEXT, /director's chair back is plain/);
+}

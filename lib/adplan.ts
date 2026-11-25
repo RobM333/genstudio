@@ -330,11 +330,11 @@ export function scenePrompt(plan: AdPlan, i: number, asVoiceover = false): strin
 }
 
 /** Said in every scene prompt unless the person asked for words on screen. */
-export const NO_TEXT = "No speech bubbles, captions, subtitles, logos, signs or written words anywhere; props such as a clapperboard are blank.";
+export const NO_TEXT = "No speech bubbles, captions, subtitles, logos, signs or written words anywhere; every prop is blank: a director's chair back is plain fabric with no name, and clapperboards, mugs, screens, papers and walls have no lettering.";
 /** Cinematic scenes sometimes come back with black bars, which show as a dark strip in the joined ad. */
 export const FULL_FRAME = "Full frame, edge to edge, no black bars, borders or letterbox.";
 /** Things the video model is told to leave out (its "negative prompt"). */
-export const SCENE_AVOID = "speech bubble, caption, subtitles, text, letters, words, watermark, logo, black bars, letterbox, border";
+export const SCENE_AVOID = "speech bubble, caption, subtitles, text, letters, words, sign, name on chair, watermark, logo, black bars, letterbox, border";
 
 /**
  * Spoken words inside a scene's picture description make picture models draw
@@ -356,4 +356,13 @@ export function endCardPrompt(plan: AdPlan, withRefs: boolean, brand?: BrandInfo
   return `A clean, premium end card for a video ad.${b ? ` ${b}; use the brand colours for the background and type.` : ""} ${withRefs ? "Show the product from the reference picture exactly as it is, centred, " : `${plan.look}. Show the product centred, `}on a simple background that matches this palette. Large bold headline text that reads exactly "${plan.endCard.headline}"${
     plan.endCard.tagline ? ` and smaller text underneath that reads exactly "${plan.endCard.tagline}"` : ""
   }. Spell every word exactly, nothing else written anywhere. Modern sans-serif type, plenty of space.`;
+}
+
+/** How the opening frame is told to use the reference pictures: a mascot is kept as a character, not as "the product". */
+export function frameLead(kinds: string[]): string {
+  const parts: string[] = [];
+  if (kinds.includes("character")) parts.push("The character from the reference picture is the star: keep its exact look (face, shape, colours, outfit and accessories) and keep it a character, never a real person.");
+  if (kinds.includes("product") || !kinds.length) parts.push("The product must look exactly like the product in the reference picture.");
+  if (kinds.includes("logo")) parts.push("Only use the logo where the scene says so.");
+  return `Opening frame of a video ad scene. ${parts.join(" ")}`;
 }

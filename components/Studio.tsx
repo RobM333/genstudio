@@ -1014,8 +1014,19 @@ export default function Studio({ mode }: { mode: AppMode }) {
   // ---------- Full ad ----------
 
   /** The brief as sent to the planner: with the kinds of pictures given and, when it's on, the brand kit. */
+  /**
+   * The pictures a Full ad is made with. With the brand kit on and nothing picked, the kit's own mascot, product and
+   * logo come in by themselves: an ad that never shows them makes up its own (once a real-looking man replaced Toasty).
+   */
+  function adRefs(): RefItem[] {
+    if (refs.length || !kitPics?.length) return refs;
+    const order: Record<string, number> = { character: 0, product: 1, logo: 2 };
+    return kitPics.filter((r) => r.kind in order).sort((a, b) => order[a.kind] - order[b.kind]).slice(0, 4);
+  }
+
   function adBriefNow(): AdBrief {
-    return { ...brief, refKinds: refs.map((r) => r.kind), refNames: refs.map((r) => (r.kind === "character" ? (r.name ?? "") : "")), brand: brandOn ? brandInfo(brand) : undefined };
+    const use = adRefs();
+    return { ...brief, refKinds: use.map((r) => r.kind), refNames: use.map((r) => (r.kind === "character" ? (r.name ?? "") : "")), brand: brandOn ? brandInfo(brand) : undefined };
   }
 
   /** Reads the user's product page: fills in the brief and offers its pictures (free, no AI). */
@@ -1077,6 +1088,8 @@ export default function Studio({ mode }: { mode: AppMode }) {
       setAskTerms(true);
       return;
     }
+    // Show the kit pictures the ad will use, so they can be taken out before building.
+    if (!refs.length && adRefs().length) setRefs(adRefs());
     setAdBusy(request ? "Updating the plan..." : "Planning your ad...");
     try {
       const res = await fetch("/api/adplan", {
@@ -1134,7 +1147,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
 
   function buildPlannedAd() {
     if (!adPlan) return;
-    const useRefs = refs.map(({ url, kind, token }) => ({ url, kind, token }));
+    const useRefs = adRefs().map(({ url, kind, token }) => ({ url, kind, token }));
     startAd(newAdJob(adBriefNow(), adPlan, useRefs, adCheck), { aspectRatio: adShape });
   }
 

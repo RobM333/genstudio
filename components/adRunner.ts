@@ -6,7 +6,7 @@
 // filmed with nobody talking and the voice laid over them.
 // Progress is saved on the item, so a closed page carries on where it stopped.
 
-import { endCardPrompt, endCardSeconds, lineSeconds, maxRedos, SCENE_SECONDS, sceneVideoCost, scenePrompt, speaksOnScreen, withoutDialogue, type AdBrief, type AdPlan } from "@/lib/adplan";
+import { endCardPrompt, endCardSeconds, frameLead, lineSeconds, maxRedos, SCENE_SECONDS, sceneVideoCost, scenePrompt, speaksOnScreen, withoutDialogue, type AdBrief, type AdPlan } from "@/lib/adplan";
 import type { Analysis } from "@/lib/analyze";
 import { faultText, type FaultCode } from "@/lib/promise";
 import { post, waitFor, waitForResult } from "./storyRunner";
@@ -95,7 +95,7 @@ async function productPicture(job: AdJob, aspectRatio: string): Promise<{ url: s
 async function sceneFrame(job: AdJob, i: number, aspectRatio: string, fix = ""): Promise<string> {
   const res = await post("/api/generate", {
     modelId: "fal-ai/nano-banana/edit",
-    prompt: `Opening frame of a video ad scene. The product must look exactly like the product in the reference picture. ${fix ? `Important: ${fix} ` : ""}${scenePrompt(job.plan, i)}`.slice(0, 1990),
+    prompt: `${frameLead((job.refs ?? []).map((r) => r.kind))} ${fix ? `Important: ${fix} ` : ""}${scenePrompt(job.plan, i)}`.slice(0, 1990),
     aspectRatio,
     enhance: false,
     purpose: "keyframe",
