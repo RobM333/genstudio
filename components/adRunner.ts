@@ -1,12 +1,16 @@
 // Builds a full ad in the browser, one short fal job at a time, so nothing hits
 // the hosting time limit: each scene (from the user's product photo when given),
 // the end card, the voiceover lines and the music, then one join and one mix.
+// The voice is recorded first. A scene whose line is said on screen is then made
+// from that exact recording, so the lips match the words; narrator scenes are
+// filmed with nobody talking and the voice laid over them.
 // Progress is saved on the item, so a closed page carries on where it stopped.
 
-import { endCardPrompt, endCardSeconds, maxRedos, SCENE_SECONDS, scenePrompt, type AdBrief, type AdPlan } from "@/lib/adplan";
+import { endCardPrompt, endCardSeconds, lineSeconds, maxRedos, SCENE_SECONDS, sceneVideoCost, scenePrompt, speaksOnScreen, withoutDialogue, type AdBrief, type AdPlan } from "@/lib/adplan";
 import type { Analysis } from "@/lib/analyze";
 import { faultText, type FaultCode } from "@/lib/promise";
 import { post, waitFor, waitForResult } from "./storyRunner";
+import { TALK_VIDEO_MODEL_ID } from "@/lib/talk";
 import { isOwnVoice } from "@/lib/elevenlabs";
 import { loadEleven, speakOwn, usableVoices } from "./elevenConnect";
 
@@ -17,6 +21,11 @@ export type AdClip = {
   error?: string;
   frameChecked?: boolean; // the quality check looked at the first frame
   checked?: boolean; // the quality check looked at the finished scene
+  /** Said on screen: the voice line (voice|words) the lips were matched to, and how long the scene lasts. */
+  talkFor?: string;
+  seconds?: number;
+  /** Lip matching didn't work for this scene, so its line is read as a voiceover instead. */
+  asVoiceover?: boolean;
 };
 
 /** The automatic quality check: it looks at every scene and remakes weak ones, up to a cap. */
@@ -97,11 +106,12 @@ async function sceneFrame(job: AdJob, i: number, aspectRatio: string, fix = ""):
   return waitFor(res.modelId ?? "fal-ai/nano-banana/edit", res);
 }
 
-async function sceneClip(job: AdJob, i: number, aspectRatio: string, frame?: string, fix = ""): Promise<string> {
+async function sceneClip(job: AdJob, i: number, aspectRatio: string, frame?: string, fix = "", asVoiceover = false): Promise<string> {
   const modelId = frame ? job.animateModelId : job.sceneModelId;
   const res = await post("/api/generate", {
     modelId,
-    prompt: `${fix ? `Important: ${fix} ` : ""}${scenePrompt(job.plan, i)}`.slice(0, 1990),
+    prompt: `${fix ? `Important: ${fix} ` : ""}${scenePrompt(job.plan, i, asVoiceover)}`.slice(0, 1990),
+    noText: !job.plan.allowText,
     aspectRatio,
     duration: SCENE_SECONDS,
     sound: false,
@@ -110,6 +120,27 @@ async function sceneClip(job: AdJob, i: number, aspectRatio: string, frame?: str
     purpose: frame ? "animate" : undefined,
   });
   return waitFor(modelId, res);
+}
+
+/** The voice key a talking scene was matched to: a new voice or new words mean new lips. */
+const talkKey = (plan: AdPlan, i: number) => `${plan.voice}|${plan.scenes[i].voice}`;
+
+/**
+ * A scene said on screen: the opening picture speaks the recorded line, lips
+ * matched to it. It lasts as long as the line.
+ */
+async function talkClip(job: AdJob, i: number, aspectRatio: string, frame: string, voiceUrl: string, fix = ""): Promise<{ url: string; seconds: number }> {
+  const s = job.plan.scenes[i];
+  const prompt = `${fix ? `Important: ${fix} ` : ""}The character says the line to camera with lively, natural expressions and small gestures, staying exactly as in the picture. ${withoutDialogue(s.visual)}. Camera: ${s.camera}. ${job.plan.allowText ? "" : "No speech bubbles, captions or text."}`;
+  const res = await post("/api/tool", { tool: "talk-scene", imageUrl: frame, audioUrl: voiceUrl, text: s.voice, prompt: prompt.slice(0, 900), aspectRatio });
+  if (res.status === "COMPLETED") return { url: res.url ?? "", seconds: lineSeconds(s.voice, job.brief.language) };
+  const out = await waitForResult(res.modelId ?? TALK_VIDEO_MODEL_ID, res);
+  return { url: out.url, seconds: out.seconds ?? lineSeconds(s.voice, job.brief.language) };
+}
+
+/** How long each scene lasts: filmed scenes are 5 seconds, scenes said on screen last as long as their line. */
+export function sceneLengths(job: AdJob): number[] {
+  return job.plan.scenes.map((_, i) => (job.clips[i]?.talkFor ? (job.clips[i].seconds ?? SCENE_SECONDS) : SCENE_SECONDS));
 }
 
 /**
@@ -208,7 +239,8 @@ export async function buildAd(
       save(job);
     }
   }
-  if (ownVoice) await recordVoices();
+  // Every line is recorded first (a few cents): a scene said on screen is made from its recording.
+  await recordVoices();
 
   // Without the user's own photo, design the product once so every scene shows the same one.
   if (!job.refs?.length && !job.productUrl) {
@@ -244,9 +276,25 @@ export async function buildAd(
         clip.frameChecked = true;
         save(job);
       }
+      // Said on screen: made from the recorded line, so the lips match it. Without a recording (demo mode), or if
+      // lip matching fails, the scene is filmed as usual and the line is read over it.
+      const talks = speaksOnScreen(plan.scenes[i]) && !clip.asVoiceover && Boolean(job.voices[i]) && opts.live && !job.refs?.some((r) => r.kind === "person");
+      if (!clip.url && talks) {
+        step(`Scene ${i + 1} of ${n}: matching the lips to the voice`, TALK_VIDEO_MODEL_ID);
+        try {
+          const t = await talkClip(job, i, aspectRatio, clip.frame!, job.voices[i]!);
+          clip.url = t.url;
+          clip.seconds = t.seconds;
+          clip.talkFor = talkKey(plan, i);
+        } catch (e) {
+          clip.asVoiceover = true;
+          job.check?.log.push(`Scene ${i + 1}: the lips couldn't be matched to the voice (${(e as Error).message.replace(/\.$/, "")}), so the line is read as a voiceover.`);
+        }
+        save(job);
+      }
       if (!clip.url) {
         step(`Scene ${i + 1} of ${n}`, job.animateModelId);
-        clip.url = await sceneClip(job, i, aspectRatio, clip.frame);
+        clip.url = await sceneClip(job, i, aspectRatio, clip.frame, "", speaksOnScreen(plan.scenes[i]));
         save(job);
       }
       // Then the finished scene: remade once if it's clearly wrong, while the spending cap allows.
@@ -259,8 +307,15 @@ export async function buildAd(
           check.redosLeft--;
           clip.checked = true;
           save(job);
-          step(`Scene ${i + 1} of ${n}: remaking it`, job.animateModelId);
-          clip.url = await sceneClip(job, i, aspectRatio, clip.frame, fixText(a));
+          if (clip.talkFor && job.voices[i]) {
+            step(`Scene ${i + 1} of ${n}: remaking it`, TALK_VIDEO_MODEL_ID);
+            const t = await talkClip(job, i, aspectRatio, clip.frame!, job.voices[i]!, fixText(a));
+            clip.url = t.url;
+            clip.seconds = t.seconds;
+          } else {
+            step(`Scene ${i + 1} of ${n}: remaking it`, job.animateModelId);
+            clip.url = await sceneClip(job, i, aspectRatio, clip.frame, fixText(a), speaksOnScreen(plan.scenes[i]));
+          }
           check.log.push(`Scene ${i + 1}: remade it (${firstProblem(a)}).`);
         } else if (a?.serious) {
           const fault = a.faults?.[0];
@@ -281,11 +336,15 @@ export async function buildAd(
     save(job);
   }
 
-  if (!ownVoice) await recordVoices();
+  // Scenes said on screen last as long as their line, so the ad's real length is added up from the scenes.
+  const lengths = sceneLengths(job);
+  const cardSecs = endCardSeconds(plan.seconds);
+  const total = lengths.reduce((a, b) => a + b, 0) + cardSecs;
+  const talking = job.clips.some((c) => c.talkFor);
 
   if (!job.musicUrl || job.musicFor !== plan.music) {
     step("Making the music", "cassetteai/music-generator");
-    job.musicUrl = (await tool({ tool: "music", prompt: plan.music, seconds: plan.seconds }, "cassetteai/music-generator")) || undefined;
+    job.musicUrl = (await tool({ tool: "music", prompt: plan.music, seconds: Math.ceil(Math.max(total, plan.seconds)) }, "cassetteai/music-generator")) || undefined;
     job.musicFor = plan.music;
     save(job);
   }
@@ -305,17 +364,32 @@ export async function buildAd(
 
   if (!job.joinedUrl) {
     step("Joining the scenes", "fal-ai/ffmpeg-api/merge-videos");
-    job.joinedUrl = await tool({ tool: "merge", urls: [...job.clips.map((c) => c.url!), job.cardClip] }, "fal-ai/ffmpeg-api/merge-videos");
+    const urls = [...job.clips.map((c) => c.url!), job.cardClip!];
+    try {
+      job.joinedUrl = await tool({ tool: "merge", urls }, "fal-ai/ffmpeg-api/merge-videos");
+    } catch (e) {
+      // Talking scenes carry their own sound and a different length; if the plain join can't take them, place them on a timeline.
+      if (!talking) throw e;
+      job.joinedUrl = await tool({ tool: "join", urls, durations: [...lengths, cardSecs], seconds: Math.ceil(total) }, "fal-ai/ffmpeg-api/compose");
+    }
     save(job);
   }
 
+  // Each line starts where its scene starts. A narrator line waits a breath; a line said on screen starts
+  // exactly with the scene, because the lips were matched to it from the first frame.
+  const starts = lengths.map((_, i) => lengths.slice(0, i).reduce((a, b) => a + b, 0));
   const voices = lines
-    .map((_, i) => ({ url: job.voices[i], at: i * SCENE_SECONDS + 0.3, seconds: (i < n ? SCENE_SECONDS : endCardSeconds(plan.seconds)) - 0.4 }))
+    .map((_, i) => {
+      const said = i < n && Boolean(job.clips[i]?.talkFor);
+      const start = i < n ? starts[i] : total - cardSecs;
+      const len = i < n ? lengths[i] : cardSecs;
+      return { url: job.voices[i], at: said ? start : start + 0.3, seconds: said ? len : len - 0.4 };
+    })
     .filter((v) => v.url);
   const hasAudio = voices.length > 0 || Boolean(job.musicUrl);
   if (!hasAudio) return { url: job.joinedUrl!, hasAudio: false };
   step("Mixing voiceover and music", "fal-ai/ffmpeg-api/compose");
-  const url = await tool({ tool: "mix", videoUrl: job.joinedUrl, voices, musicUrl: job.musicUrl, seconds: plan.seconds }, "fal-ai/ffmpeg-api/compose");
+  const url = await tool({ tool: "mix", videoUrl: job.joinedUrl, voices, musicUrl: job.musicUrl, seconds: Math.round(total * 10) / 10 }, "fal-ai/ffmpeg-api/compose");
   job.step = undefined;
   return { url, hasAudio: true };
 }
@@ -324,14 +398,19 @@ export async function buildAd(
  * A new version of an ad after the plan changed: scenes whose picture didn't
  * change are kept, so only the changed parts are made (and paid for) again.
  */
-export function changedAdJob(old: AdJob, plan: AdPlan): { job: AdJob; scenes: number; card: boolean; voiceChars: number; music: boolean } {
+export function changedAdJob(old: AdJob, plan: AdPlan): { job: AdJob; scenes: number; sceneUsd: number; card: boolean; voiceChars: number; music: boolean } {
   const lookSame = old.plan.look === plan.look;
   let scenes = 0;
+  let sceneUsd = 0;
   const clips: AdClip[] = plan.scenes.map((s, i) => {
     const before = old.plan.scenes[i];
-    const same = lookSame && before && before.visual === s.visual && before.camera === s.camera && old.clips[i]?.url;
-    if (same) return { ...old.clips[i] };
+    const prev = old.clips[i];
+    // A scene said on screen was made from its line, so new words or a new voice mean new lips.
+    const sameSpeech = prev?.talkFor ? prev.talkFor === `${plan.voice}|${s.voice}` && speaksOnScreen(s) : !speaksOnScreen(s) || Boolean(prev?.asVoiceover);
+    const same = lookSame && before && before.visual === s.visual && before.camera === s.camera && prev?.url && sameSpeech;
+    if (same) return { ...prev };
     scenes++;
+    sceneUsd += sceneVideoCost(s, old.brief.language);
     return { status: "waiting" };
   });
   const card = old.plan.endCard.headline !== plan.endCard.headline || old.plan.endCard.tagline !== plan.endCard.tagline || !lookSame;
@@ -353,5 +432,5 @@ export function changedAdJob(old: AdJob, plan: AdPlan): { job: AdJob; scenes: nu
     step: undefined,
     check: old.check?.on ? { on: true, redosLeft: Math.min(maxRedos(plan.scenes.length), scenes), log: [] } : undefined,
   };
-  return { job, scenes, card, voiceChars, music };
+  return { job, scenes, sceneUsd, card, voiceChars, music };
 }

@@ -28,7 +28,7 @@ import { DESIGN_MOTION_PROMPT, nearestShape } from "@/lib/canva";
 import { addSoundTo, animateShot, joinShots, lastFrame, lockFrame, planStory, startPicture, waitFor, type Story } from "./storyRunner";
 import { lengthAdvice, LONG_LENGTHS, MAX_STORY_SECONDS, type ShotPlan } from "@/lib/storyboard";
 import { nextLength, readChat } from "@/lib/chat";
-import { AD_LANGUAGES, AD_LENGTHS, AD_PRICES, AD_TONES, AD_VOICES, adCost, languageFromLocale, maxVoiceChars, checkCost, endCardSeconds, maxRedos, maxVoiceWords, redoCap, SCENE_SECONDS, sceneCount, sceneRemakeCost, type AdBrief, type AdPlan } from "@/lib/adplan";
+import { AD_LANGUAGES, AD_LENGTHS, AD_PRICES, AD_TONES, AD_VOICES, adCost, languageFromLocale, maxVoiceChars, checkCost, endCardSeconds, maxRedos, maxVoiceWords, redoCap, SCENE_SECONDS, sceneCount, sceneRemakeCost, sceneVideoCost, speaksOnScreen, type AdBrief, type AdPlan } from "@/lib/adplan";
 import { AD_T2V, buildAd, changedAdJob, checkPart, newAdJob, type AdJob } from "./adRunner";
 import { ADVERTISE_PROMISE, asksForSpeech, decide, MONTHLY_CAP, promiseNote, type PromiseOutcome } from "@/lib/promise";
 import type { Analysis } from "@/lib/analyze";
@@ -991,7 +991,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
 
   /** The brief as sent to the planner: with the kinds of pictures given and, when it's on, the brand kit. */
   function adBriefNow(): AdBrief {
-    return { ...brief, refKinds: refs.map((r) => r.kind), brand: brandOn ? brandInfo(brand) : undefined };
+    return { ...brief, refKinds: refs.map((r) => r.kind), refNames: refs.map((r) => (r.kind === "character" ? (r.name ?? "") : "")), brand: brandOn ? brandInfo(brand) : undefined };
   }
 
   /** Reads the user's product page: fills in the brief and offers its pictures (free, no AI). */
@@ -1386,7 +1386,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
     const c = changedAdJob(old, plan);
     const withRefs = Boolean(old.refs?.length);
     return (
-      c.scenes * (AD_PRICES.scene + AD_PRICES.picture) +
+      c.sceneUsd + c.scenes * AD_PRICES.picture +
       (c.card ? AD_PRICES.picture + endCardSeconds(plan.seconds) * AD_PRICES.cardPerSecond : 0) +
       (!withRefs && old.plan.look !== plan.look ? AD_PRICES.picture : 0) +
       (isOwnVoice(plan.voice) ? 0 : (c.voiceChars / 1000) * AD_PRICES.voicePer1000Chars) +
@@ -1399,7 +1399,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
   function shapeCost(job: AdJob): number {
     const n = job.plan.scenes.length;
     return (
-      n * (AD_PRICES.scene + AD_PRICES.picture) +
+      job.plan.scenes.reduce((t, s) => t + sceneVideoCost(s, job.brief.language), 0) + n * AD_PRICES.picture +
       AD_PRICES.picture +
       endCardSeconds(job.plan.seconds) * AD_PRICES.cardPerSecond +
       job.plan.seconds * AD_PRICES.editPerSecond * 2 +
@@ -3323,6 +3323,19 @@ export default function Studio({ mode }: { mode: AppMode }) {
                 <VoiceCount line={sc.voice} seconds={SCENE_SECONDS} language={brief.language} />
                 <input className="text-input" maxLength={200} value={sc.voice} onChange={(e) => editScene(i, { voice: e.target.value })} />
               </label>
+              <label className="ad-label">
+                Who says it
+                <select
+                  className="text-input"
+                  value={speaksOnScreen(sc) && !refs.some((r) => r.kind === "person") ? "character" : "voiceover"}
+                  onChange={(e) => editScene(i, { speaker: e.target.value === "character" ? "character" : "voiceover" })}
+                >
+                  <option value="voiceover">A voiceover (nobody on screen talks)</option>
+                  <option value="character" disabled={refs.some((r) => r.kind === "person")}>
+                    Said on screen, lips matched to the voice
+                  </option>
+                </select>
+              </label>
             </li>
           ))}
           <li className="ad-scene ad-card">
@@ -3362,6 +3375,14 @@ export default function Studio({ mode }: { mode: AppMode }) {
           </label>
         </div>
         {isOwnVoice(adPlan.voice) && <p className="muted small g-hint">Your ElevenLabs voice reads the voiceover, billed to your ElevenLabs account, so it isn&apos;t in our price.</p>}
+        {adPlan.scenes.some((sc) => speaksOnScreen(sc)) && !refs.some((r) => r.kind === "person") && (
+          <p className="muted small g-hint">
+            Lines said on screen are recorded first, then the scene is made from that recording, so the mouth moves with the words. One voice is used for every line.
+          </p>
+        )}
+        {refs.some((r) => r.kind === "person") && (
+          <p className="muted small g-hint">With a real person&apos;s photo, lines are read as a voiceover. To have yourself talk in your own voice, use You, talking.</p>
+        )}
       </section>
 
       <section className="g-step">
@@ -3401,7 +3422,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
             <span className="muted small">
               An AI looks at every shot before it&apos;s filmed and at every finished scene, then fixes clearly wrong ones on its own (wrong product, broken hands,
               impossible movement). It remakes at most {maxRedos(adPlan.scenes.length)} scene{maxRedos(adPlan.scenes.length) > 1 ? "s" : ""}, so it never costs more than
-              up to ${costRange(redoCap(adPlan.scenes.length))[1].toFixed(2)} extra, and only if something needs fixing. The check itself is included in the price.
+              up to ${costRange(redoCap(adPlan.scenes.length, adPlan))[1].toFixed(2)} extra, and only if something needs fixing. The check itself is included in the price.
             </span>
           </span>
         </label>
@@ -4717,7 +4738,7 @@ function AdSummary({ job }: { job: AdJob }) {
       <ol>
         {job.plan.scenes.map((s, i) => (
           <li key={i}>
-            <strong>Scene {i + 1}.</strong> {s.visual} <span className="muted">🎙️ {s.voice}</span>
+            <strong>Scene {i + 1}.</strong> {s.visual} <span className="muted">{speaksOnScreen(s) ? "🗣️ said on screen:" : "🎙️"} {s.voice}</span>
           </li>
         ))}
         <li>
