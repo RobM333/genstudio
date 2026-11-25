@@ -189,8 +189,18 @@ async function cardImage(job: AdJob, aspectRatio: string): Promise<string> {
 }
 
 /** Holds the end card on screen with a gentle, nearly still move. */
-async function cardClip(job: AdJob): Promise<string> {
-  return tool({ tool: "card", imageUrl: job.cardImage, seconds: endCardSeconds(job.plan.seconds) }, "fal-ai/ltxv-13b-098-distilled/image-to-video");
+async function cardClip(job: AdJob, seconds: number): Promise<string> {
+  return tool({ tool: "card", imageUrl: job.cardImage, seconds }, "fal-ai/ltxv-13b-098-distilled/image-to-video");
+}
+
+/**
+ * The end card's length. Scenes said on screen are shorter than 5 seconds, so the
+ * card holds up to 2 seconds longer to keep the ad near the length asked for.
+ */
+export function cardLength(plan: AdPlan, lengths: number[]): number {
+  const base = endCardSeconds(plan.seconds);
+  const gap = plan.seconds - lengths.reduce((a, b) => a + b, 0);
+  return Math.round(Math.min(base + 2, Math.max(base, gap)) * 10) / 10;
 }
 
 async function tool(body: Record<string, unknown>, fallbackModel: string): Promise<string> {
@@ -338,25 +348,28 @@ export async function buildAd(
 
   // Scenes said on screen last as long as their line, so the ad's real length is added up from the scenes.
   const lengths = sceneLengths(job);
-  const cardSecs = endCardSeconds(plan.seconds);
+  const cardSecs = cardLength(plan, lengths);
   const total = lengths.reduce((a, b) => a + b, 0) + cardSecs;
   const talking = job.clips.some((c) => c.talkFor);
 
-  if (!job.musicUrl || job.musicFor !== plan.music) {
+  const musicKey = `${plan.music}|${Math.ceil(total)}`;
+  const musicOk = job.musicFor === musicKey || (job.musicFor === plan.music && Math.ceil(total) === plan.seconds);
+  if (!job.musicUrl || !musicOk) {
     step("Making the music", "cassetteai/music-generator");
-    job.musicUrl = (await tool({ tool: "music", prompt: plan.music, seconds: Math.ceil(Math.max(total, plan.seconds)) }, "cassetteai/music-generator")) || undefined;
-    job.musicFor = plan.music;
+    job.musicUrl = (await tool({ tool: "music", prompt: plan.music, seconds: Math.ceil(total) }, "cassetteai/music-generator")) || undefined;
+    // The mix runs as long as the music, so music made for a longer ad would freeze the end card.
+    job.musicFor = musicKey;
     save(job);
   }
 
-  const cardKey = `${plan.endCard.headline}|${plan.endCard.tagline}`;
+  const cardKey = `${plan.endCard.headline}|${plan.endCard.tagline}${cardSecs !== endCardSeconds(plan.seconds) ? `|${cardSecs}` : ""}`;
   if (!job.cardClip || job.cardFor !== cardKey) {
     if (!job.cardImage || job.cardFor !== cardKey) {
       step("Designing the end card", "fal-ai/nano-banana");
       job.cardImage = await cardImage(job, aspectRatio);
     }
     step("Finishing the end card", "fal-ai/ltxv-13b-098-distilled/image-to-video");
-    job.cardClip = await cardClip(job);
+    job.cardClip = await cardClip(job, cardSecs);
     job.cardFor = cardKey;
     job.joinedUrl = undefined;
     save(job);
@@ -416,7 +429,7 @@ export function changedAdJob(old: AdJob, plan: AdPlan): { job: AdJob; scenes: nu
   const card = old.plan.endCard.headline !== plan.endCard.headline || old.plan.endCard.tagline !== plan.endCard.tagline || !lookSame;
   const lines = voiceLines(plan);
   const voiceChars = lines.reduce((n, l, i) => n + (old.voiceFor[i] === `${plan.voice}|${l}` ? 0 : l.length), 0);
-  const music = old.musicFor !== plan.music;
+  const music = old.musicFor !== plan.music && !old.musicFor?.startsWith(`${plan.music}|`);
   const job: AdJob = {
     ...old,
     plan,

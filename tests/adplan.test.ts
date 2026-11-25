@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { AD_PRICES, AD_VOICES, adCost, adPlanWithRules, endCardSeconds, fitLine, parseAdPlan, sceneCount, scenePrompt, speaksOnScreen, wantsOnScreenText, withoutDialogue } from "../lib/adplan";
 import { judgeRefCheck, referenceInstructions } from "../lib/references";
 import { parseAnalysis } from "../lib/analyze";
-import { changedAdJob, newAdJob } from "../components/adRunner";
+import { cardLength, changedAdJob, newAdJob } from "../components/adRunner";
 
 assert.equal(sceneCount(15), 2);
 assert.equal(endCardSeconds(15), 5);
@@ -98,4 +98,8 @@ assert.equal(ghost.serious, false);
 assert.deepEqual(ghost.faults, []);
 const real = parseAnalysis('{"problems":["The sign has garbled words."],"seen_text":"SUMR SAEL","faults":["garbled_text"],"serious":true,"fix":"x","prompt":"p"}')!;
 assert.deepEqual(real.faults, ["garbled_text"]);
+// Talking scenes are shorter, so the end card holds a little longer (at most 2 extra seconds).
+assert.equal(cardLength(plan, [5, 5]), 5);
+assert.equal(cardLength(plan, [2.7, 3.2]), 7);
+assert.equal(cardLength(plan, [4.5, 4]), 6.5);
 console.log("ad plan tests passed");
