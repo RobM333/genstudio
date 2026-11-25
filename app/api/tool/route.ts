@@ -19,6 +19,8 @@ export const dynamic = "force-dynamic";
 // - mix: put a video, voiceover clips and music together
 // - talk-scene: an ad scene said on screen: the scene's first frame speaks the
 //   line already recorded, with the lips matched to that exact voice
+// - talk-native: an ad scene said on screen in one step (Kling 3): the line is in
+//   the prompt and the model makes the voice and the moving mouth together
 // - join: joins scenes of different lengths on one timeline (used if merge can't)
 type Body = {
   tool?: string;
@@ -130,16 +132,17 @@ export async function POST(req: Request) {
       break;
     }
     case "talk-native": {
-      // Test of one-step talking scenes: the line is written in the prompt and the model makes voice and mouth together.
+      // A Full ad scene said on screen in one step: the line is written in the prompt and the model makes voice and mouth together.
       const m = NATIVE_TALK_MODELS[body.model === "seedance" ? "seedance" : "kling3"];
       const imageUrl = String(body.imageUrl ?? "");
       const prompt = String(body.prompt ?? "").trim().slice(0, 1500);
       if (!imageUrl || !prompt) return bad();
       if (!checkPrompt(prompt).ok) return NextResponse.json({ error: "This scene can't be used." }, { status: 422 });
       modelId = m.id;
-      input = m.buildInput({ prompt, aspectRatio: "9:16", duration: 5, sourceUrl: imageUrl, avoid: SCENE_AVOID });
+      const ratio = body.aspectRatio === "16:9" || body.aspectRatio === "1:1" ? body.aspectRatio : "9:16";
+      input = m.buildInput({ prompt, aspectRatio: ratio, duration: 5, sourceUrl: imageUrl, avoid: SCENE_AVOID });
       allUrls.push(imageUrl);
-      demoUrl = makeDemoMedia({ prompt, kind: "video", aspectRatio: "9:16", modelName: m.name });
+      demoUrl = makeDemoMedia({ prompt, kind: "video", aspectRatio: ratio, modelName: m.name });
       break;
     }
     case "join": {

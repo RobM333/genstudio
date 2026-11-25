@@ -1,16 +1,19 @@
 // Builds a full ad in the browser, one short fal job at a time, so nothing hits
 // the hosting time limit: each scene (from the user's product photo when given),
 // the end card, the voiceover lines and the music, then one join and one mix.
-// The voice is recorded first. A scene whose line is said on screen is then made
-// from that exact recording, so the lips match the words; narrator scenes are
-// filmed with nobody talking and the voice laid over them.
+// A scene whose line is said on screen is made in one step by Kling 3: the line is
+// in the prompt and the model makes the voice and the moving mouth together. With
+// the user's own ElevenLabs voice, or a language other than English, the voice is
+// recorded first and the lips are matched to that recording instead. Narrator
+// scenes are filmed with nobody talking and the voice laid over them.
 // Progress is saved on the item, so a closed page carries on where it stopped.
 
-import { endCardPrompt, endCardSeconds, frameLead, lineSeconds, maxRedos, SCENE_SECONDS, sceneVideoCost, scenePrompt, speaksOnScreen, withoutDialogue, type AdBrief, type AdPlan } from "@/lib/adplan";
+import { endCardPrompt, endCardSeconds, frameLead, lineSeconds, maxRedos, nativeTalk, SCENE_SECONDS, sceneVideoCost, scenePrompt, speaksOnScreen, talkScenePrompt, withoutDialogue, type AdBrief, type AdPlan } from "@/lib/adplan";
 import type { Analysis } from "@/lib/analyze";
 import { faultText, type FaultCode } from "@/lib/promise";
 import { post, waitFor, waitForResult } from "./storyRunner";
 import { TALK_VIDEO_MODEL_ID } from "@/lib/talk";
+import { NATIVE_TALK_MODELS } from "@/lib/models";
 import { isOwnVoice } from "@/lib/elevenlabs";
 import { loadEleven, speakOwn, usableVoices } from "./elevenConnect";
 
@@ -26,6 +29,8 @@ export type AdClip = {
   seconds?: number;
   /** Lip matching didn't work for this scene, so its line is read as a voiceover instead. */
   asVoiceover?: boolean;
+  /** Made in one step by Kling 3: the scene carries its own voice, so no recording is laid over it. */
+  ownSound?: boolean;
 };
 
 /** The automatic quality check: it looks at every scene and remakes weak ones, up to a cap. */
@@ -138,6 +143,15 @@ async function talkClip(job: AdJob, i: number, aspectRatio: string, frame: strin
   return { url: out.url, seconds: out.seconds ?? lineSeconds(s.voice, job.brief.language) };
 }
 
+const NATIVE_TALK_ID = NATIVE_TALK_MODELS.kling3.id;
+
+/** A scene said on screen in one step: Kling 3 speaks the line from the prompt, voice and mouth together. 5 seconds. */
+async function nativeTalkClip(job: AdJob, i: number, aspectRatio: string, frame: string, fix = ""): Promise<string> {
+  const res = await post("/api/tool", { tool: "talk-native", model: "kling3", imageUrl: frame, prompt: talkScenePrompt(job.plan, i, fix), aspectRatio });
+  if (res.status === "COMPLETED") return res.url ?? "";
+  return waitFor(res.modelId ?? NATIVE_TALK_ID, res);
+}
+
 /** How long each scene lasts: filmed scenes are 5 seconds, scenes said on screen last as long as their line. */
 export function sceneLengths(job: AdJob): number[] {
   return job.plan.scenes.map((_, i) => (job.clips[i]?.talkFor ? (job.clips[i].seconds ?? SCENE_SECONDS) : SCENE_SECONDS));
@@ -234,9 +248,12 @@ export async function buildAd(
   const conn = ownVoice && opts.live ? loadEleven() : null;
   if (ownVoice && opts.live && !usableVoices(conn).some((v) => `el:${v.id}` === plan.voice))
     throw new Error("This ad uses your ElevenLabs voice, but that voice isn't connected in this browser. Connect it in the Brand kit, or pick one of our voices in the plan.");
+  // Scenes Kling 3 says on screen make their own voice, so their lines aren't recorded (unless the scene falls back to a voiceover).
+  const oneStep = nativeTalk(plan.voice, job.brief.language) && opts.live && !job.refs?.some((r) => r.kind === "person");
+  const selfSpoken = (i: number) => i < n && oneStep && speaksOnScreen(plan.scenes[i]) && !job.clips[i]?.asVoiceover;
   async function recordVoices() {
     for (let i = 0; i < lines.length; i++) {
-      if (!lines[i]) continue;
+      if (!lines[i] || selfSpoken(i)) continue;
       const key = `${plan.voice}|${lines[i]}`;
       if (job.voices[i] && job.voiceFor[i] === key) continue;
       if (ownVoice && !opts.live) continue;
@@ -249,7 +266,7 @@ export async function buildAd(
       save(job);
     }
   }
-  // Every line is recorded first (a few cents): a scene said on screen is made from its recording.
+  // Lines are recorded first (a few cents): a lip-matched scene is made from its recording.
   await recordVoices();
 
   // Without the user's own photo, design the product once so every scene shows the same one.
@@ -288,7 +305,21 @@ export async function buildAd(
       }
       // Said on screen: made from the recorded line, so the lips match it. Without a recording (demo mode), or if
       // lip matching fails, the scene is filmed as usual and the line is read over it.
-      const talks = speaksOnScreen(plan.scenes[i]) && !clip.asVoiceover && Boolean(job.voices[i]) && opts.live && !job.refs?.some((r) => r.kind === "person");
+      if (!clip.url && selfSpoken(i)) {
+        step(`Scene ${i + 1} of ${n}: filming the character saying the line`, NATIVE_TALK_ID);
+        try {
+          clip.url = await nativeTalkClip(job, i, aspectRatio, clip.frame!);
+          clip.seconds = SCENE_SECONDS;
+          clip.talkFor = talkKey(plan, i);
+          clip.ownSound = true;
+        } catch (e) {
+          clip.asVoiceover = true;
+          job.check?.log.push(`Scene ${i + 1}: the character couldn't be made to say the line (${(e as Error).message.replace(/\.$/, "")}), so the line is read as a voiceover.`);
+          await recordVoices();
+        }
+        save(job);
+      }
+      const talks = !oneStep && speaksOnScreen(plan.scenes[i]) && !clip.asVoiceover && Boolean(job.voices[i]) && opts.live && !job.refs?.some((r) => r.kind === "person");
       if (!clip.url && talks) {
         step(`Scene ${i + 1} of ${n}: matching the lips to the voice`, TALK_VIDEO_MODEL_ID);
         try {
@@ -317,7 +348,10 @@ export async function buildAd(
           check.redosLeft--;
           clip.checked = true;
           save(job);
-          if (clip.talkFor && job.voices[i]) {
+          if (clip.ownSound) {
+            step(`Scene ${i + 1} of ${n}: remaking it`, NATIVE_TALK_ID);
+            clip.url = await nativeTalkClip(job, i, aspectRatio, clip.frame!, fixText(a));
+          } else if (clip.talkFor && job.voices[i]) {
             step(`Scene ${i + 1} of ${n}: remaking it`, TALK_VIDEO_MODEL_ID);
             const t = await talkClip(job, i, aspectRatio, clip.frame!, job.voices[i]!, fixText(a));
             clip.url = t.url;
@@ -396,6 +430,8 @@ export async function buildAd(
       const said = i < n && Boolean(job.clips[i]?.talkFor);
       const start = i < n ? starts[i] : total - cardSecs;
       const len = i < n ? lengths[i] : cardSecs;
+      // A Kling 3 scene's own sound goes on the voice track, so its voice is kept even if the mix leaves out the video's sound.
+      if (said && job.clips[i]?.ownSound) return { url: job.clips[i].url, at: start, seconds: len };
       return { url: job.voices[i], at: said ? start : start + 0.3, seconds: said ? len : len - 0.4 };
     })
     .filter((v) => v.url);
@@ -419,11 +455,11 @@ export function changedAdJob(old: AdJob, plan: AdPlan): { job: AdJob; scenes: nu
     const before = old.plan.scenes[i];
     const prev = old.clips[i];
     // A scene said on screen was made from its line, so new words or a new voice mean new lips.
-    const sameSpeech = prev?.talkFor ? prev.talkFor === `${plan.voice}|${s.voice}` && speaksOnScreen(s) : !speaksOnScreen(s) || Boolean(prev?.asVoiceover);
+    const sameSpeech = prev?.talkFor ? prev.talkFor === `${plan.voice}|${s.voice}` && speaksOnScreen(s) && Boolean(prev.ownSound) === nativeTalk(plan.voice, old.brief.language) : !speaksOnScreen(s) || Boolean(prev?.asVoiceover);
     const same = lookSame && before && before.visual === s.visual && before.camera === s.camera && prev?.url && sameSpeech;
     if (same) return { ...prev };
     scenes++;
-    sceneUsd += sceneVideoCost(s, old.brief.language);
+    sceneUsd += sceneVideoCost(s, old.brief.language, plan.voice);
     return { status: "waiting" };
   });
   const card = old.plan.endCard.headline !== plan.endCard.headline || old.plan.endCard.tagline !== plan.endCard.tagline || !lookSame;

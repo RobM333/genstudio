@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { AD_PRICES, AD_VOICES, adCost, frameLead, NO_TEXT, adPlanWithRules, endCardSeconds, fitLine, parseAdPlan, sceneCount, scenePrompt, speaksOnScreen, wantsOnScreenText, withoutDialogue } from "../lib/adplan";
+import { AD_PRICES, AD_VOICES, adCost, nativeTalk, sceneVideoCost, talkScenePrompt, voiceInWords, frameLead, NO_TEXT, adPlanWithRules, endCardSeconds, fitLine, parseAdPlan, sceneCount, scenePrompt, speaksOnScreen, wantsOnScreenText, withoutDialogue } from "../lib/adplan";
 import { judgeRefCheck, referenceInstructions } from "../lib/references";
 import { parseAnalysis } from "../lib/analyze";
 import { cardLength, changedAdJob, newAdJob } from "../components/adRunner";
@@ -70,7 +70,18 @@ assert.ok(/Nobody on screen talks/.test(scenePrompt(plan, 0)));
 assert.ok(!wantsOnScreenText("a toast mascot ad") && wantsOnScreenText("add captions please"));
 const talkCost = adCost(talk, true);
 const asVoiceover = adCost({ ...talk, scenes: talk.scenes.map((x) => ({ ...x, speaker: "voiceover" as const })) }, true);
-assert.ok(talkCost > asVoiceover && talkCost - asVoiceover < 2 * (8.5 * AD_PRICES.talkPerSecond), `${talkCost} ${asVoiceover}`);
+assert.ok(talkCost > asVoiceover && talkCost - asVoiceover < 2 * (5 * AD_PRICES.nativeTalkPerSecond), `${talkCost} ${asVoiceover}`);
+
+// Kling 3 says the line in one step for our voices in English; the user's own voice or another language keeps lip matching.
+assert.ok(nativeTalk("Roger") && nativeTalk("Roger", "English") && !nativeTalk("Roger", "Spanish") && !nativeTalk("el:abcdefgh12"));
+assert.equal(voiceInWords("Roger"), "a relaxed male American voice");
+assert.equal(voiceInWords("nobody"), "a warm female American voice");
+const tp = talkScenePrompt({ ...talk, voice: "Roger" }, 0);
+assert.ok(tp.includes(`"${talk.scenes[0].voice.trim().replace(/["“”]/g, "'")}"`) && tp.includes("a relaxed male American voice") && /speech bubbles/i.test(tp), tp);
+const s0 = talk.scenes[0];
+const native = sceneVideoCost(s0, "English", "Roger");
+assert.ok(native >= 0.5 && native <= 1.0, String(native));
+assert.ok(Math.abs(sceneVideoCost(s0, "Spanish", "Roger") - native) > 1e-9);
 
 // Voice lines are never cut mid-sentence.
 assert.equal(fitLine("You could direct your own movie. Just get ToastyFly.", 5), "You could direct your own movie. Just get ToastyFly.");

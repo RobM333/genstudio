@@ -9,9 +9,9 @@ export type AdScene = {
   text: string; // short on-screen words (shown in the plan; the end card carries the words in the video)
   voice: string; // the voiceover line for this scene
   /**
-   * Who says the line. "character": someone on screen says it to camera, so the
-   * voice is made first and the scene is animated from it, lips matched to the
-   * words. "voiceover" (or missing, for older plans): a narrator over the
+   * Who says the line. "character": someone on screen says it to camera (Kling 3
+   * makes the voice and mouth together; with the user's own voice or another
+   * language, the voice is made first and the lips matched to it). "voiceover" (or missing, for older plans): a narrator over the
    * pictures, and nobody on screen talks.
    */
   speaker?: Speaker;
@@ -263,16 +263,34 @@ export const AD_PRICES = {
   editPerSecond: 0.0006, // joining and mixing
   checkPicture: 0.01, // the quality check of each scene's first frame
   checkScene: 0.01, // the quality check of each 5-second scene
-  talkPerSecond: 0.115, // Kling AI Avatar v2 Pro: a scene said on screen, lips matched to the voice (checked on fal.ai 2026-11-25)
+  talkPerSecond: 0.115, // Kling AI Avatar v2 Pro: lips matched to a recorded voice (own ElevenLabs voice or not English; checked on fal.ai 2026-11-25)
+  nativeTalkPerSecond: 0.168, // Kling 3 Pro with sound: voice and mouth made together in one step (checked on fal.ai 2026-11-25)
 };
 
-/** The video part of one scene: a lip-matched talking scene is billed by how long its line takes to say. */
-export function sceneVideoCost(scene: AdScene, language?: string): number {
-  return speaksOnScreen(scene) ? (lineSeconds(scene.voice, language) + 0.5) * AD_PRICES.talkPerSecond : AD_PRICES.scene;
+/**
+ * A scene said on screen is made in one step by Kling 3 (it speaks the line itself, mouth and voice together) when
+ * one of our built-in voices reads the ad in English. The user's own ElevenLabs voice, or another language, keeps
+ * the voice-first way: the line is recorded, then the lips are matched to that recording.
+ */
+export function nativeTalk(voice: string | undefined, language?: string): boolean {
+  return !isOwnVoice(voice) && (!language || language === "English");
+}
+
+/** Our built-in voice in words, for the one-step talking model ("a relaxed male American voice"). */
+export function voiceInWords(voice: string | undefined): string {
+  const v = AD_VOICES.find((x) => x.id === voice) ?? AD_VOICES.find((x) => x.id === DEFAULT_VOICE)!;
+  const [feel, accent] = v.label.split(",").map((t) => t.trim().toLowerCase());
+  return `a ${feel} ${accent.charAt(0).toUpperCase()}${accent.slice(1)} voice`;
+}
+
+/** The video part of one scene: a one-step talking scene is 5 seconds; a lip-matched one lasts as long as its line. */
+export function sceneVideoCost(scene: AdScene, language?: string, voice?: string): number {
+  if (!speaksOnScreen(scene)) return AD_PRICES.scene;
+  return nativeTalk(voice, language) ? SCENE_SECONDS * AD_PRICES.nativeTalkPerSecond : (lineSeconds(scene.voice, language) + 0.5) * AD_PRICES.talkPerSecond;
 }
 /** The dearest scene of the plan, used for the spending cap on automatic remakes. */
 function dearestScene(plan?: AdPlan): number {
-  return Math.max(AD_PRICES.scene, ...(plan?.scenes ?? []).map((s) => sceneVideoCost(s)));
+  return Math.max(AD_PRICES.scene, ...(plan?.scenes ?? []).map((s) => sceneVideoCost(s, undefined, plan?.voice)));
 }
 
 /** The quality check remakes at most this many scenes on its own (the spending cap). */
@@ -296,7 +314,7 @@ export function adCost(plan: AdPlan, withRefs: boolean, check = false): number {
   const n = plan.scenes.length;
   return (
     (check ? checkCost(n) : 0) +
-    plan.scenes.reduce((t, s) => t + sceneVideoCost(s), 0) + // a filmed scene, or a scene said on screen with matched lips
+    plan.scenes.reduce((t, s) => t + sceneVideoCost(s, undefined, plan.voice), 0) + // a filmed scene, or a scene said on screen
     n * AD_PRICES.picture + // each scene's first frame, showing the same product
     (withRefs ? 0 : AD_PRICES.picture) + // our product picture when there is no photo
     AD_PRICES.picture + // end card
@@ -327,6 +345,20 @@ export function scenePrompt(plan: AdPlan, i: number, asVoiceover = false): strin
   return `${withoutDialogue(s.visual)}. Camera: ${s.camera}. ${plan.look ? `Keep consistent: ${plan.look}.` : ""} ${who} ${plan.allowText ? "No captions or logos." : NO_TEXT} ${FULL_FRAME}`
     .replace(/\.\s*\./g, ".")
     .slice(0, 1800);
+}
+
+/**
+ * The prompt for a scene said on screen in one step: the line is written in the prompt in quotes and the voice is
+ * described in words, so the model makes the voice and the moving mouth together.
+ */
+export function talkScenePrompt(plan: AdPlan, i: number, fix = ""): string {
+  const s = plan.scenes[i];
+  const line = s.voice.trim().replace(/["“”]/g, "'");
+  const scene = `${fix ? `Important: ${fix} ` : ""}${withoutDialogue(s.visual)}. Camera: ${s.camera}. ${plan.look ? `Keep consistent: ${plan.look}.` : ""}`.replace(/\.\s*\./g, ".");
+  const rest = `Only this one character speaks, nothing else is said. ${plan.allowText ? "No captions or logos." : NO_TEXT} ${FULL_FRAME}`;
+  const say = `The character stays exactly as in the picture and speaks straight to camera in ${voiceInWords(plan.voice)}, with natural pauses and lively expressions, the mouth clearly moving with every word: "${line}"`;
+  // The spoken line is never cut: the scene description gives way first.
+  return `${scene.slice(0, Math.max(200, 1500 - say.length - rest.length - 2))} ${say} ${rest}`.slice(0, 1500);
 }
 
 /** Said in every scene prompt unless the person asked for words on screen. */

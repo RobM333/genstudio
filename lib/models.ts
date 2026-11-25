@@ -468,8 +468,8 @@ export const TALK_VIDEO_MODEL: ModelInfo = {
 
 /**
  * One-step talking scenes: the model makes the voice and the moving mouth together from a quoted line in the
- * prompt, instead of voice first and lip matching after. Checked on fal 2026-11-25. Being tested against
- * TALK_VIDEO_MODEL on cost and quality before any ad uses them.
+ * prompt, instead of voice first and lip matching after. Checked on fal 2026-11-25. Full ad uses Kling 3 for
+ * scenes said on screen (Rob picked it after a side-by-side test); Seedance stays for tests only.
  */
 export const NATIVE_TALK_MODELS: Record<"kling3" | "seedance", ModelInfo> = {
   kling3: {

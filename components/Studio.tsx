@@ -1436,7 +1436,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
   function shapeCost(job: AdJob): number {
     const n = job.plan.scenes.length;
     return (
-      job.plan.scenes.reduce((t, s) => t + sceneVideoCost(s, job.brief.language), 0) + n * AD_PRICES.picture +
+      job.plan.scenes.reduce((t, s) => t + sceneVideoCost(s, job.brief.language, job.plan.voice), 0) + n * AD_PRICES.picture +
       AD_PRICES.picture +
       endCardSeconds(job.plan.seconds) * AD_PRICES.cardPerSecond +
       job.plan.seconds * AD_PRICES.editPerSecond * 2 +
@@ -3357,7 +3357,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
                 >
                   <option value="voiceover">A voiceover (nobody on screen talks)</option>
                   <option value="character" disabled={refs.some((r) => r.kind === "person")}>
-                    Said on screen, lips matched to the voice
+                    Said on screen, mouth moving with the words
                   </option>
                 </select>
               </label>
