@@ -24,6 +24,10 @@ export async function GET(req: Request) {
   const store = mod.getStore({ name: "accounts", consistency });
   await timed("list", out, () => store.list({ prefix: "debug/" }).then((r) => r.blobs.length));
   await timed("getMissing", out, () => store.get("debug/missing", { type: "json" }));
+  await timed("getMissingText", out, () => store.get("debug/missing2"));
+  await timed("getMetadataMissing", out, () => store.getMetadata("debug/missing3"));
+  await timed("getWithMetadataMissing", out, () => store.getWithMetadata("debug/missing4", { type: "json" }));
+  await timed("listExactMissing", out, () => store.list({ prefix: "debug/missing5" }).then((r) => r.blobs.length));
   await timed("setJSON", out, () => store.setJSON("debug/probe", { at: Date.now() }));
   await timed("get", out, () => store.get("debug/probe", { type: "json" }));
   await timed("getWithMetadata", out, () => store.getWithMetadata("debug/probe", { type: "json" }).then((r) => r?.etag));
