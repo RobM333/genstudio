@@ -3,6 +3,7 @@ import { BRAND } from "./config";
 import { COPYRIGHT_NOTICE } from "../appBrand";
 import { whatCreditsMake } from "../pricing";
 import { foundingPriceLines, longDay } from "../foundingOffer";
+import { FULL_LINE } from "../founding";
 
 // Sign-in codes and invites are emailed through Resend (resend.com, free for
 // up to 3,000 emails a month). Until a domain is set up there, Resend only
@@ -58,6 +59,18 @@ export function foundingReminderEmail(opts: { name?: string; endsOn: string; lin
     text: `${hi}\n\n${lines.join("\n\n")}\n\n${ask}\n\nYour account: ${opts.link}\n\n${BRAND}`,
     html: wrap(
       `<p>${esc(hi)}</p>${lines.map((l) => `<p>${esc(l)}</p>`).join("")}<p>${esc(ask)}</p><p><a href="${esc(opts.link)}">See your account</a></p><p>${BRAND}</p>`,
+    ),
+  };
+}
+
+export function foundingFullEmail(opts: { name?: string; link: string }) {
+  const hi = opts.name ? `Hi ${opts.name},` : "Hi,";
+  const body = `${FULL_LINE} There's nothing you need to do now. We'll email you as soon as it's your turn.`;
+  return {
+    subject: `You're on the ${BRAND} early list`,
+    text: `${hi}\n\nThanks for signing up. ${body}\n\nWhile you wait, you can see what people are making: ${opts.link}\n\nThanks for being early,\n${BRAND}`,
+    html: wrap(
+      `<p>${esc(hi)}</p><p>Thanks for signing up. ${esc(body)}</p><p><a href="${esc(opts.link)}">See what people are making</a></p><p>Thanks for being early,<br>${BRAND}</p>`,
     ),
   };
 }

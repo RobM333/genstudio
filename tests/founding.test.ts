@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { cleanEmail, cleanMakes, cleanRefCode, cleanText, foundingPriceText, inboxOf, isThrowawayEmail, MAKES, spotsLeft, spotsLine, TOTAL_SPOTS } from "../lib/founding";
+import { FULL_LINE, foundingFull, cleanEmail, cleanMakes, cleanRefCode, cleanText, foundingPriceText, inboxOf, isThrowawayEmail, MAKES, spotsLeft, spotsLine, TOTAL_SPOTS } from "../lib/founding";
 import { whatCreditsMake } from "../lib/pricing";
 import { foundingPriceLines, FREE_MONTH_MAKES } from "../lib/foundingOffer";
 import { isPublicPath } from "../lib/publicPaths";
@@ -29,6 +29,14 @@ assert.equal(spotsLeft(-3), 100);
 assert.equal(spotsLine(73), "73 of 100 founding spots left");
 assert.equal(spotsLine(1), "1 of 100 founding spots left");
 assert.equal(spotsLine(0), "All 100 founding spots are taken");
+
+// "Founding 100 is full": by sign-ups or by Founding invites, and never a promised discount amount.
+assert.equal(foundingFull(99, 0), false);
+assert.equal(foundingFull(100, 0), true);
+assert.equal(foundingFull(40, 100), true);
+assert.equal(foundingFull(150, 20), true);
+assert.ok(FULL_LINE.includes("Founding 100 is full"));
+assert.ok(!/\d+\s*%|\$\d/.test(FULL_LINE), "the full message must not promise a discount amount");
 
 // Only the landing page, the sign-up page and what they need skip the app password
 for (const p of ["/", "/founding", "/founding/", "/api/founding", "/privacy", "/terms", "/acceptable-use", "/__forms.html"]) {

@@ -7,6 +7,18 @@ export { BRAND_NAME, BRAND_LOGO, BRAND_LOGO_SIZE, LOGO_HAS_NAME } from "./appBra
 /** How many founding spots there are. */
 export const TOTAL_SPOTS = 100;
 
+/**
+ * What people see once the Founding 100 is full (on the page, in the sign-up
+ * email, and in the owner's message to the waitlist). No discount amount is
+ * promised here on purpose.
+ */
+export const FULL_LINE = "The Founding 100 is full, but you're on the early list. You'll get first access and a launch discount when we open.";
+
+/** Full once 100 people have signed up, or the owner has invited 100 Founding members. */
+export function foundingFull(signups: number, foundingInvites = 0): boolean {
+  return signups >= TOTAL_SPOTS || foundingInvites >= TOTAL_SPOTS;
+}
+
 /** What the offer includes. Wording only, nothing here charges anyone. */
 export const OFFER = {
   freePlan: "Creator",

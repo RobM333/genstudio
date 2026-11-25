@@ -1,7 +1,18 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { cleanEmail, cleanMakes, cleanText, spotsLeft, TOTAL_SPOTS } from "@/lib/founding";
-import { addSignup, countSignups } from "@/lib/foundingStore";
+import { cleanEmail, cleanMakes, cleanText, foundingFull, spotsLeft, TOTAL_SPOTS } from "@/lib/founding";
+import { addSignup, countSignups, markFullMessageSent } from "@/lib/foundingStore";
 import { recordReferral, refCodeFor } from "@/lib/accounts/referrals";
+import { listInvites } from "@/lib/accounts/store";
+import { foundingFullEmail, sendEmail } from "@/lib/accounts/mail";
+
+/** How many Founding members the owner has invited (0 if that can't be read). */
+async function foundingInvites(): Promise<number> {
+  try {
+    return (await listInvites()).filter((i) => i.founding).length;
+  } catch {
+    return 0;
+  }
+}
 
 // Public (no app password): the founding sign-up page reads how many spots are
 // left and sends new sign-ups here.
@@ -10,10 +21,11 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    const taken = await countSignups();
-    return NextResponse.json({ total: TOTAL_SPOTS, left: spotsLeft(taken) });
+    const [taken, invited] = await Promise.all([countSignups(), foundingInvites()]);
+    const full = foundingFull(taken, invited);
+    return NextResponse.json({ total: TOTAL_SPOTS, left: full ? 0 : spotsLeft(taken), full });
   } catch {
-    return NextResponse.json({ total: TOTAL_SPOTS, left: null });
+    return NextResponse.json({ total: TOTAL_SPOTS, left: null, full: false });
   }
 }
 
@@ -46,11 +58,19 @@ export async function POST(req: NextRequest) {
     // A friend's invite link: remembered now, the bonus is added once both have accounts.
     const referral = status === "added" && body.ref ? await recordReferral(body.ref, email).catch(() => "no-code" as const) : null;
     const refCode = await refCodeFor(email).catch(() => null);
-    const taken = await countSignups();
+    const [taken, invited] = await Promise.all([countSignups(), foundingInvites()]);
+    // A new sign-up past the 100: they're on the early list, and we tell them so by email too.
+    const full = status === "added" ? foundingFull(taken - 1, invited) : foundingFull(taken, invited);
+    if (status === "added" && full) {
+      const mail = foundingFullEmail({ name: cleanText(body.name, 60) || undefined, link: new URL(req.url).origin });
+      const sent = await sendEmail(email, mail.subject, mail.text, mail.html).catch(() => ({ ok: false }));
+      if (sent.ok) await markFullMessageSent(email).catch(() => {});
+    }
     return NextResponse.json({
       ok: true,
       status,
-      left: spotsLeft(taken),
+      full,
+      left: full ? 0 : spotsLeft(taken),
       number: status === "added" ? taken : null,
       refCode,
       referred: referral === "recorded",
