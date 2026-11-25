@@ -21,9 +21,10 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    const [taken, invited] = await Promise.all([countSignups(), foundingInvites()]);
-    const full = foundingFull(taken, invited);
-    return NextResponse.json({ total: TOTAL_SPOTS, left: full ? 0 : spotsLeft(taken), full });
+    // Spots go when the owner invites someone, not when they sign up.
+    const invited = await foundingInvites();
+    const full = foundingFull(invited);
+    return NextResponse.json({ total: TOTAL_SPOTS, left: spotsLeft(invited), full });
   } catch {
     return NextResponse.json({ total: TOTAL_SPOTS, left: null, full: false });
   }
@@ -59,8 +60,8 @@ export async function POST(req: NextRequest) {
     const referral = status === "added" && body.ref ? await recordReferral(body.ref, email).catch(() => "no-code" as const) : null;
     const refCode = await refCodeFor(email).catch(() => null);
     const [taken, invited] = await Promise.all([countSignups(), foundingInvites()]);
-    // A new sign-up past the 100: they're on the early list, and we tell them so by email too.
-    const full = status === "added" ? foundingFull(taken - 1, invited) : foundingFull(taken, invited);
+    // Once 100 Founding members are invited, new sign-ups join the early list, and we tell them so by email too.
+    const full = foundingFull(invited);
     if (status === "added" && full) {
       const mail = foundingFullEmail({ name: cleanText(body.name, 60) || undefined, link: new URL(req.url).origin });
       const sent = await sendEmail(email, mail.subject, mail.text, mail.html).catch(() => ({ ok: false }));
@@ -70,7 +71,7 @@ export async function POST(req: NextRequest) {
       ok: true,
       status,
       full,
-      left: full ? 0 : spotsLeft(taken),
+      left: spotsLeft(invited),
       number: status === "added" ? taken : null,
       refCode,
       referred: referral === "recorded",

@@ -6,7 +6,7 @@ import { runFoundingReminders } from "@/lib/accounts/reminders";
 import { shownCredits } from "@/lib/accounts/credits";
 import { foundingFullEmail, inviteEmail, sendEmail } from "@/lib/accounts/mail";
 import { emailHash, fullMessageKeys, listSignups, markFullMessageSent } from "@/lib/foundingStore";
-import { foundingFull, TOTAL_SPOTS } from "@/lib/founding";
+import { foundingFull } from "@/lib/founding";
 
 /** Most "Founding 100 is full" emails sent per press, so each batch is small and quick. */
 const FULL_BATCH = 25;
@@ -32,6 +32,7 @@ export async function GET(req: Request) {
     fullMessageKeys().catch(() => new Set<string>()),
   ]);
   const invitedBy = new Map(referrals.map((r) => [r.friend, r]));
+  const full = foundingFull(invites.filter((i) => i.founding).length);
   return NextResponse.json(
     {
       users: users.map((u) => ({
@@ -60,11 +61,12 @@ export async function GET(req: Request) {
         joined: Boolean(i.usedAt),
         group: i.group ?? null,
       })),
-      signups: signups.map((s, n) => {
+      signups: signups.map((s) => {
         const r = invitedBy.get(s.email);
-        return { ...s, spot: n < TOTAL_SPOTS, invitedBy: r?.by || null, reward: r?.state ?? null, fullSent: messaged.has(emailHash(s.email)) };
+        // Until 100 Founding members are invited, anyone on the list can be picked for a spot.
+        return { ...s, spot: !full, invitedBy: r?.by || null, reward: r?.state ?? null, fullSent: messaged.has(emailHash(s.email)) };
       }),
-      foundingFull: foundingFull(signups.length, invites.filter((i) => i.founding).length),
+      foundingFull: full,
     },
     { headers: { "Cache-Control": "no-store" } },
   );
@@ -106,9 +108,10 @@ export async function POST(req: Request) {
     // "The Founding 100 is full, but you're on the early list": to people on the list
     // who haven't been invited, haven't joined and haven't had it yet. In small batches.
     const [users, invites, signups, messaged] = await Promise.all([listUsers(), listInvites(), listSignups(), fullMessageKeys()]);
-    const full = foundingFull(signups.length, invites.filter((i) => i.founding).length);
+    const full = foundingFull(invites.filter((i) => i.founding).length);
     const done = new Set([...users.map((u) => u.email), ...invites.map((i) => i.email)]);
-    const due = signups.filter((s, n) => (n >= TOTAL_SPOTS || full) && !done.has(s.email) && !messaged.has(emailHash(s.email)));
+    if (!full) return NextResponse.json({ ok: true, sent: [], failed: [], left: 0, notFull: true });
+    const due = signups.filter((s) => !done.has(s.email) && !messaged.has(emailHash(s.email)));
     const link = new URL(req.url).origin;
     const sent: string[] = [];
     const failed: string[] = [];

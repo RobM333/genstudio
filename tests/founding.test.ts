@@ -31,10 +31,10 @@ assert.equal(spotsLine(1), "1 of 100 founding spots left");
 assert.equal(spotsLine(0), "All 100 founding spots are taken");
 
 // "Founding 100 is full": by sign-ups or by Founding invites, and never a promised discount amount.
-assert.equal(foundingFull(99, 0), false);
-assert.equal(foundingFull(100, 0), true);
-assert.equal(foundingFull(40, 100), true);
-assert.equal(foundingFull(150, 20), true);
+// Only invites fill it: 150 sign-ups with 20 invited is not full.
+assert.equal(foundingFull(0), false);
+assert.equal(foundingFull(99), false);
+assert.equal(foundingFull(100), true);
 assert.ok(FULL_LINE.includes("Founding 100 is full"));
 assert.ok(!/\d+\s*%|\$\d/.test(FULL_LINE), "the full message must not promise a discount amount");
 
