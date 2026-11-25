@@ -8,7 +8,18 @@ export type AdScene = {
   camera: string; // shot type and one move
   text: string; // short on-screen words (shown in the plan; the end card carries the words in the video)
   voice: string; // the voiceover line for this scene
+  /**
+   * Who says the line. "character": someone on screen says it to camera, so the
+   * voice is made first and the scene is animated from it, lips matched to the
+   * words. "voiceover" (or missing, for older plans): a narrator over the
+   * pictures, and nobody on screen talks.
+   */
+  speaker?: Speaker;
 };
+
+export type Speaker = "voiceover" | "character";
+/** A scene whose line is said on screen, with the lips matched to the voice. */
+export const speaksOnScreen = (s: { speaker?: Speaker; voice: string }) => s.speaker === "character" && s.voice.trim().split(/\s+/).length >= 2;
 
 export type AdPlan = {
   title: string;
@@ -19,12 +30,22 @@ export type AdPlan = {
   scenes: AdScene[];
   endCard: { headline: string; tagline: string; voice: string };
   seconds: number;
+  /** The person asked for words on screen; otherwise scenes carry no writing at all. */
+  allowText?: boolean;
 };
 
 import { brandLine, type BrandInfo } from "./brand";
 import { isOwnVoice } from "./elevenlabs";
 
-export type AdBrief = { product: string; audience: string; seconds: number; tone: string; refKinds?: string[]; brand?: BrandInfo; language?: string };
+export type AdBrief = { product: string; audience: string; seconds: number; tone: string; refKinds?: string[]; refNames?: string[]; brand?: BrandInfo; language?: string };
+
+/** The kinds of reference picture the planner may hear about. */
+export const PLAN_REF_KINDS = ["product", "logo", "person", "character", "style"];
+
+/** Did the person ask for words on screen (captions, a speech bubble, a sign)? If not, scenes carry none. */
+export function wantsOnScreenText(text: string): boolean {
+  return /\b(captions?|subtitles?|speech bubbles?|text on screen|on-screen (text|words)|title card|lower third|written (on|across)|says? in (big |bold )?(letters|text))\b/i.test(text);
+}
 
 /** Voiceover languages: the voice model speaks the language its lines are written in. */
 export const AD_LANGUAGES = [
@@ -54,14 +75,16 @@ export function maxVoiceChars(seconds: number, language?: string): number | null
 export const AD_LENGTHS = [15, 30, 60] as const;
 export const AD_TONES = ["Friendly", "Premium", "Energetic", "Funny", "Calm"] as const;
 export const SCENE_SECONDS = 5;
-export const AD_VOICES: { id: string; label: string }[] = [
-  { id: "Rachel", label: "Warm female" },
-  { id: "Sarah", label: "Soft female" },
-  { id: "Aria", label: "Confident female" },
-  { id: "Brian", label: "Deep male" },
-  { id: "Charlie", label: "Upbeat male" },
-  { id: "Roger", label: "Relaxed male" },
+/** Our built-in voices. Each label says the accent, and American is the default. */
+export const AD_VOICES: { id: string; label: string; accent: string }[] = [
+  { id: "Rachel", label: "Warm female, American", accent: "American" },
+  { id: "Sarah", label: "Soft female, American", accent: "American" },
+  { id: "Aria", label: "Confident female, American", accent: "American" },
+  { id: "Brian", label: "Deep male, American", accent: "American" },
+  { id: "Roger", label: "Relaxed male, American", accent: "American" },
+  { id: "Charlie", label: "Upbeat male, Australian", accent: "Australian" },
 ];
+export const DEFAULT_VOICE = "Rachel";
 
 /** Scenes are 5 seconds each; the end card fills the rest (3 to 7 seconds). */
 export function sceneCount(seconds: number): number {
@@ -74,15 +97,34 @@ export function endCardSeconds(seconds: number): number {
 export function maxVoiceWords(seconds: number): number {
   return Math.max(4, Math.floor(seconds * 2.3) - 1);
 }
+/** About how long a line takes to say, in seconds (a lip-matched scene lasts as long as its line). */
+export function lineSeconds(line: string, language?: string): number {
+  const n = maxVoiceChars(1, language) ? line.length / 5 : line.trim().split(/\s+/).filter(Boolean).length / 2.5;
+  return Math.min(8, Math.max(2, n + 0.6));
+}
 
-const JSON_SHAPE = `{"title":"...","concept":"two sentences","look":"...","music":"...","voice":"Rachel","scenes":[{"visual":"...","camera":"...","text":"...","voice":"..."}],"endCard":{"headline":"...","tagline":"...","voice":"..."}}`;
+const JSON_SHAPE = `{"title":"...","concept":"two sentences","look":"...","music":"...","voice":"Rachel","scenes":[{"visual":"...","camera":"...","text":"...","voice":"...","speaker":"voiceover"}],"endCard":{"headline":"...","tagline":"...","voice":"..."}}`;
 
 export function adPlanInstructions(brief: AdBrief): string {
   const n = sceneCount(brief.seconds);
   const card = endCardSeconds(brief.seconds);
-  const refs = brief.refKinds?.length
-    ? `The user uploaded their own ${brief.refKinds.join(" and ")} picture(s). Every scene that shows the product must show it exactly as in their picture; describe it plainly as "the product" and never invent a different design, colour or label.`
-    : "The user did not upload a product picture, so describe the product's look once, clearly, in the look line, and keep it identical in every scene.";
+  const kinds = brief.refKinds ?? [];
+  const charIdx = kinds.indexOf("character");
+  const charName = charIdx >= 0 ? (brief.refNames?.[charIdx] ?? "").trim() : "";
+  const productKinds = kinds.filter((k) => k !== "character");
+  const refs = [
+    productKinds.length
+      ? `The user uploaded their own ${productKinds.join(" and ")} picture(s). Every scene that shows the product must show it exactly as in their picture; describe it plainly as "the product" and never invent a different design, colour or label.`
+      : charIdx >= 0
+        ? "The user's own character or mascot is the star (see below). Only describe a separate product if the brief names one."
+        : "The user did not upload a product picture, so describe the product's look once, clearly, in the look line, and keep it identical in every scene.",
+    charIdx >= 0
+      ? `The user uploaded their own character or mascot${charName ? ` called "${charName}"` : ""}. It is a character, not a product: it acts, moves and can talk. Call it ${charName ? `"${charName}"` : `"the character"`} in every scene, show it exactly as in their picture (same design, colours, outfit and accessories) and never put it on a screen, poster or package.`
+      : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const allowText = wantsOnScreenText(`${brief.product} ${brief.audience}`);
   const brand = brandLine(brief.brand);
   return `You are an award-winning ad creative director. Plan a ${brief.seconds}-second video ad.
 Tone: ${brief.tone}. ${refs}
@@ -90,13 +132,14 @@ Language: write every "voice" line, every "text", and the end card "headline", "
 Write exactly ${n} scenes of ${SCENE_SECONDS} seconds each, then an end card of ${card} seconds.
 Rules:
 - Open with a hook in scene 1 (a striking moment, a problem the audience feels, or a surprising visual). Show the product in use, the benefit, then the payoff. The end card has the product name and a short call to action.
-- Each scene "visual": one clear action in ${SCENE_SECONDS} seconds, 20 to 45 words, describing what we see and what moves. No text, captions, signs or logos inside the scene (AI video garbles words). No real people, celebrities, brands, teams or logos. Adults only.
+- Each scene "visual": one clear action in ${SCENE_SECONDS} seconds, 20 to 45 words, describing what we see and what moves. ${allowText ? "Only the words the user asked for may appear on screen; nothing else is written anywhere." : "Nothing written anywhere: no speech bubbles, captions, subtitles, signs, labels or lettering on props (a clapperboard or sign is blank). AI video garbles words."} Never put spoken words or quotes in "visual": the line goes in "voice". No real people, celebrities, brands, teams or logos. Adults only.
 - "camera": shot type and one move, for example "close-up, slow push-in" or "wide shot, gentle pan right".
 - "look": one line listing what must stay the same in every scene: the product's shape, colour and label, each person's age, hair and outfit, the colour palette, the setting and the light. This is repeated into every scene so they match.
 - "text": up to 5 words of on-screen copy for that moment (shown in the plan; the words are rendered on the end card).
-- "voice": the voiceover for that scene, at most ${maxVoiceChars(SCENE_SECONDS, brief.language) ? `${maxVoiceChars(SCENE_SECONDS, brief.language)} characters` : `${maxVoiceWords(SCENE_SECONDS)} words`}, natural and spoken, matching the ${brief.tone.toLowerCase()} tone. Together the lines tell one short story.
+- "voice": the line for that scene, at most ${maxVoiceChars(SCENE_SECONDS, brief.language) ? `${maxVoiceChars(SCENE_SECONDS, brief.language)} characters` : `${maxVoiceWords(SCENE_SECONDS)} words`}, one or two complete sentences (never cut off), natural and spoken, matching the ${brief.tone.toLowerCase()} tone. Together the lines tell one short story.
+- "speaker": "character" when a person or character on screen says the line themselves (their lips will be matched to the voice), otherwise "voiceover" for a narrator. For a "character" scene, the visual shows that one speaker facing the camera in a medium shot or close-up, face and mouth clearly visible, with a small gesture, and no one else talking. For a "voiceover" scene, nobody on screen talks or moves their lips. One voice reads every line, so only one character speaks in the whole ad.${kinds.includes("person") ? ' The user gave a photo of a real person, so every "speaker" is "voiceover".' : ""}
 - "music": genre, mood and tempo for an instrumental background bed, no vocals.
-- "voice" (top level): pick one of ${AD_VOICES.map((v) => `${v.id} (${v.label})`).join(", ")}.
+- "voice" (top level): pick one of ${AD_VOICES.map((v) => `${v.id} (${v.label})`).join(", ")}. Use an American voice unless the brief asks for another accent.
 - "endCard": "headline" is the product name or a 2 to 4 word promise, "tagline" is a call to action up to 6 words, "voice" says it in at most ${maxVoiceChars(card, brief.language) ? `${maxVoiceChars(card, brief.language)} characters` : `${maxVoiceWords(card)} words`}.
 Reply with JSON only, in this shape: ${JSON_SHAPE}`;
 }
@@ -108,11 +151,33 @@ You are now editing an existing plan. Apply the user's change request, keep ever
 
 const clip = (v: unknown, max: number) => (typeof v === "string" ? v.replace(/\s+/g, " ").trim().slice(0, max) : "");
 const wordsMax = (s: string, n: number) => s.split(" ").slice(0, n).join(" ");
-/** Shortens a voice line to fit its seconds, by words or, for Japanese and Chinese, by characters. */
-const fitLine = (s: string, seconds: number, language?: string) => {
+const words = (s: string) => s.split(" ").filter(Boolean).length;
+/**
+ * Fits a voice line to its seconds without cutting a sentence in half: whole
+ * sentences are kept while they fit, a line only a little long is kept whole
+ * (people say it a bit faster), and only a very long single sentence is
+ * shortened, at a comma where there is one.
+ */
+export function fitLine(s: string, seconds: number, language?: string): string {
   const chars = maxVoiceChars(seconds, language);
-  return chars ? s.slice(0, chars) : wordsMax(s, maxVoiceWords(seconds));
-};
+  const max = chars ?? maxVoiceWords(seconds);
+  const size = (t: string) => (chars ? t.length : words(t));
+  if (size(s) <= max) return s;
+  const sentences = s.match(/[^.!?。！？]+[.!?。！？]+["”’']?\s*|[^.!?。！？]+$/g)?.map((x) => x.trim()) ?? [s];
+  let kept = "";
+  for (const sent of sentences) {
+    const next = kept ? `${kept}${chars ? "" : " "}${sent}` : sent;
+    if (size(next) > max) break;
+    kept = next;
+  }
+  if (kept) return kept;
+  if (size(s) <= max + 2) return s;
+  if (chars) return s.slice(0, chars);
+  const cut = wordsMax(s, max);
+  const comma = cut.lastIndexOf(",");
+  const clause = comma > cut.length / 2 ? cut.slice(0, comma) : cut.replace(/\s+(and|or|but|to|the|a|an|of|with|for|so|your|our|you)$/i, "");
+  return `${clause.replace(/[,;:\s]+$/, "")}.`;
+}
 
 /** Reads the planner's JSON reply and fits it to the length; null if it is unusable. */
 /** keepVoice: the user's own ElevenLabs voice in the plan being changed, which the planner may keep. */
@@ -131,6 +196,8 @@ export function parseAdPlan(raw: string, brief: AdBrief, keepVoice?: string): Ad
           camera: clip(o.camera, 120),
           text: wordsMax(clip(o.text, 60), 6),
           voice: fitLine(clip(o.voice, 200), SCENE_SECONDS, brief.language),
+          // A real person's photo is never made to say words in one of our voices ("You, talking" is for that, with their own voice).
+          speaker: (o.speaker === "character" && !brief.refKinds?.includes("person") ? "character" : "voiceover") as Speaker,
         };
       })
       .filter((s) => s.visual.length > 8)
@@ -138,7 +205,7 @@ export function parseAdPlan(raw: string, brief: AdBrief, keepVoice?: string): Ad
     if (scenes.length < n) return null;
     const ec = (j.endCard ?? {}) as Record<string, unknown>;
     // A built-in voice the planner picked, else the user's own voice they already chose, else Rachel.
-    const voice = AD_VOICES.some((v) => v.id === j.voice) ? String(j.voice) : isOwnVoice(keepVoice) ? keepVoice : "Rachel";
+    const voice = AD_VOICES.some((v) => v.id === j.voice) ? String(j.voice) : isOwnVoice(keepVoice) ? keepVoice : DEFAULT_VOICE;
     return {
       title: clip(j.title, 80) || "Your ad",
       concept: clip(j.concept, 400),
@@ -152,6 +219,7 @@ export function parseAdPlan(raw: string, brief: AdBrief, keepVoice?: string): Ad
         voice: fitLine(clip(ec.voice, 160), endCardSeconds(brief.seconds), brief.language),
       },
       seconds: brief.seconds,
+      allowText: wantsOnScreenText(`${brief.product} ${brief.audience}`) || undefined,
     };
   } catch {
     return null;
@@ -177,7 +245,7 @@ export function adPlanWithRules(brief: AdBrief): AdPlan {
     concept: `A short ${brief.tone.toLowerCase()} ad that shows a problem ${who} know well, then ${product} as the simple answer.`,
     look: `${product} looks the same in every scene; same person, same outfit; warm natural colours; bright modern home setting`,
     music: brief.tone === "Energetic" ? "upbeat electronic pop instrumental, punchy drums, fast tempo" : brief.tone === "Premium" ? "minimal cinematic piano and strings, slow tempo" : "warm acoustic guitar and light percussion, medium tempo",
-    voice: brief.tone === "Energetic" ? "Charlie" : "Rachel",
+    voice: brief.tone === "Energetic" ? "Aria" : DEFAULT_VOICE,
     scenes,
     endCard: { headline: name, tagline: "Try it today", voice: `${name}. Try it today.` },
     seconds: brief.seconds,
@@ -195,7 +263,17 @@ export const AD_PRICES = {
   editPerSecond: 0.0006, // joining and mixing
   checkPicture: 0.01, // the quality check of each scene's first frame
   checkScene: 0.01, // the quality check of each 5-second scene
+  talkPerSecond: 0.115, // Kling AI Avatar v2 Pro: a scene said on screen, lips matched to the voice (checked on fal.ai 2026-11-25)
 };
+
+/** The video part of one scene: a lip-matched talking scene is billed by how long its line takes to say. */
+export function sceneVideoCost(scene: AdScene, language?: string): number {
+  return speaksOnScreen(scene) ? (lineSeconds(scene.voice, language) + 0.5) * AD_PRICES.talkPerSecond : AD_PRICES.scene;
+}
+/** The dearest scene of the plan, used for the spending cap on automatic remakes. */
+function dearestScene(plan?: AdPlan): number {
+  return Math.max(AD_PRICES.scene, ...(plan?.scenes ?? []).map((s) => sceneVideoCost(s)));
+}
 
 /** The quality check remakes at most this many scenes on its own (the spending cap). */
 export function maxRedos(scenes: number): number {
@@ -206,8 +284,8 @@ export function checkCost(scenes: number): number {
   return scenes * (AD_PRICES.checkPicture + AD_PRICES.checkScene);
 }
 /** The most the automatic remakes can add: a new frame for every scene, and the capped scene remakes. */
-export function redoCap(scenes: number): number {
-  return scenes * AD_PRICES.picture + maxRedos(scenes) * (AD_PRICES.scene + AD_PRICES.checkScene);
+export function redoCap(scenes: number, plan?: AdPlan): number {
+  return scenes * AD_PRICES.picture + maxRedos(scenes) * (dearestScene(plan) + AD_PRICES.checkScene);
 }
 
 export function voiceChars(plan: AdPlan): number {
@@ -218,7 +296,7 @@ export function adCost(plan: AdPlan, withRefs: boolean, check = false): number {
   const n = plan.scenes.length;
   return (
     (check ? checkCost(n) : 0) +
-    n * AD_PRICES.scene +
+    plan.scenes.reduce((t, s) => t + sceneVideoCost(s), 0) + // a filmed scene, or a scene said on screen with matched lips
     n * AD_PRICES.picture + // each scene's first frame, showing the same product
     (withRefs ? 0 : AD_PRICES.picture) + // our product picture when there is no photo
     AD_PRICES.picture + // end card
@@ -232,7 +310,7 @@ export function adCost(plan: AdPlan, withRefs: boolean, check = false): number {
 /** One scene remade from the chat, plus the re-join and re-mix. */
 export function sceneRemakeCost(plan: AdPlan, withRefs: boolean): number {
   void withRefs;
-  return AD_PRICES.scene + AD_PRICES.picture + plan.seconds * AD_PRICES.editPerSecond * 2 + 0.01;
+  return dearestScene(plan) + AD_PRICES.picture + plan.seconds * AD_PRICES.editPerSecond * 2 + 0.01;
 }
 
 /** Every bit of text in a plan, for the safety check. */
@@ -241,9 +319,36 @@ export function planTexts(plan: AdPlan): string[] {
 }
 
 /** The prompt for one scene: the scene plus the shared look, so every scene matches. */
-export function scenePrompt(plan: AdPlan, i: number): string {
+export function scenePrompt(plan: AdPlan, i: number, asVoiceover = false): string {
   const s = plan.scenes[i];
-  return `${s.visual}. Camera: ${s.camera}. ${plan.look ? `Keep consistent: ${plan.look}.` : ""} No on-screen text, captions or logos.`.slice(0, 1800);
+  const who = speaksOnScreen(s) && !asVoiceover
+    ? "The one speaker faces the camera, face and mouth clearly visible, ready to talk."
+    : "Nobody on screen talks: mouths stay closed, no lip movement.";
+  return `${withoutDialogue(s.visual)}. Camera: ${s.camera}. ${plan.look ? `Keep consistent: ${plan.look}.` : ""} ${who} ${plan.allowText ? "No captions or logos." : NO_TEXT} ${FULL_FRAME}`
+    .replace(/\.\s*\./g, ".")
+    .slice(0, 1800);
+}
+
+/** Said in every scene prompt unless the person asked for words on screen. */
+export const NO_TEXT = "No speech bubbles, captions, subtitles, logos, signs or written words anywhere; props such as a clapperboard are blank.";
+/** Cinematic scenes sometimes come back with black bars, which show as a dark strip in the joined ad. */
+export const FULL_FRAME = "Full frame, edge to edge, no black bars, borders or letterbox.";
+/** Things the video model is told to leave out (its "negative prompt"). */
+export const SCENE_AVOID = "speech bubble, caption, subtitles, text, letters, words, watermark, logo, black bars, letterbox, border";
+
+/**
+ * Spoken words inside a scene's picture description make picture models draw
+ * them as a speech bubble or caption, so the quoted words are taken out (the
+ * line is spoken by the voice instead).
+ */
+export function withoutDialogue(visual: string): string {
+  return visual
+    .replace(/[,:]?\s*["“][^"”]{1,200}["”]/g, "")
+    .replace(/\s+(saying|says|that reads|reading)\s*(?=[,.;]|$)/gi, "")
+    .replace(/\s{2,}/g, " ")
+    .replace(/\s+([,.;!?])/g, "$1")
+    .trim()
+    .replace(/[.]+$/, "");
 }
 
 export function endCardPrompt(plan: AdPlan, withRefs: boolean, brand?: BrandInfo): string {

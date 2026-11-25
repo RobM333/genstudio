@@ -2,10 +2,11 @@ import { NextResponse } from "next/server";
 import { getMode } from "@/lib/config";
 import { fal } from "@/lib/fal";
 import { checkPrompt } from "@/lib/safety";
-import { AD_VOICES } from "@/lib/adplan";
+import { AD_VOICES, DEFAULT_VOICE, lineSeconds } from "@/lib/adplan";
+import { makeDemoMedia } from "@/lib/demo";
 import { payForStep } from "@/lib/accounts/current";
 import { toolUsd } from "@/lib/accounts/credits";
-import { CARD_MOTION_MODEL, COMPOSE_MODEL, isFalMediaUrl, LAST_FRAME_MODEL, MERGE_VIDEOS_MODEL, MUSIC_MODEL, VOICE_MODEL } from "@/lib/models";
+import { CARD_MOTION_MODEL, COMPOSE_MODEL, isFalMediaUrl, LAST_FRAME_MODEL, MERGE_VIDEOS_MODEL, MUSIC_MODEL, TALK_VIDEO_MODEL, VOICE_MODEL } from "@/lib/models";
 
 export const dynamic = "force-dynamic";
 
@@ -16,6 +17,9 @@ export const dynamic = "force-dynamic";
 // - music: make an instrumental music bed
 // - card: turn the ad's end card picture into a short, nearly still video
 // - mix: put a video, voiceover clips and music together
+// - talk-scene: an ad scene said on screen: the scene's first frame speaks the
+//   line already recorded, with the lips matched to that exact voice
+// - join: joins scenes of different lengths on one timeline (used if merge can't)
 type Body = {
   tool?: string;
   urls?: unknown;
@@ -27,6 +31,9 @@ type Body = {
   videoUrl?: string;
   voices?: { url?: string; at?: number; seconds?: number }[];
   musicUrl?: string;
+  audioUrl?: string;
+  durations?: unknown;
+  aspectRatio?: string;
 };
 
 export async function POST(req: Request) {
@@ -61,7 +68,7 @@ export async function POST(req: Request) {
       const text = String(body.text ?? "").trim().slice(0, 400);
       if (!text) return bad();
       if (!checkPrompt(text).ok) return NextResponse.json({ error: "This voiceover line can't be used." }, { status: 422 });
-      const voice = AD_VOICES.some((v) => v.id === body.voice) ? String(body.voice) : "Rachel";
+      const voice = AD_VOICES.some((v) => v.id === body.voice) ? String(body.voice) : DEFAULT_VOICE;
       modelId = VOICE_MODEL.id;
       input = { text, voice, stability: 0.5, similarity_boost: 0.75, speed: 1 };
       break;
@@ -107,6 +114,36 @@ export async function POST(req: Request) {
       demoUrl = videoUrl;
       break;
     }
+    case "talk-scene": {
+      // The line was recorded first; now the scene's opening picture says it, lips matched to the recording.
+      const imageUrl = String(body.imageUrl ?? "");
+      const audioUrl = String(body.audioUrl ?? "");
+      const text = String(body.text ?? "").trim().slice(0, 400);
+      const prompt = String(body.prompt ?? "").trim().slice(0, 900);
+      if (!imageUrl || !audioUrl || !text) return bad();
+      if (!checkPrompt(text).ok || (prompt && !checkPrompt(prompt).ok)) return NextResponse.json({ error: "This scene can't be used." }, { status: 422 });
+      modelId = TALK_VIDEO_MODEL.id;
+      input = { image_url: imageUrl, audio_url: audioUrl, prompt: prompt || "." };
+      allUrls.push(imageUrl, audioUrl);
+      demoUrl = makeDemoMedia({ prompt: text, kind: "video", aspectRatio: body.aspectRatio === "16:9" || body.aspectRatio === "1:1" ? body.aspectRatio : "9:16", modelName: "Talking scene" });
+      break;
+    }
+    case "join": {
+      // Scenes said on screen last as long as their line, so scenes are placed one after another by their real lengths.
+      const durations = Array.isArray(body.durations) ? body.durations.map((d) => Math.max(0.5, Math.min(30, Number(d) || 5))) : [];
+      if (urls.length === 0 || durations.length !== urls.length) return bad();
+      let at = 0;
+      const keyframes = urls.map((url, i) => {
+        const k = { url, timestamp: Math.round(at * 1000), duration: Math.round(durations[i] * 1000) };
+        at += durations[i];
+        return k;
+      });
+      modelId = COMPOSE_MODEL.id;
+      input = { tracks: [{ id: "video", type: "video", keyframes }] };
+      allUrls.push(...urls);
+      demoUrl = urls[urls.length - 1];
+      break;
+    }
     default:
       return bad();
   }
@@ -115,7 +152,8 @@ export async function POST(req: Request) {
   if (mode === "demo") return NextResponse.json({ status: "COMPLETED", demo: true, url: demoUrl });
   if (!allUrls.every(isFalMediaUrl)) return NextResponse.json({ error: "Only results made in ToastyFly can be used." }, { status: 400 });
 
-  const pay = await payForStep(req, toolUsd(String(body.tool), { seconds, text: typeof input.text === "string" ? input.text : "" }), TOOL_NAMES[String(body.tool)] ?? "Video tool");
+  const spoken = body.tool === "talk-scene" ? String(body.text ?? "") : typeof input.text === "string" ? input.text : "";
+  const pay = await payForStep(req, toolUsd(String(body.tool), { seconds: body.tool === "talk-scene" ? lineSeconds(spoken) + 0.5 : seconds, text: spoken }), TOOL_NAMES[String(body.tool)] ?? "Video tool");
   if (pay.error) return pay.error;
   try {
     const { request_id } = await fal.queue.submit(modelId, { input });
@@ -135,6 +173,8 @@ const TOOL_NAMES: Record<string, string> = {
   music: "Music",
   card: "End card",
   mix: "Mixing the ad",
+  "talk-scene": "Talking scene, lips matched",
+  join: "Joining scenes",
 };
 
 function bad() {

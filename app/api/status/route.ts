@@ -32,7 +32,9 @@ export async function GET(req: Request) {
       return NextResponse.json({ status: "FAILED", error: "The model returned no result. It won't use any of your credits." });
     }
     // The signature proves this result was made here, so it can be reused safely (for example an ad's product picture).
-    return NextResponse.json({ status: "COMPLETED", url: mediaUrl, resultToken: sign("result", mediaUrl) });
+    // Talking videos last as long as their words, so their length comes back too.
+    const secs = Number((result.data as { duration?: unknown })?.duration);
+    return NextResponse.json({ status: "COMPLETED", url: mediaUrl, resultToken: sign("result", mediaUrl), seconds: secs > 0 && secs < 120 ? secs : undefined });
   } catch (err) {
     console.error("fal status failed", err);
     await stepFailed(req, requestId);
