@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { BRAND_LOGO, BRAND_NAME, cleanRefCode, LOGO_HAS_NAME, MAKES, OFFER, REFERRAL, spotsLine, TOTAL_SPOTS } from "@/lib/founding";
+import { BRAND_LOGO, BRAND_LOGO_SIZE, BRAND_NAME, cleanRefCode, LOGO_HAS_NAME, MAKES, OFFER, REFERRAL, spotsLine, TOTAL_SPOTS } from "@/lib/founding";
 import { FREE_MONTH_MAKES, foundingPriceShort, SHARE_LINE } from "@/lib/foundingOffer";
 
 // Public "Founding 100" sign-up page. Works without the app password.
@@ -157,7 +157,7 @@ export default function Founding() {
         <Link href="/" aria-label={`${BRAND_NAME}: see examples`}>
           {BRAND_LOGO ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img className={LOGO_HAS_NAME ? "founding-logo founding-logo-wide" : "founding-logo"} src={BRAND_LOGO} alt={BRAND_NAME} width={LOGO_HAS_NAME ? 399 : 300} height={LOGO_HAS_NAME ? 100 : 315} />
+            <img className={LOGO_HAS_NAME ? "founding-logo founding-logo-named" : "founding-logo"} src={BRAND_LOGO} alt={BRAND_NAME} {...BRAND_LOGO_SIZE} />
           ) : (
             <span className="founding-brand">{BRAND_NAME}</span>
           )}

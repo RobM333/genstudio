@@ -46,7 +46,7 @@ function joinLessons(a?: string[], b?: unknown): string[] | undefined {
   const all = [...new Set([...(a ?? []), ...extra])];
   return all.length ? all : undefined;
 }
-import { BRAND_MARK as BRAND_MARK_FILE, BRAND_NAME, FILM_NAME } from "@/lib/appBrand";
+import { BRAND_LOGO, BRAND_LOGO_SIZE, BRAND_MARK as BRAND_MARK_FILE, BRAND_NAME, FILM_NAME, LOGO_HAS_NAME } from "@/lib/appBrand";
 import FilmSet, { draftFromJob } from "./FilmSet";
 import { buildFilm, changeShot, freshFilm, type FilmJob } from "./filmRunner";
 import { filmCost, shotSecondsFor, STILL_MODEL_ID } from "@/lib/filmset";
@@ -4080,8 +4080,15 @@ export default function Studio({ mode }: { mode: AppMode }) {
       <aside className="sidebar">
         <div className="sidebar-top">
           <button className="brand" onClick={() => go("home")} aria-label={`${BRAND_NAME} home`}>
-            <LogoMark />
-            <span className="wordmark">{BRAND_NAME}</span>
+            {BRAND_LOGO && LOGO_HAS_NAME ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img className="brand-logo" src={BRAND_LOGO} alt="" {...BRAND_LOGO_SIZE} />
+            ) : (
+              <>
+                <LogoMark />
+                <span className="wordmark">{BRAND_NAME}</span>
+              </>
+            )}
           </button>
           <ModeBadge mode={mode} />
         </div>

@@ -2,7 +2,7 @@
 // plus the small rules the page and its API share.
 
 // Name and logo come from lib/appBrand.ts (one place for the whole app).
-export { BRAND_NAME, BRAND_LOGO, LOGO_HAS_NAME } from "./appBrand";
+export { BRAND_NAME, BRAND_LOGO, BRAND_LOGO_SIZE, LOGO_HAS_NAME } from "./appBrand";
 
 /** How many founding spots there are. */
 export const TOTAL_SPOTS = 100;

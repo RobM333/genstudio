@@ -5,7 +5,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { BRAND_LOGO, BRAND_NAME } from "@/lib/founding";
+import { BRAND_LOGO, BRAND_LOGO_SIZE, BRAND_NAME, LOGO_HAS_NAME } from "@/lib/founding";
 
 export default function SignIn() {
   const [email, setEmail] = useState("");
@@ -77,8 +77,8 @@ export default function SignIn() {
       <div className="signin-card">
         <Link href="/" className="signin-brand">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={BRAND_LOGO} alt="" width={64} height={67} />
-          <span>{BRAND_NAME}</span>
+          <img className={LOGO_HAS_NAME ? "signin-logo-named" : undefined} src={BRAND_LOGO} alt={LOGO_HAS_NAME ? BRAND_NAME : ""} {...BRAND_LOGO_SIZE} />
+          {!(BRAND_LOGO && LOGO_HAS_NAME) && <span>{BRAND_NAME}</span>}
         </Link>
 
         {step === "email" ? (
