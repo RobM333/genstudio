@@ -1216,7 +1216,7 @@ select.text-input { appearance: auto; }
 .founding-shot img, .founding-shot video { width: 100%; height: 100%; object-fit: cover; display: block; }
 .founding-shot figcaption { position: absolute; inset: auto 0 0 0; padding: 28px 12px 12px; display: grid; gap: 6px; justify-items: start; font-size: 13px; background: linear-gradient(transparent, rgba(7,7,10,0.85)); }
 .founding-shot figcaption .tag { background: rgba(7,7,10,0.7); color: var(--text); border-color: rgba(255,255,255,0.2); backdrop-filter: blur(6px); }
-.founding-perks { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-top: 18px; }
+.founding-perks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 18px; }
 .founding-perk { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 18px; }
 .founding-perk h3, .founding-note h3 { font-size: 16px; margin: 0 0 6px; }
 .founding-perk p, .founding-note p { margin: 0; }
@@ -1405,6 +1405,15 @@ select.text-input { appearance: auto; }
 .admin-form .admin-num, .admin-num { width: 80px !important; display: inline-block !important; padding: 6px 8px !important; margin: 0 !important; border-radius: 8px; border: 1px solid var(--line-strong); background: var(--panel-2); color: var(--text); font: inherit; }
 .admin-add { white-space: nowrap; text-align: right; }
 .admin-add .btn { margin-left: 6px; }
+.admin-group-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 4px 0 12px; }
+.admin-group-bar .generate { width: auto; padding: 9px 16px; }
+.admin-pick { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.admin-pick input { accent-color: var(--accent); }
+.account-invite { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0 10px; }
+.account-invite code { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line-strong); background: var(--panel-2); font-size: 13px; overflow-wrap: anywhere; }
+.founding-share { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); text-align: left; }
+.founding-share code { display: block; margin: 6px 0; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line-strong); background: var(--panel-2); font-size: 13px; overflow-wrap: anywhere; }
+.founding-friend { margin: 0 0 12px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel-2); font-size: 14px; }
 .admin-link { display: inline-block; margin-top: 6px; font-size: 12px; overflow-wrap: anywhere; color: var(--muted); }
 .l-signin { color: var(--muted); text-decoration: none; font-size: 14px; margin-left: auto; margin-right: 12px; }
 .l-signin:hover { color: var(--text); }

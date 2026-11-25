@@ -118,3 +118,23 @@ export function creditExamples(): { what: string; usd: number; credits: number }
   ];
   return rows.map((r) => ({ ...r, credits: creditsFor(r.usd) }));
 }
+
+/**
+ * Roughly what a number of credits makes, from today's credit rates: standard
+ * pictures, and short videos (from silent 6-second clips to 5-second clips with
+ * sound). Rounded down, so it never promises more than the credits cover.
+ */
+export function whatCreditsMake(credits: number): { pictures: number; videosLow: number; videosHigh: number; text: string } {
+  const ex = creditExamples();
+  const rate = (start: string) => ex.find((r) => r.what.startsWith(start))!.credits;
+  const picture = rate("Standard image");
+  const silentVideo = rate("Short video, 6s");
+  const soundVideo = rate("Short video with sound");
+  const rawPictures = Math.floor(credits / picture);
+  const pictures = rawPictures >= 50 ? Math.floor(rawPictures / 10) * 10 : rawPictures;
+  const videosLow = Math.floor(credits / Math.max(silentVideo, soundVideo));
+  const videosHigh = Math.floor(credits / Math.min(silentVideo, soundVideo));
+  const videos = videosLow === videosHigh ? `${videosLow}` : `${videosLow} to ${videosHigh}`;
+  const vWord = videosHigh === 1 ? "short video" : "short videos";
+  return { pictures, videosLow, videosHigh, text: `roughly ${pictures} pictures, or about ${videos} ${vWord}, or a mix of both` };
+}

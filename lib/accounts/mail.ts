@@ -1,5 +1,7 @@
 import "server-only";
 import { BRAND } from "./config";
+import { whatCreditsMake } from "../pricing";
+import { foundingPriceLines, longDay } from "../foundingOffer";
 
 // Sign-in codes and invites are emailed through Resend (resend.com, free for
 // up to 3,000 emails a month). Until a domain is set up there, Resend only
@@ -44,10 +46,24 @@ export function codeEmail(code: string) {
   };
 }
 
+export function foundingReminderEmail(opts: { name?: string; endsOn: string; link: string }) {
+  const hi = opts.name ? `Hi ${opts.name},` : "Hi,";
+  const lines = foundingPriceLines(opts.endsOn);
+  const ask =
+    "Paying isn't open yet. If you'd like to stay, just reply to this email and we'll let you know as soon as you can. Either way, thank you for being one of our first members. We'd love to hear what worked and what didn't.";
+  return {
+    subject: `Your ${BRAND} Founding month ends on ${longDay(opts.endsOn)}`,
+    text: `${hi}\n\n${lines.join("\n\n")}\n\n${ask}\n\nYour account: ${opts.link}\n\n${BRAND}`,
+    html: wrap(
+      `<p>${esc(hi)}</p>${lines.map((l) => `<p>${esc(l)}</p>`).join("")}<p>${esc(ask)}</p><p><a href="${esc(opts.link)}">See your account</a></p><p>${BRAND}</p>`,
+    ),
+  };
+}
+
 export function inviteEmail(opts: { name?: string; link: string; founding: boolean; credits: number }) {
   const hi = opts.name ? `Hi ${opts.name},` : "Hi,";
   const offer = opts.founding
-    ? `Your Founding spot is ready: 1 month of the Creator plan, free, with ${opts.credits} credits to make pictures, videos and ads.`
+    ? `Your Founding spot is ready: 1 month of the Creator plan, free, with ${opts.credits} credits. That makes ${whatCreditsMake(opts.credits).text}. It isn't unlimited: when the credits are used up they stop, and nothing is ever charged. We'll write a few days before the month ends.`
     : `Your account is ready, with ${opts.credits} credits to start with.`;
   return {
     subject: opts.founding ? `You're in: your ${BRAND} Founding spot is ready` : `You're invited to ${BRAND}`,

@@ -9,6 +9,9 @@ import { getModel } from "../lib/models";
 import { isPublicPath, isSignInPath } from "../lib/publicPaths";
 import * as store from "../lib/accounts/store";
 import { mergeLists } from "../components/account/sync";
+import * as refs from "../lib/accounts/referrals";
+import { cronKey, isCronKey } from "../lib/accounts/session";
+import { isCronPath } from "../lib/publicPaths";
 
 async function main() {
   useMemoryKV();
@@ -166,6 +169,93 @@ async function main() {
   const r = await store.invite("owner@example.com", { credits: 25 }, now);
   assert.equal(r?.existing, true);
   assert.equal((await store.getUser(ownerUser.id))!.credits, store.OWNER_START_CREDITS + 25);
+
+  // ---- used credits are counted for the owner's page ----
+  const counter = (await store.invite("counter@example.com", { credits: 100 }, now))!;
+  assert.ok(counter);
+  const cc = (await store.startSignIn("counter@example.com", now)) as { code: string };
+  const cu = ((await store.finishSignIn("counter@example.com", cc.code, now)) as { user: store.User }).user;
+  await store.chargeStep(cu.id, 30, "Video");
+  await store.recordCharge("req-counter-1", { userId: cu.id, credits: 30, what: "Video", at: now });
+  await store.chargeStep(cu.id, 10, "Picture");
+  await store.refundCharge("req-counter-1", cu.id, "failed");
+  assert.equal((await store.getUser(cu.id))!.used, 10, "failed jobs don't count as used");
+
+  // ---- sharing reward ----
+  async function join(email: string, at = now, founding = true) {
+    await store.invite(email, { founding }, at);
+    const c = (await store.startSignIn(email, at)) as { code: string };
+    const u = ((await store.finishSignIn(email, c.code, at)) as { user: store.User }).user;
+    await refs.settleReferrals(u, at);
+    return (await store.getUser(u.id))!;
+  }
+  const aliceCode = (await refs.refCodeFor("alice@gmail.com", now))!;
+  assert.match(aliceCode, /^[A-Za-z0-9]{8}$/);
+  assert.equal(await refs.refCodeFor("Alice@Gmail.com", now), aliceCode, "one link per person");
+  assert.equal(await refs.recordReferral(aliceCode, "a.lice+2@gmail.com", now), "self", "your own second address doesn't count");
+  assert.equal(await refs.recordReferral(aliceCode, "x@mailinator.com", now), "throwaway");
+  assert.equal(await refs.recordReferral("nope1234", "bob@example.com", now), "no-code");
+  assert.equal(await refs.recordReferral(aliceCode, "owner@example.com", now), "has-account");
+  assert.equal(await refs.recordReferral(aliceCode, "bob@example.com", now), "recorded");
+  const otherCode = (await refs.refCodeFor("carol@example.com", now))!;
+  assert.equal(await refs.recordReferral(otherCode, "bob@example.com", now), "already", "the first link wins");
+
+  // Bob gets an account first: nothing yet, Alice has no account.
+  const bob = await join("bob@example.com");
+  assert.equal(bob.credits, 500);
+  // Alice joins: both get the bonus, once.
+  const alice = await join("alice@gmail.com");
+  assert.equal(alice.credits, 600);
+  assert.equal((await store.getUser(bob.id))!.credits, 600);
+  assert.equal((await store.getUser(bob.id))!.bonus, 100);
+  assert.equal(await refs.settleReferrals(alice, now), 0, "only once");
+  assert.equal(await refs.settleReferrals(bob, now), 0, "only once");
+
+  // Up to 5 friends.
+  for (let i = 1; i <= 6; i++) assert.equal(await refs.recordReferral(aliceCode, `friend${i}@example.com`, now), "recorded");
+  for (let i = 1; i <= 6; i++) await join(`friend${i}@example.com`);
+  assert.equal((await store.getUser(alice.id))!.credits, 500 + 5 * 100, "five bonuses at most");
+  assert.equal((await store.findUserByEmail("friend4@example.com"))!.credits, 600, "Bob plus friends 1 to 4 make five");
+  assert.equal((await store.findUserByEmail("friend5@example.com"))!.credits, 500, "the sixth friend joins without a bonus");
+  assert.equal((await store.findUserByEmail("friend6@example.com"))!.credits, 500);
+  const sum = await refs.referralSummary("alice@gmail.com");
+  assert.deepEqual({ joined: sum.joined, credited: sum.credited, waiting: sum.waiting }, { joined: 7, credited: 5, waiting: 0 });
+
+  // Deleting an account removes its link and who-invited-whom.
+  await refs.forgetReferrals("bob@example.com");
+  assert.equal((await refs.listReferrals()).some((r) => r.friend === "bob@example.com"), false);
+  await refs.forgetReferrals("alice@gmail.com");
+  assert.equal(await refs.emailForCode(aliceCode), null);
+  assert.ok((await refs.listReferrals()).every((r) => r.by !== "alice@gmail.com"));
+
+  // ---- the free month ending: a message first, then the Free plan, never a charge ----
+  const dan = await join("dan@example.com", now);
+  assert.equal(dan.planUntil, "2026-12-24");
+  assert.equal(store.foundingStage(dan, now)?.stage, "active");
+  const soon = Date.UTC(2026, 11, 21, 12);
+  assert.deepEqual(store.foundingStage(dan, soon), { stage: "ending-soon", endsOn: "2026-12-24", daysLeft: 3 });
+  // Uses most of the credits.
+  await store.chargeStep(dan.id, 480, "Lots of videos");
+  const after = Date.UTC(2026, 11, 24, 1);
+  const moved = await store.applyPlanChanges((await store.getUser(dan.id))!, after);
+  assert.equal(moved.plan, "free");
+  assert.equal(moved.foundingEnded, "2026-12-24");
+  assert.equal(moved.credits, 50, "topped up to the Free plan's 50");
+  assert.equal(store.foundingStage(moved, after)?.stage, "ended");
+  const again2 = await store.applyPlanChanges(moved, after + 3600_000);
+  assert.equal(again2.credits, 50, "only once a month");
+  const nextMonth = await store.applyPlanChanges(again2, Date.UTC(2027, 0, 2));
+  assert.equal(nextMonth.credits, 50);
+  await store.chargeStep(dan.id, 45, "Pictures");
+  assert.equal((await store.applyPlanChanges((await store.getUser(dan.id))!, Date.UTC(2027, 1, 1))).credits, 50);
+  // Someone with credits left keeps them.
+  const erin = await join("erin@example.com", now);
+  assert.equal((await store.applyPlanChanges(erin, after)).credits, 500);
+
+  // ---- the daily job's key ----
+  assert.ok(isCronKey(cronKey()));
+  assert.ok(!isCronKey("nope") && !isCronKey(null));
+  assert.ok(isCronPath("/api/cron/founding") && !isCronPath("/api/cron/other") && !isPublicPath("/api/cron/founding"));
 
   console.log("accounts tests passed");
 }

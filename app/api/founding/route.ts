@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { cleanEmail, cleanMakes, cleanText, spotsLeft, TOTAL_SPOTS } from "@/lib/founding";
 import { addSignup, countSignups } from "@/lib/foundingStore";
+import { recordReferral, refCodeFor } from "@/lib/accounts/referrals";
 
 // Public (no app password): the founding sign-up page reads how many spots are
 // left and sends new sign-ups here.
@@ -42,8 +43,18 @@ export async function POST(req: NextRequest) {
     if (status === "too-many") {
       return NextResponse.json({ error: "Lots of sign-ups have come from this connection today. Please try again tomorrow." }, { status: 429 });
     }
+    // A friend's invite link: remembered now, the bonus is added once both have accounts.
+    const referral = status === "added" && body.ref ? await recordReferral(body.ref, email).catch(() => "no-code" as const) : null;
+    const refCode = await refCodeFor(email).catch(() => null);
     const taken = await countSignups();
-    return NextResponse.json({ ok: true, status, left: spotsLeft(taken), number: status === "added" ? taken : null });
+    return NextResponse.json({
+      ok: true,
+      status,
+      left: spotsLeft(taken),
+      number: status === "added" ? taken : null,
+      refCode,
+      referred: referral === "recorded",
+    });
   } catch {
     return NextResponse.json({ error: "We couldn't save that just now. Please try again in a minute." }, { status: 503 });
   }

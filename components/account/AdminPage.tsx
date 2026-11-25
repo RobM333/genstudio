@@ -1,18 +1,45 @@
 "use client";
 
-// The owner's page: invite the Founding 100 from the sign-up list (each gets 1
-// month of Creator with 500 credits), invite anyone else, and see everyone's
-// credits. Only the emails in ADMIN_EMAILS can open it.
+// The owner's page: invite the Founding 100 from the sign-up list in groups of
+// 10 to 20 (each gets 1 month of Creator with 500 credits), see how each group
+// is using its credits before inviting the next, invite anyone else, and see
+// everyone's credits. Only the emails in ADMIN_EMAILS can open it.
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { FOUNDING_CREDITS_SHOWN } from "./shared";
 
-type U = { id: string; email: string; name: string; credits: number; plan: string; planUntil: string | null; founding: boolean; createdAt: number; lastSignIn: number | null };
-type I = { email: string; name: string; credits: number; founding: boolean; at: number; joined: boolean };
-type S = { email: string; name: string; makes: string; at: string; spot: boolean };
+type Stage = { stage: "active" | "ending-soon" | "ended"; endsOn: string; daysLeft: number } | null;
+type U = {
+  id: string;
+  email: string;
+  name: string;
+  credits: number;
+  plan: string;
+  planUntil: string | null;
+  founding: boolean;
+  createdAt: number;
+  lastSignIn: number | null;
+  used: number;
+  bonus: number;
+  group: number | null;
+  stage: Stage;
+  reminderSent: boolean;
+  invitedBy: string | null;
+};
+type I = { email: string; name: string; credits: number; founding: boolean; at: number; joined: boolean; group: number | null };
+type S = { email: string; name: string; makes: string; at: string; spot: boolean; invitedBy: string | null; reward: string | null };
 
-const date = (at: number | string) => new Date(at).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+const date = (at: number | string) =>
+  new Date(typeof at === "string" && /^\d{4}-\d{2}-\d{2}$/.test(at) ? `${at}T00:00:00` : at).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+
+function stageText(u: U): string {
+  if (!u.stage) return "";
+  if (u.stage.stage === "ended") return `free month ended ${date(u.stage.endsOn)}, now on Free`;
+  if (u.stage.stage === "ending-soon")
+    return `free month ends ${date(u.stage.endsOn)} (${u.stage.daysLeft} day${u.stage.daysLeft === 1 ? "" : "s"})${u.reminderSent ? ", price message sent" : ""}`;
+  return `free until ${date(u.stage.endsOn)}`;
+}
 
 export default function AdminPage() {
   const [users, setUsers] = useState<U[]>([]);
@@ -27,6 +54,8 @@ export default function AdminPage() {
   const [credits, setCredits] = useState("50");
   const [addFor, setAddFor] = useState<Record<string, string>>({});
   const [loaded, setLoaded] = useState(false);
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [progress, setProgress] = useState<string | null>(null);
 
   async function load() {
     const r = await fetch("/api/admin", { cache: "no-store" }).catch(() => null);
@@ -48,18 +77,23 @@ export default function AdminPage() {
   const invited = useMemo(() => new Map(invites.map((i) => [i.email, i])), [invites]);
   const joined = useMemo(() => new Set(users.map((u) => u.email)), [users]);
 
-  async function sendInvite(to: string, opts: { name?: string; founding: boolean; credits?: number }) {
-    setBusy(to);
-    setMsg(null);
-    setError(null);
+  async function postInvite(to: string, opts: { name?: string; founding: boolean; credits?: number; group?: number }) {
     const r = await fetch("/api/admin", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "invite", email: to, ...opts }),
     }).catch(() => null);
     const d = r ? await r.json().catch(() => ({})) : {};
+    return { ok: Boolean(r?.ok), d };
+  }
+
+  async function sendInvite(to: string, opts: { name?: string; founding: boolean; credits?: number }) {
+    setBusy(to);
+    setMsg(null);
+    setError(null);
+    const { ok, d } = await postInvite(to, opts);
     setBusy(null);
-    if (!r?.ok) return setError(d.error ?? "The invite didn't work.");
+    if (!ok) return setError(d.error ?? "The invite didn't work.");
     const what = opts.founding ? `1 month of Creator with ${FOUNDING_CREDITS_SHOWN} credits` : `${opts.credits ?? 0} credits`;
     if (d.existing) setMsg({ text: `${to} already has an account, so ${what} went straight onto it.` });
     else if (d.emailed) setMsg({ text: `Invite emailed to ${to} (${what}).` });
@@ -88,6 +122,80 @@ export default function AdminPage() {
   }
 
   const foundingLeft = signups.filter((s) => s.spot && !invited.has(s.email) && !joined.has(s.email));
+  const nextGroup = Math.max(0, ...invites.map((i) => i.group ?? 0), ...users.map((u) => u.group ?? 0)) + 1;
+
+  // How each group is getting on, so the next group can wait until it's clear.
+  const groups = useMemo(() => {
+    const byGroup = new Map<number, { invited: number; firstAt: number; members: U[] }>();
+    for (const i of invites) {
+      if (!i.group) continue;
+      const g = byGroup.get(i.group) ?? { invited: 0, firstAt: i.at, members: [] };
+      g.invited++;
+      g.firstAt = Math.min(g.firstAt, i.at);
+      byGroup.set(i.group, g);
+    }
+    for (const u of users) if (u.group) byGroup.get(u.group)?.members.push(u);
+    return [...byGroup.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([n, g]) => {
+        const used = g.members.reduce((t, u) => t + u.used, 0);
+        const active = g.members.filter((u) => u.used > 0).length;
+        const friends = users.filter((u) => u.invitedBy && g.members.some((m) => m.email === u.invitedBy)).length;
+        const out = g.members.filter((u) => u.credits < 20 && u.used > 0).length;
+        return { n, invited: g.invited, joined: g.members.length, active, used, avg: g.members.length ? Math.round(used / g.members.length) : 0, friends, out, at: g.firstAt };
+      });
+  }, [invites, users]);
+
+  function pickNext(n: number) {
+    setPicked(new Set(foundingLeft.slice(0, n).map((s) => s.email)));
+  }
+
+  async function inviteGroup() {
+    const list = signups.filter((s) => picked.has(s.email));
+    if (!list.length) return;
+    setBusy("group");
+    setMsg(null);
+    setError(null);
+    let emailed = 0;
+    const notEmailed: string[] = [];
+    let failed = 0;
+    for (let k = 0; k < list.length; k++) {
+      const s = list[k];
+      setProgress(`Inviting ${k + 1} of ${list.length}…`);
+      const { ok, d } = await postInvite(s.email, { name: s.name || undefined, founding: true, group: nextGroup });
+      if (!ok) failed++;
+      else if (d.emailed || d.existing) emailed++;
+      else notEmailed.push(s.email);
+    }
+    setProgress(null);
+    setBusy(null);
+    setPicked(new Set());
+    setMsg({
+      text:
+        `Group ${nextGroup}: ${emailed} of ${list.length} invited.` +
+        (notEmailed.length ? ` ${notEmailed.length} are on the invite list but the email couldn't be sent (Resend only sends to you until toastyfly.com is set up there): ${notEmailed.join(", ")}. They can sign in at ${window.location.origin}/signin with their email.` : "") +
+        (failed ? ` ${failed} didn't work, please try those again.` : ""),
+    });
+    void load();
+  }
+
+  async function runReminders() {
+    setBusy("reminders");
+    setMsg(null);
+    const r = await fetch("/api/admin", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "reminders" }) }).catch(() => null);
+    const d = r ? await r.json().catch(() => ({})) : {};
+    setBusy(null);
+    if (!r?.ok) return setError(d.error ?? "Couldn't send the messages.");
+    setMsg({
+      text:
+        `Checked ${d.checked} accounts. Founding price messages sent: ${d.sent?.length ?? 0}.` +
+        (d.failed?.length ? ` Couldn't email: ${d.failed.join(", ")}.` : "") +
+        (d.movedToFree ? ` Moved to the Free plan: ${d.movedToFree}.` : ""),
+    });
+    void load();
+  }
+
+  const endingSoon = users.filter((u) => u.stage?.stage === "ending-soon");
 
   return (
     <div className="account-page admin-page">
@@ -147,22 +255,66 @@ export default function AdminPage() {
         <h2>Founding sign-ups</h2>
         <p className="muted small">
           {signups.filter((s) => s.spot).length} founding spots claimed, {foundingLeft.length} not invited yet. Inviting gives them 1 month of Creator with{" "}
-          {FOUNDING_CREDITS_SHOWN} credits from the day they first sign in.
+          {FOUNDING_CREDITS_SHOWN} credits from the day they first sign in. Invite them in groups of 10 to 20, and check how the last group is using its
+          credits (below) before sending the next.
         </p>
+        {foundingLeft.length > 0 && (
+          <div className="admin-group-bar">
+            <button className="btn" disabled={busy !== null} onClick={() => pickNext(10)}>
+              Pick the next 10
+            </button>
+            <button className="btn" disabled={busy !== null} onClick={() => pickNext(20)}>
+              Pick the next 20
+            </button>
+            {picked.size > 0 && (
+              <>
+                <button className="generate small" disabled={busy !== null} onClick={inviteGroup}>
+                  {progress ?? `Invite these ${picked.size} as group ${nextGroup}`}
+                </button>
+                <button className="link-btn" disabled={busy !== null} onClick={() => setPicked(new Set())}>
+                  Clear
+                </button>
+              </>
+            )}
+          </div>
+        )}
         {loaded && signups.length === 0 && <p className="muted">No sign-ups yet.</p>}
         {signups.length > 0 && (
           <table className="account-table">
             <tbody>
               {signups.map((s, n) => {
                 const inv = invited.get(s.email);
-                const status = joined.has(s.email) ? "Joined" : inv ? `Invited ${date(inv.at)}` : null;
+                const status = joined.has(s.email) ? `Joined${inv?.group ? ` (group ${inv.group})` : ""}` : inv ? `Invited ${date(inv.at)}${inv.group ? ` (group ${inv.group})` : ""}` : null;
+                const canPick = s.spot && !status;
                 return (
                   <tr key={s.email}>
-                    <td className="muted">{n + 1}</td>
+                    <td className="muted">
+                      {canPick ? (
+                        <label className="admin-pick">
+                          <input
+                            type="checkbox"
+                            checked={picked.has(s.email)}
+                            onChange={(e) =>
+                              setPicked((p) => {
+                                const next = new Set(p);
+                                if (e.target.checked) next.add(s.email);
+                                else next.delete(s.email);
+                                return next;
+                              })
+                            }
+                            aria-label={`Pick ${s.email}`}
+                          />{" "}
+                          {n + 1}
+                        </label>
+                      ) : (
+                        n + 1
+                      )}
+                    </td>
                     <td>
                       {s.email}
                       {s.name ? <span className="muted"> · {s.name}</span> : null}
                       {s.makes ? <span className="muted small"> · {s.makes}</span> : null}
+                      {s.invitedBy ? <span className="muted small"> · invited by {s.invitedBy}</span> : null}
                     </td>
                     <td className="muted small">{s.spot ? "Founding" : "Waitlist"}</td>
                     <td>
@@ -183,6 +335,64 @@ export default function AdminPage() {
       </section>
 
       <section className="account-card">
+        <h2>Groups</h2>
+        {groups.length === 0 ? (
+          <p className="muted">No groups yet. Pick the next 10 or 20 sign-ups above and invite them together.</p>
+        ) : (
+          <>
+            <p className="muted small">
+              Credits used counts what was spent on AI work, less anything given back. A group that has used little may need a nudge; one that is running out
+              tells you the {FOUNDING_CREDITS_SHOWN} credits are being used.
+            </p>
+            <table className="account-table">
+              <tbody>
+                <tr className="muted small">
+                  <td>Group</td>
+                  <td>Joined</td>
+                  <td>Made something</td>
+                  <td>Credits used</td>
+                  <td>Average each</td>
+                  <td>Nearly out</td>
+                  <td>Friends brought</td>
+                </tr>
+                {groups.map((g) => (
+                  <tr key={g.n}>
+                    <td>
+                      <strong>{g.n}</strong> <span className="muted small">invited {date(g.at)}</span>
+                    </td>
+                    <td>
+                      {g.joined} of {g.invited}
+                    </td>
+                    <td>{g.active}</td>
+                    <td>{g.used.toLocaleString()}</td>
+                    <td>{g.avg}</td>
+                    <td>{g.out}</td>
+                    <td>{g.friends}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </>
+        )}
+      </section>
+
+      <section className="account-card">
+        <h2>End of the free month</h2>
+        <p className="muted small">
+          A few days before a member&apos;s free month ends, they get a friendly email with their estimated founding price. Nobody is charged: if they don&apos;t
+          stay, they move to the Free plan (50 credits a month) and keep everything they made. This runs by itself once a day on the live site.
+        </p>
+        <p>
+          {endingSoon.length === 0
+            ? "Nobody's free month ends in the next few days."
+            : `Ending soon: ${endingSoon.map((u) => `${u.email} (${date(u.stage!.endsOn)}${u.reminderSent ? ", sent" : ""})`).join(", ")}`}
+        </p>
+        <button className="btn" disabled={busy !== null} onClick={runReminders}>
+          {busy === "reminders" ? "Sending…" : "Send any messages that are due now"}
+        </button>
+      </section>
+
+      <section className="account-card">
         <h2>People with accounts ({users.length})</h2>
         {users.length > 0 && (
           <table className="account-table">
@@ -195,11 +405,18 @@ export default function AdminPage() {
                       {" "}
                       · {u.founding ? "Founding · " : ""}
                       {u.plan}
-                      {u.planUntil ? ` until ${date(u.planUntil)}` : ""} · joined {date(u.createdAt)}
+                      {u.stage ? ` · ${stageText(u)}` : u.planUntil ? ` until ${date(u.planUntil)}` : ""}
+                      {u.group ? ` · group ${u.group}` : ""} · joined {date(u.createdAt)}
+                      {u.lastSignIn ? ` · last in ${date(u.lastSignIn)}` : ""}
+                      {u.invitedBy ? ` · invited by ${u.invitedBy}` : ""}
                     </span>
                   </td>
                   <td>
-                    <strong>{u.credits}</strong> <span className="muted small">credits</span>
+                    <strong>{u.credits}</strong> <span className="muted small">left</span>
+                    <br />
+                    <span className="muted small">
+                      {u.used} used{u.bonus ? ` · +${u.bonus} from friends` : ""}
+                    </span>
                   </td>
                   <td className="admin-add">
                     <input

@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { accountsOn } from "@/lib/accounts/config";
 import { currentUser, signInNeeded } from "@/lib/accounts/current";
-import { deleteAccount, history } from "@/lib/accounts/store";
+import { deleteAccount, foundingStage, history } from "@/lib/accounts/store";
+import { forgetReferrals, referralSummary } from "@/lib/accounts/referrals";
 import { publicUser } from "@/lib/accounts/public";
 import { SESSION_COOKIE } from "@/lib/accounts/session";
 
@@ -13,7 +14,14 @@ export async function GET(req: Request) {
   if (!user) return signInNeeded();
   const withHistory = new URL(req.url).searchParams.get("history") === "1";
   return NextResponse.json(
-    { on: true, user: publicUser(user), history: withHistory ? await history(user.id, 60) : undefined },
+    {
+      on: true,
+      user: publicUser(user),
+      history: withHistory ? await history(user.id, 60) : undefined,
+      // The account page also shows the invite link and where the free month is.
+      referral: withHistory ? await referralSummary(user.email).catch(() => null) : undefined,
+      founding: withHistory ? foundingStage(user) : undefined,
+    },
     { headers: { "Cache-Control": "no-store" } },
   );
 }
@@ -24,6 +32,7 @@ export async function DELETE(req: Request) {
   if (!user) return signInNeeded();
   const body = (await req.json().catch(() => ({}))) as { confirm?: string };
   if (String(body.confirm ?? "").trim().toUpperCase() !== "DELETE") return NextResponse.json({ error: "Type DELETE to confirm." }, { status: 400 });
+  await forgetReferrals(user.email).catch(() => {});
   await deleteAccount(user.id);
   const res = NextResponse.json({ ok: true });
   res.cookies.set(SESSION_COOKIE, "", { httpOnly: true, sameSite: "lax", path: "/", maxAge: 0 });
