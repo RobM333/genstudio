@@ -137,7 +137,7 @@ Rules:
 - "look": one line listing what must stay the same in every scene: the product's shape, colour and label, each person's age, hair and outfit, the colour palette, the setting and the light. This is repeated into every scene so they match.
 - "text": up to 5 words of on-screen copy for that moment (shown in the plan; the words are rendered on the end card).
 - "voice": the line for that scene, at most ${maxVoiceChars(SCENE_SECONDS, brief.language) ? `${maxVoiceChars(SCENE_SECONDS, brief.language)} characters` : `${maxVoiceWords(SCENE_SECONDS)} words`}, one or two complete sentences (never cut off), natural and spoken, matching the ${brief.tone.toLowerCase()} tone. Together the lines tell one short story.
-- "speaker": "character" when a person or character on screen says the line themselves (their lips will be matched to the voice), otherwise "voiceover" for a narrator. For a "character" scene, the visual shows that one speaker facing the camera in a medium shot or close-up, face and mouth clearly visible, with a small gesture, and no one else talking. For a "voiceover" scene, nobody on screen talks or moves their lips. One voice reads every line, so only one character speaks in the whole ad.${kinds.includes("person") ? ' The user gave a photo of a real person, so every "speaker" is "voiceover".' : ""}
+- "speaker": "character" when a person or character on screen says the line themselves (their lips will be matched to the voice), otherwise "voiceover" for a narrator. For a "character" scene, the visual shows that one speaker facing the camera in a medium shot or close-up, mouth clearly visible (keep any sunglasses or outfit from the character's usual look), with a small gesture, and no one else talking. For a "voiceover" scene, nobody on screen talks or moves their lips. One voice reads every line, so only one character speaks in the whole ad.${kinds.includes("person") ? ' The user gave a photo of a real person, so every "speaker" is "voiceover".' : ""}
 - "music": genre, mood and tempo for an instrumental background bed, no vocals.
 - "voice" (top level): pick one of ${AD_VOICES.map((v) => `${v.id} (${v.label})`).join(", ")}. Use an American voice unless the brief asks for another accent.
 - "endCard": "headline" is the product name or a 2 to 4 word promise, "tagline" is a call to action up to 6 words, "voice" says it in at most ${maxVoiceChars(card, brief.language) ? `${maxVoiceChars(card, brief.language)} characters` : `${maxVoiceWords(card)} words`}.
@@ -257,6 +257,7 @@ export function adPlanWithRules(brief: AdBrief): AdPlan {
 export const AD_PRICES = {
   scene: 0.35, // Kling 2.5 Turbo Pro, 5 seconds
   picture: 0.04, // Nano Banana: the product picture, each scene's first frame, the end card
+  proPicture: 0.15, // Nano Banana Pro: an opening picture made again when the first one had black bars
   voicePer1000Chars: 0.05,
   musicPerMinute: 0.02,
   cardPerSecond: 0.02, // the end card's gentle move
@@ -303,7 +304,7 @@ export function checkCost(scenes: number): number {
 }
 /** The most the automatic remakes can add: a new frame for every scene, and the capped scene remakes. */
 export function redoCap(scenes: number, plan?: AdPlan): number {
-  return scenes * AD_PRICES.picture + maxRedos(scenes) * (dearestScene(plan) + AD_PRICES.checkScene);
+  return scenes * (AD_PRICES.picture + AD_PRICES.proPicture) + maxRedos(scenes) * (dearestScene(plan) + AD_PRICES.checkScene);
 }
 
 export function voiceChars(plan: AdPlan): number {
@@ -340,7 +341,7 @@ export function planTexts(plan: AdPlan): string[] {
 export function scenePrompt(plan: AdPlan, i: number, asVoiceover = false): string {
   const s = plan.scenes[i];
   const who = speaksOnScreen(s) && !asVoiceover
-    ? "The one speaker faces the camera, face and mouth clearly visible, ready to talk."
+    ? "The one speaker faces the camera with the mouth clearly visible, ready to talk (sunglasses or other parts of a character's usual look are fine)."
     : "Nobody on screen talks: mouths stay closed, no lip movement.";
   return `${withoutDialogue(s.visual)}. Camera: ${s.camera}. ${plan.look ? `Keep consistent: ${plan.look}.` : ""} ${who} ${plan.allowText ? "No captions or logos." : NO_TEXT} ${FULL_FRAME}`
     .replace(/\.\s*\./g, ".")

@@ -13,7 +13,7 @@ import type { Analysis } from "@/lib/analyze";
 import { faultText, type FaultCode } from "@/lib/promise";
 import { post, waitFor, waitForResult } from "./storyRunner";
 import { TALK_VIDEO_MODEL_ID } from "@/lib/talk";
-import { NATIVE_TALK_MODELS } from "@/lib/models";
+import { NATIVE_TALK_MODELS, REFERENCE_IMAGE_PRO_MODEL } from "@/lib/models";
 import { isOwnVoice } from "@/lib/elevenlabs";
 import { loadEleven, speakOwn, usableVoices } from "./elevenConnect";
 
@@ -152,13 +152,14 @@ const NO_BARS = "Fill the whole frame edge to edge: no black bars, borders or le
 async function sceneFrame(job: AdJob, i: number, aspectRatio: string, fix = ""): Promise<string> {
   const url = await sceneFrameOnce(job, i, aspectRatio, fix);
   if (!(await hasBlackBars(url))) return url;
+  // The usual picture model tends to letterbox again, so the remake uses the stronger one, which keeps the shape.
   job.check?.log.push(`Scene ${i + 1}: the opening picture had black bars, so it was made again.`);
-  return sceneFrameOnce(job, i, aspectRatio, `${NO_BARS} ${fix}`.trim());
+  return sceneFrameOnce(job, i, aspectRatio, `${NO_BARS} ${fix}`.trim(), REFERENCE_IMAGE_PRO_MODEL.id);
 }
 
-async function sceneFrameOnce(job: AdJob, i: number, aspectRatio: string, fix = ""): Promise<string> {
+async function sceneFrameOnce(job: AdJob, i: number, aspectRatio: string, fix = "", modelId = "fal-ai/nano-banana/edit"): Promise<string> {
   const res = await post("/api/generate", {
-    modelId: "fal-ai/nano-banana/edit",
+    modelId,
     prompt: `${frameLead((job.refs ?? []).map((r) => r.kind))} ${fix ? `Important: ${fix} ` : ""}${scenePrompt(job.plan, i)}`.slice(0, 1990),
     aspectRatio,
     enhance: false,
@@ -167,7 +168,7 @@ async function sceneFrameOnce(job: AdJob, i: number, aspectRatio: string, fix = 
     productUrl: job.productUrl,
     productToken: job.productToken,
   });
-  return waitFor(res.modelId ?? "fal-ai/nano-banana/edit", res);
+  return waitFor(res.modelId ?? modelId, res);
 }
 
 async function sceneClip(job: AdJob, i: number, aspectRatio: string, frame?: string, fix = "", asVoiceover = false): Promise<string> {

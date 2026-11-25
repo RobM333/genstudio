@@ -328,6 +328,27 @@ export const REFERENCE_IMAGE_MODEL: ModelInfo = {
   }),
 };
 
+/**
+ * The stronger reference picture model, used only when the usual one letterboxes
+ * an ad's opening picture (black bars): it keeps to the shape asked for.
+ */
+export const REFERENCE_IMAGE_PRO_MODEL: ModelInfo = {
+  id: "fal-ai/nano-banana-pro/edit",
+  typicalSeconds: 30,
+  name: "Nano Banana Pro (with your references)",
+  kind: "image",
+  tagline: "Puts your real product, logo or character into the picture, in the exact shape asked for.",
+  approxCost: "~$0.15 / image",
+  aspectRatios: ["1:1", "16:9", "9:16"],
+  buildInput: ({ prompt, aspectRatio, refUrls }) => ({
+    prompt,
+    image_urls: refUrls ?? [],
+    aspect_ratio: aspectRatio,
+    resolution: "1K",
+    num_images: 1,
+  }),
+};
+
 /** Storyboard helpers on fal (used through /api/tool, not the picker). */
 export const LAST_FRAME_MODEL: ModelInfo = {
   id: "fal-ai/ffmpeg-api/extract-frame",
@@ -509,7 +530,7 @@ export const NATIVE_TALK_MODELS: Record<"kling3" | "seedance", ModelInfo> = {
   },
 };
 
-const HIDDEN = [...Object.values(NATIVE_TALK_MODELS), HD_IMAGE_MODEL, HD_VIDEO_MODEL, ADD_SOUND_MODEL, EDIT_IMAGE_MODEL, REFERENCE_IMAGE_MODEL, LAST_FRAME_MODEL, MERGE_VIDEOS_MODEL, VOICE_MODEL, MUSIC_MODEL, COMPOSE_MODEL, CARD_MOTION_MODEL, TALK_SPEECH_MODEL, TALK_VIDEO_MODEL, ...ANIMATE_MODELS];
+const HIDDEN = [...Object.values(NATIVE_TALK_MODELS), HD_IMAGE_MODEL, HD_VIDEO_MODEL, ADD_SOUND_MODEL, EDIT_IMAGE_MODEL, REFERENCE_IMAGE_MODEL, REFERENCE_IMAGE_PRO_MODEL, LAST_FRAME_MODEL, MERGE_VIDEOS_MODEL, VOICE_MODEL, MUSIC_MODEL, COMPOSE_MODEL, CARD_MOTION_MODEL, TALK_SPEECH_MODEL, TALK_VIDEO_MODEL, ...ANIMATE_MODELS];
 
 export function getModel(id: string): ModelInfo | undefined {
   return MODELS.find((m) => m.id === id) ?? HIDDEN.find((m) => m.id === id);
