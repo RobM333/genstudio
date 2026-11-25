@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { AppMode } from "@/lib/config";
 import { seasonFor, weekDays, type Idea } from "@/lib/ideas";
 import { brandInfo, hasBrand, type Brand } from "./BrandKit";
@@ -73,6 +73,12 @@ export function WeekPlan({ brand, mode, onUse, compact }: { brand: Brand; mode: 
   const [made, setMade] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const cards = useRef<HTMLDivElement>(null);
+  const [fresh, setFresh] = useState(false);
+  useEffect(() => {
+    // New posts appear under the button, often below the fold: bring them into view.
+    if (fresh && week.length) cards.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [fresh, week]);
   useEffect(() => {
     const s = load();
     setWeek(s.week ?? []);
@@ -90,7 +96,9 @@ export function WeekPlan({ brand, mode, onUse, compact }: { brand: Brand; mode: 
       const data = await callIdeas({ mode: "week", business, brand: brandInfo(brand), days: weekDays(now), season: seasonFor(now, zone) });
       const ideas = data.ideas ?? [];
       const when = now.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+      if (!ideas.length) throw new Error("No posts came back. Please try again.");
       setWeek(ideas);
+      setFresh(true);
       setMade(when);
       save({ week: ideas, weekMade: when });
     } catch (e) {
@@ -108,6 +116,9 @@ export function WeekPlan({ brand, mode, onUse, compact }: { brand: Brand; mode: 
         </p>
       )}
       {!ready && <p className="muted small">Add your brand name or what you sell to your brand kit first.</p>}
+      {ready && !(brand.business ?? "").trim() && (
+        <p className="muted small">Tip: fill in &quot;What you sell&quot; above so the posts show your real product.</p>
+      )}
       <div className="idea-actions">
         <button className="pill active" onClick={plan} disabled={busy || !ready || mode === "locked"}>
           {busy ? "Planning your week..." : week.length ? "📅 Plan a new week" : "📅 Plan my week of posts"}
@@ -117,7 +128,7 @@ export function WeekPlan({ brand, mode, onUse, compact }: { brand: Brand; mode: 
       </div>
       {error && <p className="error small">{error}</p>}
       {week.length > 0 && (
-        <div className="director-cards idea-cards">
+        <div className="director-cards idea-cards" ref={cards}>
           {week.map((i, n) => (
             <IdeaCard key={`${i.day}-${n}`} idea={i} onUse={onUse} />
           ))}

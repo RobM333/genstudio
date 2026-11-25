@@ -2,11 +2,11 @@ import { NextResponse } from "next/server";
 import { getMode } from "@/lib/config";
 import { fal } from "@/lib/fal";
 import { checkPrompt } from "@/lib/safety";
-import { AD_VOICES, DEFAULT_VOICE, lineSeconds } from "@/lib/adplan";
+import { AD_VOICES, DEFAULT_VOICE, lineSeconds, SCENE_AVOID } from "@/lib/adplan";
 import { makeDemoMedia } from "@/lib/demo";
 import { payForStep } from "@/lib/accounts/current";
 import { toolUsd } from "@/lib/accounts/credits";
-import { CARD_MOTION_MODEL, COMPOSE_MODEL, isFalMediaUrl, LAST_FRAME_MODEL, MERGE_VIDEOS_MODEL, MUSIC_MODEL, TALK_VIDEO_MODEL, VOICE_MODEL } from "@/lib/models";
+import { CARD_MOTION_MODEL, COMPOSE_MODEL, isFalMediaUrl, LAST_FRAME_MODEL, MERGE_VIDEOS_MODEL, MUSIC_MODEL, NATIVE_TALK_MODELS, TALK_VIDEO_MODEL, VOICE_MODEL } from "@/lib/models";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +19,8 @@ export const dynamic = "force-dynamic";
 // - mix: put a video, voiceover clips and music together
 // - talk-scene: an ad scene said on screen: the scene's first frame speaks the
 //   line already recorded, with the lips matched to that exact voice
+// - talk-native: an ad scene said on screen in one step (Kling 3): the line is in
+//   the prompt and the model makes the voice and the moving mouth together
 // - join: joins scenes of different lengths on one timeline (used if merge can't)
 type Body = {
   tool?: string;
@@ -34,6 +36,7 @@ type Body = {
   audioUrl?: string;
   durations?: unknown;
   aspectRatio?: string;
+  model?: string;
 };
 
 export async function POST(req: Request) {
@@ -128,6 +131,20 @@ export async function POST(req: Request) {
       demoUrl = makeDemoMedia({ prompt: text, kind: "video", aspectRatio: body.aspectRatio === "16:9" || body.aspectRatio === "1:1" ? body.aspectRatio : "9:16", modelName: "Talking scene" });
       break;
     }
+    case "talk-native": {
+      // A Full ad scene said on screen in one step: the line is written in the prompt and the model makes voice and mouth together.
+      const m = NATIVE_TALK_MODELS[body.model === "seedance" ? "seedance" : "kling3"];
+      const imageUrl = String(body.imageUrl ?? "");
+      const prompt = String(body.prompt ?? "").trim().slice(0, 1500);
+      if (!imageUrl || !prompt) return bad();
+      if (!checkPrompt(prompt).ok) return NextResponse.json({ error: "This scene can't be used." }, { status: 422 });
+      modelId = m.id;
+      const ratio = body.aspectRatio === "16:9" || body.aspectRatio === "1:1" ? body.aspectRatio : "9:16";
+      input = m.buildInput({ prompt, aspectRatio: ratio, duration: 5, sourceUrl: imageUrl, avoid: SCENE_AVOID });
+      allUrls.push(imageUrl);
+      demoUrl = makeDemoMedia({ prompt, kind: "video", aspectRatio: ratio, modelName: m.name });
+      break;
+    }
     case "join": {
       // Scenes said on screen last as long as their line, so scenes are placed one after another by their real lengths.
       const durations = Array.isArray(body.durations) ? body.durations.map((d) => Math.max(0.5, Math.min(30, Number(d) || 5))) : [];
@@ -153,7 +170,7 @@ export async function POST(req: Request) {
   if (!allUrls.every(isFalMediaUrl)) return NextResponse.json({ error: "Only results made in ToastyFly can be used." }, { status: 400 });
 
   const spoken = body.tool === "talk-scene" ? String(body.text ?? "") : typeof input.text === "string" ? input.text : "";
-  const pay = await payForStep(req, toolUsd(String(body.tool), { seconds: body.tool === "talk-scene" ? lineSeconds(spoken) + 0.5 : seconds, text: spoken }), TOOL_NAMES[String(body.tool)] ?? "Video tool");
+  const pay = await payForStep(req, toolUsd(String(body.tool), { model: body.model, seconds: body.tool === "talk-native" ? 5 : body.tool === "talk-scene" ? lineSeconds(spoken) + 0.5 : seconds, text: spoken }), TOOL_NAMES[String(body.tool)] ?? "Video tool");
   if (pay.error) return pay.error;
   try {
     const { request_id } = await fal.queue.submit(modelId, { input });
@@ -167,6 +184,7 @@ export async function POST(req: Request) {
 }
 
 const TOOL_NAMES: Record<string, string> = {
+  "talk-native": "Talking scene",
   "last-frame": "Next shot's start",
   merge: "Joining shots",
   voice: "Voiceover line",

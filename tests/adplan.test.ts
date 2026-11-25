@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { AD_PRICES, AD_VOICES, adCost, adPlanWithRules, endCardSeconds, fitLine, parseAdPlan, sceneCount, scenePrompt, speaksOnScreen, wantsOnScreenText, withoutDialogue } from "../lib/adplan";
+import { AD_PRICES, AD_VOICES, adCost, endCardPrompt, nativeTalk, sceneVideoCost, talkScenePrompt, voiceInWords, frameLead, outfitLine, NO_TEXT, adPlanWithRules, endCardSeconds, fitLine, parseAdPlan, sceneCount, scenePrompt, speaksOnScreen, wantsOnScreenText, withoutDialogue } from "../lib/adplan";
 import { judgeRefCheck, referenceInstructions } from "../lib/references";
 import { parseAnalysis } from "../lib/analyze";
-import { cardLength, changedAdJob, newAdJob } from "../components/adRunner";
+import { cardLines, cleanWebsite, contentBox, coverCrop, inkFor, wrapWords } from "../lib/endcard";
+import { barsIn, cardLength, changedAdJob, newAdJob } from "../components/adRunner";
 
 assert.equal(sceneCount(15), 2);
 assert.equal(endCardSeconds(15), 5);
@@ -43,6 +44,28 @@ assert.equal(changed.card, false);
 assert.equal(changed.job.clips[0].url, "a");
 assert.equal(changed.job.clips[1].url, undefined);
 assert.equal(changed.job.joinedUrl, undefined);
+{
+  // Edit end card: new words reuse the plain card picture; a new background, or an ad made before it was kept, makes a new one.
+  const done = { ...job, clips: [...job.clips], cardPicture: "plain", cardImage: "typed", joinedUrl: "j" };
+  const words = changedAdJob(done, { ...plan, endCard: { ...plan.endCard, tagline: "Order today", website: "glow.com" } });
+  assert.equal(words.card, true);
+  assert.equal(words.cardPicture, false);
+  assert.equal(words.scenes, 0);
+  assert.equal(words.job.cardPicture, "plain");
+  assert.equal(words.job.cardImage, undefined);
+  assert.equal(words.job.clips[0].url, "a");
+  const bg = changedAdJob(done, plan, { card: true, newBackground: true });
+  assert.equal(bg.card, true);
+  assert.equal(bg.cardPicture, true);
+  assert.equal(bg.job.cardPicture, undefined);
+  const same = changedAdJob(done, plan);
+  assert.equal(same.card, false);
+  assert.equal(same.job.joinedUrl, "j");
+  const website = changedAdJob(done, { ...plan, endCard: { ...plan.endCard, website: "" } });
+  assert.equal(website.card, (brief as { brand?: { website?: string } }).brand?.website ? true : false);
+  const before = changedAdJob({ ...job, clips: [...job.clips], cardImage: "old" }, plan, { card: true });
+  assert.equal(before.cardPicture, true, "old ads with words drawn into the picture get a new picture");
+}
 // Lines said on screen: the planner marks them, the lips are matched, and the price follows the line's length.
 const talkRaw = JSON.stringify({
   title: "Toasty",
@@ -70,7 +93,18 @@ assert.ok(/Nobody on screen talks/.test(scenePrompt(plan, 0)));
 assert.ok(!wantsOnScreenText("a toast mascot ad") && wantsOnScreenText("add captions please"));
 const talkCost = adCost(talk, true);
 const asVoiceover = adCost({ ...talk, scenes: talk.scenes.map((x) => ({ ...x, speaker: "voiceover" as const })) }, true);
-assert.ok(talkCost > asVoiceover && talkCost - asVoiceover < 2 * (8.5 * AD_PRICES.talkPerSecond), `${talkCost} ${asVoiceover}`);
+assert.ok(talkCost > asVoiceover && talkCost - asVoiceover < 2 * (5 * AD_PRICES.nativeTalkPerSecond), `${talkCost} ${asVoiceover}`);
+
+// Kling 3 says the line in one step for our voices in English; the user's own voice or another language keeps lip matching.
+assert.ok(nativeTalk("Roger") && nativeTalk("Roger", "English") && !nativeTalk("Roger", "Spanish") && !nativeTalk("el:abcdefgh12"));
+assert.equal(voiceInWords("Roger"), "a relaxed male American voice");
+assert.equal(voiceInWords("nobody"), "a warm female American voice");
+const tp = talkScenePrompt({ ...talk, voice: "Roger" }, 0);
+assert.ok(tp.includes(`"${talk.scenes[0].voice.trim().replace(/["“”]/g, "'")}"`) && tp.includes("a relaxed male American voice") && /speech bubbles/i.test(tp), tp);
+const s0 = talk.scenes[0];
+const native = sceneVideoCost(s0, "English", "Roger");
+assert.ok(native >= 0.5 && native <= 1.0, String(native));
+assert.ok(Math.abs(sceneVideoCost(s0, "Spanish", "Roger") - native) > 1e-9);
 
 // Voice lines are never cut mid-sentence.
 assert.equal(fitLine("You could direct your own movie. Just get ToastyFly.", 5), "You could direct your own movie. Just get ToastyFly.");
@@ -103,3 +137,72 @@ assert.equal(cardLength(plan, [5, 5]), 5);
 assert.equal(cardLength(plan, [2.7, 3.2]), 7);
 assert.equal(cardLength(plan, [4.5, 4]), 6.5);
 console.log("ad plan tests passed");
+
+// Opening frames treat a mascot as a character, not as "the product".
+{
+  assert.match(frameLead(["character"]), /character from the reference/);
+  assert.doesNotMatch(frameLead(["character"]), /product must look/);
+  assert.match(frameLead([]), /product must look/);
+  assert.match(NO_TEXT, /director's chair back is plain/);
+}
+
+// Black bars: a letterboxed frame is spotted from its pixels, a normal or dark-centred one isn't.
+{
+  const w = 10, h = 20;
+  const pic = (bars: boolean) => {
+    const px: number[] = [];
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const v = bars && (y < 3 || y >= h - 3) ? 0 : 120;
+      px.push(v, v, v, 255);
+    }
+    return px;
+  };
+  assert.ok(barsIn(pic(true), w, h));
+  assert.ok(!barsIn(pic(false), w, h));
+}
+// The end card keeps a character's own outfit.
+// The end card keeps a character's own outfit (Toasty lost his hoodie) and leaves the words to the app.
+assert.match(endCardPrompt(plan, true, undefined, ["character"]), /remove nothing/);
+assert.match(endCardPrompt(plan, true, undefined, ["character"]), /hoodie/);
+assert.doesNotMatch(endCardPrompt(plan, true, undefined, ["character"]), /reads exactly/);
+assert.match(endCardPrompt(plan, false), /No text, no letters/);
+assert.match(endCardPrompt(plan, true, undefined, ["product"]), /product from the reference/);
+assert.match(frameLead(["character"]), /never standing on top of furniture/);
+{
+  // End-card words typed by the app: a fixed-width fake measure (10px per letter at size 10).
+  const m = (t: string, size: number) => t.length * size * 0.55;
+  assert.equal(cleanWebsite("https://www.ToastyFly.com/studio?x=1"), "toastyfly.com");
+  assert.equal(cleanWebsite("not a site"), "");
+  assert.equal(cleanWebsite(""), "");
+  const lines = cardLines(720, 1280, { headline: "Social posts done. One tap.", tagline: "Make yours at ToastyFly", website: "toastyfly.com" }, m);
+  assert.ok(lines.every((l) => m(l.text, l.size) <= 720 * 0.86 + 1), "every line fits");
+  assert.equal(lines[lines.length - 1].text, "toastyfly.com");
+  assert.ok(lines[lines.length - 1].pill);
+  assert.ok(lines[lines.length - 1].y < 1280 * 0.45, "words stay in the empty top part");
+  assert.ok(lines.filter((l) => l.weight === 800).length <= 3);
+  assert.deepEqual(wrapWords("a b c", 1000, (t) => t.length), ["a b c"]);
+  assert.equal(inkFor("#ffffff"), "#111111");
+  assert.equal(inkFor("#1f2a44"), "#ffffff");
+  assert.equal(cardLines(720, 1280, { headline: "Hi" }, m).length, 1);
+}
+{
+  // Black bars on the card picture are cut off for free.
+  const W = 20, H = 36;
+  const px = (barTop: number, barBottom: number) => {
+    const a: number[] = [];
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const dark = y < barTop || y >= H - barBottom; a.push(dark ? 3 : 150, dark ? 3 : 120, dark ? 3 : 90, 255); }
+    return a;
+  };
+  assert.deepEqual(contentBox(px(4, 4), W, H), { x: 0, y: 4, w: W, h: 28 });
+  assert.deepEqual(contentBox(px(0, 0), W, H), { x: 0, y: 0, w: W, h: H });
+  assert.deepEqual(contentBox(px(2, 0), W, H), { x: 0, y: 2, w: W, h: 34 });
+  assert.deepEqual(contentBox(px(30, 0), W, H), { x: 0, y: 0, w: W, h: H }, "mostly dark pictures are left alone");
+  const crop = coverCrop({ x: 0, y: 4, w: 20, h: 28 }, 720, 1280);
+  assert.ok(Math.abs(crop.w / crop.h - 720 / 1280) < 0.001 && crop.y === 4 && crop.x > 0);
+  // The brand style's outfit wins over the reference picture (Toasty's picture has no hoodie).
+  const toasty = { style: "fun and cheeky; Toasty always keeps his black sunglasses on and wears a blue hoodie" };
+  assert.match(endCardPrompt(plan, true, toasty, ["character"]), /blue hoodie/);
+  assert.match(frameLead(["character"], toasty), /even if the reference picture differs/);
+  assert.equal(outfitLine({ style: "clean and bright" }), "");
+}
+console.log("bars and end card tests passed");

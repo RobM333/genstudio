@@ -35,7 +35,8 @@ assert.equal(maxRedos(5), 2);
 assert.equal(maxRedos(11), 4);
 const plan = adPlanWithRules({ product: "Glow bottle", audience: "", seconds: 15, tone: "Friendly" });
 assert.ok(Math.abs(adCost(plan, false, true) - adCost(plan, false) - checkCost(2)) < 1e-9);
-assert.ok(redoCap(2) < 0.5);
+// Remakes are capped: a new opening picture per scene (cheap one, plus the stronger one if it letterboxed) and one scene remake.
+assert.ok(redoCap(2) < 0.8);
 const a = parseAnalysis('{"problems":["The hand has six fingers."],"serious":true,"fix":"Fix the hand","prompt":"x"}');
 assert.equal(a?.serious, true);
 assert.equal(parseAnalysis('{"problems":[],"serious":true,"fix":"","prompt":"x"}')?.serious, false);

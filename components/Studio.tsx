@@ -29,7 +29,7 @@ import { addSoundTo, animateShot, joinShots, lastFrame, lockFrame, planStory, st
 import { lengthAdvice, LONG_LENGTHS, MAX_STORY_SECONDS, type ShotPlan } from "@/lib/storyboard";
 import { nextLength, readChat } from "@/lib/chat";
 import { AD_LANGUAGES, AD_LENGTHS, AD_PRICES, AD_TONES, AD_VOICES, adCost, languageFromLocale, maxVoiceChars, checkCost, endCardSeconds, maxRedos, maxVoiceWords, redoCap, SCENE_SECONDS, sceneCount, sceneRemakeCost, sceneVideoCost, speaksOnScreen, type AdBrief, type AdPlan } from "@/lib/adplan";
-import { AD_T2V, buildAd, changedAdJob, checkPart, newAdJob, type AdJob } from "./adRunner";
+import { AD_T2V, buildAd, cardWords, changedAdJob, checkPart, drawCardText, newAdJob, type AdJob } from "./adRunner";
 import { ADVERTISE_PROMISE, asksForSpeech, decide, MONTHLY_CAP, promiseNote, type PromiseOutcome } from "@/lib/promise";
 import type { Analysis } from "@/lib/analyze";
 import { creditsFor } from "@/lib/pricing";
@@ -111,7 +111,7 @@ type ChatAct =
   | { type: "sound" }
   | { type: "video" }
   | { type: "hd" }
-  | { type: "ad"; plan: AdPlan; note: string }
+  | { type: "ad"; plan: AdPlan; note: string; card?: { card?: boolean; newBackground?: boolean } }
   | { type: "shape"; aspectRatio: AspectRatio }
   | { type: "talk"; text: string }
   | { type: "film"; note: string; shot?: number } // remake one shot of a film (or all of it) with a change
@@ -274,6 +274,27 @@ export default function Studio({ mode }: { mode: AppMode }) {
   const [composing, setComposing] = useState(true);
   const [chat, setChat] = useState<ChatMsg[]>([]);
   const [chatText, setChatText] = useState("");
+  // Edit end card: the words being edited for one finished ad, and a free preview typed onto its card picture.
+  const [cardEdit, setCardEdit] = useState<{ itemId: string; headline: string; tagline: string; website: string } | null>(null);
+  const [cardPreview, setCardPreview] = useState<string | null>(null);
+  const cardEditPicture = cardEdit ? items.find((x) => x.id === cardEdit.itemId)?.ad?.cardPicture : undefined;
+  const cardEditColors = cardEdit ? items.find((x) => x.id === cardEdit.itemId)?.ad?.brief.brand?.colors : undefined;
+  useEffect(() => {
+    if (!cardEdit || !cardEditPicture) {
+      setCardPreview(null);
+      return;
+    }
+    let live = true;
+    const t = setTimeout(() => {
+      drawCardText(cardEditPicture, { headline: cardEdit.headline, tagline: cardEdit.tagline, website: cardEdit.website }, cardEditColors)
+        .then((c) => live && setCardPreview(c.toDataURL("image/jpeg", 0.8)))
+        .catch(() => live && setCardPreview(null));
+    }, 300);
+    return () => {
+      live = false;
+      clearTimeout(t);
+    };
+  }, [cardEdit, cardEditPicture, cardEditColors]);
   const chatLog = useRef<HTMLDivElement>(null);
   const storyRuns = useRef(new Set<string>());
   const adRuns = useRef(new Set<string>());
@@ -1014,8 +1035,19 @@ export default function Studio({ mode }: { mode: AppMode }) {
   // ---------- Full ad ----------
 
   /** The brief as sent to the planner: with the kinds of pictures given and, when it's on, the brand kit. */
+  /**
+   * The pictures a Full ad is made with. With the brand kit on and nothing picked, the kit's own mascot, product and
+   * logo come in by themselves: an ad that never shows them makes up its own (once a real-looking man replaced Toasty).
+   */
+  function adRefs(): RefItem[] {
+    if (refs.length || !kitPics?.length) return refs;
+    const order: Record<string, number> = { character: 0, product: 1, logo: 2 };
+    return kitPics.filter((r) => r.kind in order).sort((a, b) => order[a.kind] - order[b.kind]).slice(0, 4);
+  }
+
   function adBriefNow(): AdBrief {
-    return { ...brief, refKinds: refs.map((r) => r.kind), refNames: refs.map((r) => (r.kind === "character" ? (r.name ?? "") : "")), brand: brandOn ? brandInfo(brand) : undefined };
+    const use = adRefs();
+    return { ...brief, refKinds: use.map((r) => r.kind), refNames: use.map((r) => (r.kind === "character" ? (r.name ?? "") : "")), brand: brandOn ? brandInfo(brand) : undefined };
   }
 
   /** Reads the user's product page: fills in the brief and offers its pictures (free, no AI). */
@@ -1077,6 +1109,8 @@ export default function Studio({ mode }: { mode: AppMode }) {
       setAskTerms(true);
       return;
     }
+    // Show the kit pictures the ad will use, so they can be taken out before building.
+    if (!refs.length && adRefs().length) setRefs(adRefs());
     setAdBusy(request ? "Updating the plan..." : "Planning your ad...");
     try {
       const res = await fetch("/api/adplan", {
@@ -1134,7 +1168,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
 
   function buildPlannedAd() {
     if (!adPlan) return;
-    const useRefs = refs.map(({ url, kind, token }) => ({ url, kind, token }));
+    const useRefs = adRefs().map(({ url, kind, token }) => ({ url, kind, token }));
     startAd(newAdJob(adBriefNow(), adPlan, useRefs, adCheck), { aspectRatio: adShape });
   }
 
@@ -1312,7 +1346,8 @@ export default function Studio({ mode }: { mode: AppMode }) {
     const parent = parentId ? items.find((x) => x.id === parentId)?.ad : undefined;
     const fresh = job.clips.filter((c) => !c.url).length;
     if (!parent || fresh === job.clips.length) return adCost(job.plan, Boolean(job.refs?.length), Boolean(job.check?.on));
-    return adChangeCost(parent, job.plan);
+    // An end card being remade on purpose shows up as a job with no card yet; no plain picture means a new background.
+    return adChangeCost(parent, job.plan, { card: !job.cardClip, newBackground: !job.cardPicture && Boolean(parent.cardPicture) });
   }
 
   /** What a finished job cost to make, for counting its credits. */
@@ -1406,12 +1441,12 @@ export default function Studio({ mode }: { mode: AppMode }) {
   }
 
   /** Price of a new version after a plan change: only changed parts are made again. */
-  function adChangeCost(old: AdJob, plan: AdPlan): number {
-    const c = changedAdJob(old, plan);
+  function adChangeCost(old: AdJob, plan: AdPlan, opts: { card?: boolean; newBackground?: boolean } = {}): number {
+    const c = changedAdJob(old, plan, opts);
     const withRefs = Boolean(old.refs?.length);
     return (
       c.sceneUsd + c.scenes * AD_PRICES.picture +
-      (c.card ? AD_PRICES.picture + endCardSeconds(plan.seconds) * AD_PRICES.cardPerSecond : 0) +
+      (c.card ? (c.cardPicture ? AD_PRICES.picture : 0) + endCardSeconds(plan.seconds) * AD_PRICES.cardPerSecond : 0) +
       (!withRefs && old.plan.look !== plan.look ? AD_PRICES.picture : 0) +
       (isOwnVoice(plan.voice) ? 0 : (c.voiceChars / 1000) * AD_PRICES.voicePer1000Chars) +
       (c.music ? AD_PRICES.musicPerMinute * Math.ceil(plan.seconds / 60) : 0) +
@@ -1423,7 +1458,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
   function shapeCost(job: AdJob): number {
     const n = job.plan.scenes.length;
     return (
-      job.plan.scenes.reduce((t, s) => t + sceneVideoCost(s, job.brief.language), 0) + n * AD_PRICES.picture +
+      job.plan.scenes.reduce((t, s) => t + sceneVideoCost(s, job.brief.language, job.plan.voice), 0) + n * AD_PRICES.picture +
       AD_PRICES.picture +
       endCardSeconds(job.plan.seconds) * AD_PRICES.cardPerSecond +
       job.plan.seconds * AD_PRICES.editPerSecond * 2 +
@@ -1559,6 +1594,30 @@ export default function Studio({ mode }: { mode: AppMode }) {
     go("create");
   }
 
+  /** Opens Edit end card on a finished ad, filled with its current words. */
+  function openCardEdit(it: Item) {
+    if (!it.ad) return;
+    const w = cardWords(it.ad);
+    setCardEdit({ itemId: it.id, headline: w.headline, tagline: w.tagline ?? "", website: w.website ?? "" });
+  }
+
+  /** The ad with the edited end card words. */
+  function cardEditPlan(it: Item): AdPlan | null {
+    if (!it.ad || !cardEdit) return null;
+    const headline = cardEdit.headline.trim().slice(0, 40);
+    if (!headline) return null;
+    return { ...it.ad.plan, endCard: { ...it.ad.plan.endCard, headline, tagline: cardEdit.tagline.trim().slice(0, 60), website: cardEdit.website.trim().slice(0, 80) } };
+  }
+
+  /** Makes a new version of the ad with only the end card remade (same scenes, voice and music). */
+  function applyCardEdit(it: Item, newBackground: boolean) {
+    const plan = cardEditPlan(it);
+    if (!it.ad || !plan || mode === "locked") return;
+    learn(it, "fix", { note: newBackground ? "End card: new background" : "End card: new words" });
+    startAd(changedAdJob(it.ad, plan, { card: true, newBackground }).job, { parentId: it.id, fixNote: newBackground ? "New end card background" : "New end card words", aspectRatio: it.aspectRatio });
+    setCardEdit(null);
+  }
+
   /** Works out a change to a finished ad from plain words, then offers it with its price. */
   async function proposeAdChange(it: Item, thread: string, request: string) {
     const job = it.ad!;
@@ -1582,12 +1641,16 @@ export default function Studio({ mode }: { mode: AppMode }) {
       if (i >= 0 && i < job.plan.scenes.length)
         plan = { ...job.plan, scenes: job.plan.scenes.map((x, j) => (j === i ? { ...x, visual: `${x.visual}. Change: ${request.replace(/scene\s*\d+\s*[:,-]?/i, "").trim()}` } : x)) };
     }
+    // The planner doesn't know about a website typed in Edit end card, so it's kept.
+    if (plan && job.plan.endCard.website !== undefined && plan.endCard.website === undefined) plan = { ...plan, endCard: { ...plan.endCard, website: job.plan.endCard.website } };
     patchMsg(id, { state: "done" });
     if (!plan) {
       say(thread, it.id, { text: `I couldn't work that out. Try naming the part, like "scene 2: make it at night", "music: calmer" or "end card: say Shop now".` });
       return;
     }
-    const c = changedAdJob(job, plan);
+    // "Fix the end card" with the same words still remakes it: new picture, words typed by the app.
+    const cardOpts = /\bend[\s-]?card\b|\bending\b|\blast (frame|screen)\b/i.test(request) && !changedAdJob(job, plan).card ? { card: true, newBackground: true } : {};
+    const c = changedAdJob(job, plan, cardOpts);
     const parts = [
       c.scenes ? `${c.scenes} scene${c.scenes > 1 ? "s" : ""}` : "",
       c.card ? "the end card" : "",
@@ -1598,10 +1661,10 @@ export default function Studio({ mode }: { mode: AppMode }) {
       say(thread, it.id, { text: "That wouldn't change anything in the ad. Tell me which scene, the voiceover, the music or the end card you'd like different." });
       return;
     }
-    const cost = adChangeCost(job, plan);
+    const cost = adChangeCost(job, plan, cardOpts);
     say(thread, it.id, {
-      text: `I'll remake ${parts.join(", ").replace(/, ([^,]*)$/, " and $1")} and keep everything else as it is. That costs ${price(cost)}.`,
-      offers: [{ label: "🔧 Make the change", cost, act: { type: "ad", plan, note: request } }],
+      text: `I'll remake ${parts.join(", ").replace(/, ([^,]*)$/, " and $1")} and keep everything else as it is.${c.card ? " The end card's words are typed by the app, so they're spelled exactly." : ""} That costs ${price(cost)}.`,
+      offers: [{ label: "🔧 Make the change", cost, act: { type: "ad", plan, note: request, card: cardOpts } }],
       state: "open",
     });
   }
@@ -2620,7 +2683,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
       err = startFilm({ ...next, cast: next.cast.map((c) => ({ ...c, ...latestLook(c.id) })) }, it.id, a.note);
     }
     else if (a.type === "shape" && it.kind === "image") reshapeImage(it, a.aspectRatio);
-    else if (a.type === "ad" && it.ad) startAd(changedAdJob(it.ad, a.plan).job, { parentId: it.id, fixNote: a.note, aspectRatio: it.aspectRatio });
+    else if (a.type === "ad" && it.ad) startAd(changedAdJob(it.ad, a.plan, a.card).job, { parentId: it.id, fixNote: a.note, aspectRatio: it.aspectRatio });
     if (offer.free) {
       if (err || nextFree.current) nextFree.current = false;
       else logFreeRemake(it.id, a.type === "fix" ? a.note.slice(0, 120) : "Free remake");
@@ -2727,6 +2790,59 @@ export default function Studio({ mode }: { mode: AppMode }) {
           </div>
         ))}
       </div>
+      {selected.ad && selected.status === "done" && selected.url && (() => {
+        const it = selected;
+        const editing = cardEdit?.itemId === it.id;
+        if (!editing)
+          return (
+            <div className="chat-chips">
+              <button className="chip" onClick={() => openCardEdit(it)}>
+                ✏️ Edit end card
+              </button>
+            </div>
+          );
+        const plan = cardEditPlan(it);
+        const hasPicture = Boolean(it.ad!.cardPicture);
+        const wordsCost = plan ? adChangeCost(it.ad!, plan, { card: true }) : 0;
+        const bgCost = plan ? adChangeCost(it.ad!, plan, { card: true, newBackground: true }) : 0;
+        const costLabel = (c: number) => (mode === "demo" ? "Free" : `est. ${formatCost(c)}`);
+        return (
+          <div className="card-edit">
+            <strong>Edit end card</strong>
+            <label className="sub-label" htmlFor="ce-headline">Headline</label>
+            <input id="ce-headline" className="text-input" maxLength={40} value={cardEdit!.headline} onChange={(e) => setCardEdit({ ...cardEdit!, headline: e.target.value })} />
+            <label className="sub-label" htmlFor="ce-tagline">Line underneath</label>
+            <input id="ce-tagline" className="text-input" maxLength={60} value={cardEdit!.tagline} onChange={(e) => setCardEdit({ ...cardEdit!, tagline: e.target.value })} />
+            <label className="sub-label" htmlFor="ce-website">
+              Website <span className="step-opt">leave empty for none</span>
+            </label>
+            <input id="ce-website" className="text-input" maxLength={80} placeholder="e.g. yourshop.com" value={cardEdit!.website} onChange={(e) => setCardEdit({ ...cardEdit!, website: e.target.value })} />
+            {hasPicture ? (
+              cardPreview ? (
+                <img className="card-edit-preview" src={cardPreview} alt="Preview of the end card with your words" />
+              ) : (
+                <span className="muted small">Making the preview...</span>
+              )
+            ) : (
+              <span className="muted small">This ad was made before we typed the words ourselves, so the first change also makes a new card picture.</span>
+            )}
+            <span className="muted small">The preview is free. The voiceover, music and scenes stay the same; only the end card is remade.</span>
+            <div className="chat-offers">
+              {hasPicture && (
+                <button className="pill active" disabled={!plan || mode === "locked"} onClick={() => applyCardEdit(it, false)}>
+                  ✏️ Update words · {costLabel(wordsCost)}
+                </button>
+              )}
+              <button className={hasPicture ? "pill" : "pill active"} disabled={!plan || mode === "locked"} onClick={() => applyCardEdit(it, true)}>
+                🖼️ {hasPicture ? "New background" : "Remake end card"} · {costLabel(bgCost)}
+              </button>
+              <button className="link-btn" onClick={() => setCardEdit(null)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        );
+      })()}
       {chips.length > 0 && (
         <div className="chat-chips">
           {chips.map((c) => (
@@ -3344,7 +3460,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
                 >
                   <option value="voiceover">A voiceover (nobody on screen talks)</option>
                   <option value="character" disabled={refs.some((r) => r.kind === "person")}>
-                    Said on screen, lips matched to the voice
+                    Said on screen, mouth moving with the words
                   </option>
                 </select>
               </label>

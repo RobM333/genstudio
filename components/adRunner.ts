@@ -1,16 +1,21 @@
 // Builds a full ad in the browser, one short fal job at a time, so nothing hits
 // the hosting time limit: each scene (from the user's product photo when given),
 // the end card, the voiceover lines and the music, then one join and one mix.
-// The voice is recorded first. A scene whose line is said on screen is then made
-// from that exact recording, so the lips match the words; narrator scenes are
-// filmed with nobody talking and the voice laid over them.
+// A scene whose line is said on screen is made in one step by Kling 3: the line is
+// in the prompt and the model makes the voice and the moving mouth together. With
+// the user's own ElevenLabs voice, or a language other than English, the voice is
+// recorded first and the lips are matched to that recording instead. Narrator
+// scenes are filmed with nobody talking and the voice laid over them.
 // Progress is saved on the item, so a closed page carries on where it stopped.
 
-import { endCardPrompt, endCardSeconds, lineSeconds, maxRedos, SCENE_SECONDS, sceneVideoCost, scenePrompt, speaksOnScreen, withoutDialogue, type AdBrief, type AdPlan } from "@/lib/adplan";
+import { cardLines, contentBox, coverCrop, inkFor } from "@/lib/endcard";
+import { finishReference } from "@/components/ReferencesBox";
+import { endCardPrompt, endCardSeconds, frameLead, lineSeconds, maxRedos, nativeTalk, SCENE_SECONDS, sceneVideoCost, scenePrompt, speaksOnScreen, talkScenePrompt, withoutDialogue, type AdBrief, type AdPlan } from "@/lib/adplan";
 import type { Analysis } from "@/lib/analyze";
 import { faultText, type FaultCode } from "@/lib/promise";
 import { post, waitFor, waitForResult } from "./storyRunner";
 import { TALK_VIDEO_MODEL_ID } from "@/lib/talk";
+import { NATIVE_TALK_MODELS, REFERENCE_IMAGE_PRO_MODEL } from "@/lib/models";
 import { isOwnVoice } from "@/lib/elevenlabs";
 import { loadEleven, speakOwn, usableVoices } from "./elevenConnect";
 
@@ -26,6 +31,8 @@ export type AdClip = {
   seconds?: number;
   /** Lip matching didn't work for this scene, so its line is read as a voiceover instead. */
   asVoiceover?: boolean;
+  /** Made in one step by Kling 3: the scene carries its own voice, so no recording is laid over it. */
+  ownSound?: boolean;
 };
 
 /** The automatic quality check: it looks at every scene and remakes weak ones, up to a cap. */
@@ -46,7 +53,8 @@ export type AdJob = {
   voiceFor: string[]; // the line each voice clip was made from, so changed lines are re-read
   productUrl?: string; // our product picture (when the user gave no photo), reused in every scene
   productToken?: string;
-  cardImage?: string;
+  cardPicture?: string; // the end card picture with no words, so words can be typed again without a new picture
+  cardImage?: string; // the picture with the words typed on
   cardClip?: string;
   cardFor?: string; // headline|tagline the card was made with
   musicUrl?: string;
@@ -92,10 +100,70 @@ async function productPicture(job: AdJob, aspectRatio: string): Promise<{ url: s
 }
 
 /** A scene's first frame, showing the product from the user's photo or from our product picture. */
+/**
+ * True when a picture has black bars along the top and bottom (or the sides):
+ * the picture model sometimes letterboxes a frame, and the checking AI can miss it.
+ * Looks at the pixels in the browser, so it costs nothing. Unknown means no.
+ */
+export async function hasBlackBars(url: string): Promise<boolean> {
+  try {
+    if (typeof document === "undefined") return false;
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    await new Promise<void>((ok, bad) => {
+      img.onload = () => ok();
+      img.onerror = () => bad(new Error("load"));
+      img.src = url;
+    });
+    const w = 64;
+    const h = Math.max(1, Math.round((img.naturalHeight / img.naturalWidth) * w));
+    const c = document.createElement("canvas");
+    c.width = w;
+    c.height = h;
+    const ctx = c.getContext("2d");
+    if (!ctx) return false;
+    ctx.drawImage(img, 0, 0, w, h);
+    const px = ctx.getImageData(0, 0, w, h).data;
+    return barsIn(px, w, h);
+  } catch {
+    return false;
+  }
+}
+
+/** Pixels (RGBA) of a small copy of the picture: are the outer bands, top and bottom or left and right, almost black? */
+export function barsIn(px: Uint8ClampedArray | number[], w: number, h: number): boolean {
+  const dark = (x0: number, y0: number, x1: number, y1: number) => {
+    let sum = 0;
+    let n = 0;
+    for (let y = y0; y < y1; y++)
+      for (let x = x0; x < x1; x++) {
+        const k = (y * w + x) * 4;
+        sum += Math.max(px[k], px[k + 1], px[k + 2]);
+        n++;
+      }
+    return n > 0 && sum / n < 14;
+  };
+  const band = (n: number) => Math.max(1, Math.round(n * 0.08));
+  const bh = band(h);
+  const bw = band(w);
+  return (dark(0, 0, w, bh) && dark(0, h - bh, w, h)) || (dark(0, 0, bw, h) && dark(w - bw, 0, w, h));
+}
+
+const NO_BARS = "Fill the whole frame edge to edge: no black bars, borders or letterboxing at the top, bottom or sides.";
+
+/** The scene's opening picture; made once more if it came out with black bars. */
 async function sceneFrame(job: AdJob, i: number, aspectRatio: string, fix = ""): Promise<string> {
+  const url = await sceneFrameOnce(job, i, aspectRatio, fix);
+  if (!(await hasBlackBars(url))) return url;
+  // The usual picture model tends to letterbox again, so the remake uses the stronger one, which keeps the shape.
+  job.check?.log.push(`Scene ${i + 1}: the opening picture had black bars, so it was made again.`);
+  return sceneFrameOnce(job, i, aspectRatio, `${NO_BARS} ${fix}`.trim(), REFERENCE_IMAGE_PRO_MODEL.id);
+}
+
+async function sceneFrameOnce(job: AdJob, i: number, aspectRatio: string, fix = "", modelId = "fal-ai/nano-banana/edit"): Promise<string> {
   const res = await post("/api/generate", {
-    modelId: "fal-ai/nano-banana/edit",
-    prompt: `Opening frame of a video ad scene. The product must look exactly like the product in the reference picture. ${fix ? `Important: ${fix} ` : ""}${scenePrompt(job.plan, i)}`.slice(0, 1990),
+    modelId,
+    prompt: `${frameLead((job.refs ?? []).map((r) => r.kind), job.brief.brand)} ${fix ? `Important: ${fix} ` : ""}${scenePrompt(job.plan, i)}`.slice(0, 1990),
     aspectRatio,
     enhance: false,
     purpose: "keyframe",
@@ -103,7 +171,7 @@ async function sceneFrame(job: AdJob, i: number, aspectRatio: string, fix = ""):
     productUrl: job.productUrl,
     productToken: job.productToken,
   });
-  return waitFor(res.modelId ?? "fal-ai/nano-banana/edit", res);
+  return waitFor(res.modelId ?? modelId, res);
 }
 
 async function sceneClip(job: AdJob, i: number, aspectRatio: string, frame?: string, fix = "", asVoiceover = false): Promise<string> {
@@ -136,6 +204,15 @@ async function talkClip(job: AdJob, i: number, aspectRatio: string, frame: strin
   if (res.status === "COMPLETED") return { url: res.url ?? "", seconds: lineSeconds(s.voice, job.brief.language) };
   const out = await waitForResult(res.modelId ?? TALK_VIDEO_MODEL_ID, res);
   return { url: out.url, seconds: out.seconds ?? lineSeconds(s.voice, job.brief.language) };
+}
+
+const NATIVE_TALK_ID = NATIVE_TALK_MODELS.kling3.id;
+
+/** A scene said on screen in one step: Kling 3 speaks the line from the prompt, voice and mouth together. 5 seconds. */
+async function nativeTalkClip(job: AdJob, i: number, aspectRatio: string, frame: string, fix = ""): Promise<string> {
+  const res = await post("/api/tool", { tool: "talk-native", model: "kling3", imageUrl: frame, prompt: talkScenePrompt(job.plan, i, fix), aspectRatio });
+  if (res.status === "COMPLETED") return res.url ?? "";
+  return waitFor(res.modelId ?? NATIVE_TALK_ID, res);
 }
 
 /** How long each scene lasts: filmed scenes are 5 seconds, scenes said on screen last as long as their line. */
@@ -178,7 +255,7 @@ async function cardImage(job: AdJob, aspectRatio: string): Promise<string> {
   const modelId = withPicture ? "fal-ai/nano-banana/edit" : "fal-ai/nano-banana";
   const res = await post("/api/generate", {
     modelId,
-    prompt: endCardPrompt(job.plan, withPicture, job.brief.brand),
+    prompt: endCardPrompt(job.plan, withPicture, job.brief.brand, (job.refs ?? []).map((r) => r.kind)),
     aspectRatio,
     enhance: false,
     refs: job.refs,
@@ -186,6 +263,111 @@ async function cardImage(job: AdJob, aspectRatio: string): Promise<string> {
     productToken: job.productToken,
   });
   return waitFor(res.modelId ?? modelId, res);
+}
+
+/**
+ * Types the end card's words onto the picture in the browser (picture models
+ * misspell words), then uploads it through the usual picture safety check.
+ */
+export type CardWords = { headline: string; tagline?: string; website?: string };
+
+/** The end card picture with its words typed on, as a canvas (also used for the free preview in Edit end card). */
+export async function drawCardText(url: string, words: CardWords, colors: string[] = []): Promise<HTMLCanvasElement> {
+  const img = new Image();
+  img.crossOrigin = "anonymous";
+  await new Promise<void>((ok, bad) => {
+    img.onload = () => ok();
+    img.onerror = () => bad(new Error("We couldn't load the end card picture. Please try again."));
+    img.src = url;
+  });
+  try {
+    await document.fonts?.load('800 40px "Inter Tight"');
+  } catch {
+    // the fallback sans-serif font is used
+  }
+  const w = img.naturalWidth;
+  const h = img.naturalHeight;
+  const c = document.createElement("canvas");
+  c.width = w;
+  c.height = h;
+  const ctx = c.getContext("2d")!;
+  // Black bars from the picture model are cut off and the picture fills the card (no new picture needed).
+  const sw = 96;
+  const sh = Math.max(1, Math.round((h / w) * sw));
+  const small = document.createElement("canvas");
+  small.width = sw;
+  small.height = sh;
+  const sctx = small.getContext("2d")!;
+  sctx.drawImage(img, 0, 0, sw, sh);
+  const box = contentBox(sctx.getImageData(0, 0, sw, sh).data, sw, sh);
+  const k = w / sw;
+  // Trim a little extra so no dark edge line is left.
+  const inset = box.w < sw || box.h < sh ? 1 : 0;
+  const src = coverCrop({ x: (box.x + inset) * k, y: (box.y + inset) * (h / sh), w: (box.w - inset * 2) * k, h: (box.h - inset * 2) * (h / sh) }, w, h);
+  ctx.drawImage(img, src.x, src.y, src.w, src.h, 0, 0, w, h);
+  const font = (size: number, weight: number) => `${weight} ${size}px "Inter Tight", ui-sans-serif, system-ui, sans-serif`;
+  const measure = (t: string, size: number, weight: number) => {
+    ctx.font = font(size, weight);
+    return ctx.measureText(t).width;
+  };
+  const lines = cardLines(w, h, words, measure);
+  const last = lines[lines.length - 1];
+  // A soft dark fade behind the words keeps them readable on any background.
+  const fade = ctx.createLinearGradient(0, 0, 0, Math.min(h, (last?.y ?? 0) + h * 0.12));
+  fade.addColorStop(0, "rgba(0,0,0,0.55)");
+  fade.addColorStop(0.75, "rgba(0,0,0,0.35)");
+  fade.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = fade;
+  ctx.fillRect(0, 0, w, Math.min(h, (last?.y ?? 0) + h * 0.12));
+  ctx.textAlign = "center";
+  ctx.textBaseline = "alphabetic";
+  const accent = colors.find((x) => /^#?[0-9a-f]{6}$/i.test(x)) ?? "#f5a623";
+  for (const l of lines) {
+    ctx.font = font(l.size, l.weight);
+    if (l.pill) {
+      const tw = ctx.measureText(l.text).width;
+      const padX = l.size * 0.7;
+      const ph = l.size * 1.7;
+      const x = w / 2 - tw / 2 - padX;
+      const top = l.y - l.size * 1.2;
+      ctx.shadowColor = "transparent";
+      ctx.fillStyle = accent.startsWith("#") ? accent : `#${accent}`;
+      ctx.beginPath();
+      ctx.roundRect(x, top, tw + padX * 2, ph, ph / 2);
+      ctx.fill();
+      ctx.fillStyle = inkFor(accent);
+      ctx.fillText(l.text, w / 2, l.y);
+      continue;
+    }
+    ctx.shadowColor = "rgba(0,0,0,0.5)";
+    ctx.shadowBlur = l.size * 0.25;
+    ctx.shadowOffsetY = l.size * 0.05;
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText(l.text, w / 2, l.y);
+  }
+  return c;
+}
+
+/** Types the words onto the card picture and uploads it through the usual picture safety check. */
+export async function withCardText(url: string, words: CardWords, colors: string[] = []): Promise<string> {
+  if (typeof document === "undefined") return url;
+  const c = await drawCardText(url, words, colors);
+  const blob = await new Promise<Blob | null>((ok) => c.toBlob(ok, "image/jpeg", 0.92));
+  if (!blob) throw new Error("We couldn't finish the end card. Please try again.");
+  const form = new FormData();
+  form.append("file", blob, "end-card.jpg");
+  form.append("kind", "style");
+  form.append("consent", "yes");
+  const res = await fetch("/api/reference", { method: "POST", body: form });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error ?? "We couldn't finish the end card. Please try again.");
+  return (await finishReference(data, "style")).url;
+}
+
+/** The words on an ad's end card: the plan's headline and tagline, and its own website or else the brand kit's. */
+export function cardWords(job: Pick<AdJob, "plan" | "brief">): CardWords {
+  const e = job.plan.endCard;
+  return { headline: e.headline, tagline: e.tagline, website: e.website ?? job.brief.brand?.website };
 }
 
 /** Holds the end card on screen with a gentle, nearly still move. */
@@ -234,9 +416,12 @@ export async function buildAd(
   const conn = ownVoice && opts.live ? loadEleven() : null;
   if (ownVoice && opts.live && !usableVoices(conn).some((v) => `el:${v.id}` === plan.voice))
     throw new Error("This ad uses your ElevenLabs voice, but that voice isn't connected in this browser. Connect it in the Brand kit, or pick one of our voices in the plan.");
+  // Scenes Kling 3 says on screen make their own voice, so their lines aren't recorded (unless the scene falls back to a voiceover).
+  const oneStep = nativeTalk(plan.voice, job.brief.language) && opts.live && !job.refs?.some((r) => r.kind === "person");
+  const selfSpoken = (i: number) => i < n && oneStep && speaksOnScreen(plan.scenes[i]) && !job.clips[i]?.asVoiceover;
   async function recordVoices() {
     for (let i = 0; i < lines.length; i++) {
-      if (!lines[i]) continue;
+      if (!lines[i] || selfSpoken(i)) continue;
       const key = `${plan.voice}|${lines[i]}`;
       if (job.voices[i] && job.voiceFor[i] === key) continue;
       if (ownVoice && !opts.live) continue;
@@ -249,7 +434,7 @@ export async function buildAd(
       save(job);
     }
   }
-  // Every line is recorded first (a few cents): a scene said on screen is made from its recording.
+  // Lines are recorded first (a few cents): a lip-matched scene is made from its recording.
   await recordVoices();
 
   // Without the user's own photo, design the product once so every scene shows the same one.
@@ -288,7 +473,21 @@ export async function buildAd(
       }
       // Said on screen: made from the recorded line, so the lips match it. Without a recording (demo mode), or if
       // lip matching fails, the scene is filmed as usual and the line is read over it.
-      const talks = speaksOnScreen(plan.scenes[i]) && !clip.asVoiceover && Boolean(job.voices[i]) && opts.live && !job.refs?.some((r) => r.kind === "person");
+      if (!clip.url && selfSpoken(i)) {
+        step(`Scene ${i + 1} of ${n}: filming the character saying the line`, NATIVE_TALK_ID);
+        try {
+          clip.url = await nativeTalkClip(job, i, aspectRatio, clip.frame!);
+          clip.seconds = SCENE_SECONDS;
+          clip.talkFor = talkKey(plan, i);
+          clip.ownSound = true;
+        } catch (e) {
+          clip.asVoiceover = true;
+          job.check?.log.push(`Scene ${i + 1}: the character couldn't be made to say the line (${(e as Error).message.replace(/\.$/, "")}), so the line is read as a voiceover.`);
+          await recordVoices();
+        }
+        save(job);
+      }
+      const talks = !oneStep && speaksOnScreen(plan.scenes[i]) && !clip.asVoiceover && Boolean(job.voices[i]) && opts.live && !job.refs?.some((r) => r.kind === "person");
       if (!clip.url && talks) {
         step(`Scene ${i + 1} of ${n}: matching the lips to the voice`, TALK_VIDEO_MODEL_ID);
         try {
@@ -317,7 +516,10 @@ export async function buildAd(
           check.redosLeft--;
           clip.checked = true;
           save(job);
-          if (clip.talkFor && job.voices[i]) {
+          if (clip.ownSound) {
+            step(`Scene ${i + 1} of ${n}: remaking it`, NATIVE_TALK_ID);
+            clip.url = await nativeTalkClip(job, i, aspectRatio, clip.frame!, fixText(a));
+          } else if (clip.talkFor && job.voices[i]) {
             step(`Scene ${i + 1} of ${n}: remaking it`, TALK_VIDEO_MODEL_ID);
             const t = await talkClip(job, i, aspectRatio, clip.frame!, job.voices[i]!, fixText(a));
             clip.url = t.url;
@@ -362,11 +564,17 @@ export async function buildAd(
     save(job);
   }
 
-  const cardKey = `${plan.endCard.headline}|${plan.endCard.tagline}${cardSecs !== endCardSeconds(plan.seconds) ? `|${cardSecs}` : ""}`;
+  const words = cardWords(job);
+  const cardKey = `text2|${words.headline}|${words.tagline}|${words.website ?? ""}${cardSecs !== endCardSeconds(plan.seconds) ? `|${cardSecs}` : ""}`;
   if (!job.cardClip || job.cardFor !== cardKey) {
     if (!job.cardImage || job.cardFor !== cardKey) {
-      step("Designing the end card", "fal-ai/nano-banana");
-      job.cardImage = await cardImage(job, aspectRatio);
+      if (!job.cardPicture) {
+        step("Designing the end card", "fal-ai/nano-banana");
+        job.cardPicture = await cardImage(job, aspectRatio);
+        save(job);
+      }
+      step("Writing the end card words", "fal-ai/nano-banana");
+      job.cardImage = await withCardText(job.cardPicture, words, job.brief.brand?.colors);
     }
     step("Finishing the end card", "fal-ai/ltxv-13b-098-distilled/image-to-video");
     job.cardClip = await cardClip(job, cardSecs);
@@ -396,6 +604,8 @@ export async function buildAd(
       const said = i < n && Boolean(job.clips[i]?.talkFor);
       const start = i < n ? starts[i] : total - cardSecs;
       const len = i < n ? lengths[i] : cardSecs;
+      // A Kling 3 scene's own sound goes on the voice track, so its voice is kept even if the mix leaves out the video's sound.
+      if (said && job.clips[i]?.ownSound) return { url: job.clips[i].url, at: start, seconds: len };
       return { url: job.voices[i], at: said ? start : start + 0.3, seconds: said ? len : len - 0.4 };
     })
     .filter((v) => v.url);
@@ -411,7 +621,11 @@ export async function buildAd(
  * A new version of an ad after the plan changed: scenes whose picture didn't
  * change are kept, so only the changed parts are made (and paid for) again.
  */
-export function changedAdJob(old: AdJob, plan: AdPlan): { job: AdJob; scenes: number; sceneUsd: number; card: boolean; voiceChars: number; music: boolean } {
+export function changedAdJob(
+  old: AdJob,
+  plan: AdPlan,
+  opts: { card?: boolean; newBackground?: boolean } = {},
+): { job: AdJob; scenes: number; sceneUsd: number; card: boolean; cardPicture: boolean; voiceChars: number; music: boolean } {
   const lookSame = old.plan.look === plan.look;
   let scenes = 0;
   let sceneUsd = 0;
@@ -419,14 +633,18 @@ export function changedAdJob(old: AdJob, plan: AdPlan): { job: AdJob; scenes: nu
     const before = old.plan.scenes[i];
     const prev = old.clips[i];
     // A scene said on screen was made from its line, so new words or a new voice mean new lips.
-    const sameSpeech = prev?.talkFor ? prev.talkFor === `${plan.voice}|${s.voice}` && speaksOnScreen(s) : !speaksOnScreen(s) || Boolean(prev?.asVoiceover);
+    const sameSpeech = prev?.talkFor ? prev.talkFor === `${plan.voice}|${s.voice}` && speaksOnScreen(s) && Boolean(prev.ownSound) === nativeTalk(plan.voice, old.brief.language) : !speaksOnScreen(s) || Boolean(prev?.asVoiceover);
     const same = lookSame && before && before.visual === s.visual && before.camera === s.camera && prev?.url && sameSpeech;
     if (same) return { ...prev };
     scenes++;
-    sceneUsd += sceneVideoCost(s, old.brief.language);
+    sceneUsd += sceneVideoCost(s, old.brief.language, plan.voice);
     return { status: "waiting" };
   });
-  const card = old.plan.endCard.headline !== plan.endCard.headline || old.plan.endCard.tagline !== plan.endCard.tagline || !lookSame;
+  const was = cardWords(old);
+  const now = cardWords({ plan, brief: old.brief });
+  const cardPicture = !lookSame || Boolean(opts.newBackground) || !old.cardPicture;
+  // New words are typed onto the same picture; a new look or a new background needs a new picture.
+  const card = Boolean(opts.card || opts.newBackground) || was.headline !== now.headline || was.tagline !== now.tagline || (was.website ?? "") !== (now.website ?? "") || !lookSame;
   const lines = voiceLines(plan);
   const voiceChars = lines.reduce((n, l, i) => n + (old.voiceFor[i] === `${plan.voice}|${l}` ? 0 : l.length), 0);
   const music = old.musicFor !== plan.music && !old.musicFor?.startsWith(`${plan.music}|`);
@@ -438,6 +656,7 @@ export function changedAdJob(old: AdJob, plan: AdPlan): { job: AdJob; scenes: nu
     voiceFor: [...old.voiceFor],
     productUrl: lookSame ? old.productUrl : undefined,
     productToken: lookSame ? old.productToken : undefined,
+    cardPicture: card && cardPicture ? undefined : old.cardPicture,
     cardImage: card ? undefined : old.cardImage,
     cardClip: card ? undefined : old.cardClip,
     cardFor: card ? undefined : old.cardFor,
@@ -445,5 +664,5 @@ export function changedAdJob(old: AdJob, plan: AdPlan): { job: AdJob; scenes: nu
     step: undefined,
     check: old.check?.on ? { on: true, redosLeft: Math.min(maxRedos(plan.scenes.length), scenes), log: [] } : undefined,
   };
-  return { job, scenes, sceneUsd, card, voiceChars, music };
+  return { job, scenes, sceneUsd, card, cardPicture: card && cardPicture, voiceChars, music };
 }

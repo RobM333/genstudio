@@ -328,6 +328,27 @@ export const REFERENCE_IMAGE_MODEL: ModelInfo = {
   }),
 };
 
+/**
+ * The stronger reference picture model, used only when the usual one letterboxes
+ * an ad's opening picture (black bars): it keeps to the shape asked for.
+ */
+export const REFERENCE_IMAGE_PRO_MODEL: ModelInfo = {
+  id: "fal-ai/nano-banana-pro/edit",
+  typicalSeconds: 30,
+  name: "Nano Banana Pro (with your references)",
+  kind: "image",
+  tagline: "Puts your real product, logo or character into the picture, in the exact shape asked for.",
+  approxCost: "~$0.15 / image",
+  aspectRatios: ["1:1", "16:9", "9:16"],
+  buildInput: ({ prompt, aspectRatio, refUrls }) => ({
+    prompt,
+    image_urls: refUrls ?? [],
+    aspect_ratio: aspectRatio,
+    resolution: "1K",
+    num_images: 1,
+  }),
+};
+
 /** Storyboard helpers on fal (used through /api/tool, not the picker). */
 export const LAST_FRAME_MODEL: ModelInfo = {
   id: "fal-ai/ffmpeg-api/extract-frame",
@@ -466,7 +487,50 @@ export const TALK_VIDEO_MODEL: ModelInfo = {
   buildInput: () => ({}),
 };
 
-const HIDDEN = [HD_IMAGE_MODEL, HD_VIDEO_MODEL, ADD_SOUND_MODEL, EDIT_IMAGE_MODEL, REFERENCE_IMAGE_MODEL, LAST_FRAME_MODEL, MERGE_VIDEOS_MODEL, VOICE_MODEL, MUSIC_MODEL, COMPOSE_MODEL, CARD_MOTION_MODEL, TALK_SPEECH_MODEL, TALK_VIDEO_MODEL, ...ANIMATE_MODELS];
+/**
+ * One-step talking scenes: the model makes the voice and the moving mouth together from a quoted line in the
+ * prompt, instead of voice first and lip matching after. Checked on fal 2026-11-25. Full ad uses Kling 3 for
+ * scenes said on screen (Rob picked it after a side-by-side test); Seedance stays for tests only.
+ */
+export const NATIVE_TALK_MODELS: Record<"kling3" | "seedance", ModelInfo> = {
+  kling3: {
+    id: "fal-ai/kling-video/v3/pro/image-to-video",
+    typicalSeconds: 180,
+    name: "Kling 3 talking scene",
+    kind: "video",
+    audio: true,
+    tagline: "Voice and mouth made together.",
+    approxCost: "~$0.168 / second",
+    aspectRatios: ["1:1", "16:9", "9:16"],
+    buildInput: ({ prompt, duration, sourceUrl, avoid }) => ({
+      prompt,
+      start_image_url: sourceUrl,
+      duration: String(duration ?? 5),
+      generate_audio: true,
+      ...(avoid ? { negative_prompt: avoid } : {}),
+    }),
+  },
+  seedance: {
+    // 480p: $0.2205/s. 720p would be $0.473/s.
+    id: "bytedance/seedance-2.5/image-to-video",
+    typicalSeconds: 180,
+    name: "Seedance 2.5 talking scene",
+    kind: "video",
+    audio: true,
+    tagline: "Voice and mouth made together.",
+    approxCost: "~$0.2205 / second",
+    aspectRatios: ["1:1", "16:9", "9:16"],
+    buildInput: ({ prompt, duration, sourceUrl }) => ({
+      prompt,
+      image_url: sourceUrl,
+      duration: String(duration ?? 5),
+      resolution: "480p",
+      generate_audio: true,
+    }),
+  },
+};
+
+const HIDDEN = [...Object.values(NATIVE_TALK_MODELS), HD_IMAGE_MODEL, HD_VIDEO_MODEL, ADD_SOUND_MODEL, EDIT_IMAGE_MODEL, REFERENCE_IMAGE_MODEL, REFERENCE_IMAGE_PRO_MODEL, LAST_FRAME_MODEL, MERGE_VIDEOS_MODEL, VOICE_MODEL, MUSIC_MODEL, COMPOSE_MODEL, CARD_MOTION_MODEL, TALK_SPEECH_MODEL, TALK_VIDEO_MODEL, ...ANIMATE_MODELS];
 
 export function getModel(id: string): ModelInfo | undefined {
   return MODELS.find((m) => m.id === id) ?? HIDDEN.find((m) => m.id === id);

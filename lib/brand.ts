@@ -3,7 +3,7 @@
 // logo, people who agreed, style). Saved once in the browser and reused in
 // every project, so ads and pictures stay on brand without re-uploading.
 
-export type BrandInfo = { name?: string; colors?: string[]; style?: string };
+export type BrandInfo = { name?: string; colors?: string[]; style?: string; website?: string };
 
 const NAMED: [string, number, number, number][] = [
   ["black", 0, 0, 0], ["charcoal", 54, 54, 54], ["grey", 128, 128, 128], ["silver", 192, 192, 192], ["white", 255, 255, 255],
