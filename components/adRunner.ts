@@ -53,7 +53,8 @@ export type AdJob = {
   voiceFor: string[]; // the line each voice clip was made from, so changed lines are re-read
   productUrl?: string; // our product picture (when the user gave no photo), reused in every scene
   productToken?: string;
-  cardImage?: string;
+  cardPicture?: string; // the end card picture with no words, so words can be typed again without a new picture
+  cardImage?: string; // the picture with the words typed on
   cardClip?: string;
   cardFor?: string; // headline|tagline the card was made with
   musicUrl?: string;
@@ -268,8 +269,10 @@ async function cardImage(job: AdJob, aspectRatio: string): Promise<string> {
  * Types the end card's words onto the picture in the browser (picture models
  * misspell words), then uploads it through the usual picture safety check.
  */
-export async function withCardText(url: string, words: { headline: string; tagline?: string; website?: string }, colors: string[] = []): Promise<string> {
-  if (typeof document === "undefined") return url;
+export type CardWords = { headline: string; tagline?: string; website?: string };
+
+/** The end card picture with its words typed on, as a canvas (also used for the free preview in Edit end card). */
+export async function drawCardText(url: string, words: CardWords, colors: string[] = []): Promise<HTMLCanvasElement> {
   const img = new Image();
   img.crossOrigin = "anonymous";
   await new Promise<void>((ok, bad) => {
@@ -329,6 +332,13 @@ export async function withCardText(url: string, words: { headline: string; tagli
     ctx.fillStyle = "#ffffff";
     ctx.fillText(l.text, w / 2, l.y);
   }
+  return c;
+}
+
+/** Types the words onto the card picture and uploads it through the usual picture safety check. */
+export async function withCardText(url: string, words: CardWords, colors: string[] = []): Promise<string> {
+  if (typeof document === "undefined") return url;
+  const c = await drawCardText(url, words, colors);
   const blob = await new Promise<Blob | null>((ok) => c.toBlob(ok, "image/jpeg", 0.92));
   if (!blob) throw new Error("We couldn't finish the end card. Please try again.");
   const form = new FormData();
@@ -339,6 +349,12 @@ export async function withCardText(url: string, words: { headline: string; tagli
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error ?? "We couldn't finish the end card. Please try again.");
   return (await finishReference(data, "style")).url;
+}
+
+/** The words on an ad's end card: the plan's headline and tagline, and its own website or else the brand kit's. */
+export function cardWords(job: Pick<AdJob, "plan" | "brief">): CardWords {
+  const e = job.plan.endCard;
+  return { headline: e.headline, tagline: e.tagline, website: e.website ?? job.brief.brand?.website };
 }
 
 /** Holds the end card on screen with a gentle, nearly still move. */
@@ -535,13 +551,17 @@ export async function buildAd(
     save(job);
   }
 
-  const cardKey = `text2|${plan.endCard.headline}|${plan.endCard.tagline}|${job.brief.brand?.website ?? ""}${cardSecs !== endCardSeconds(plan.seconds) ? `|${cardSecs}` : ""}`;
+  const words = cardWords(job);
+  const cardKey = `text2|${words.headline}|${words.tagline}|${words.website ?? ""}${cardSecs !== endCardSeconds(plan.seconds) ? `|${cardSecs}` : ""}`;
   if (!job.cardClip || job.cardFor !== cardKey) {
     if (!job.cardImage || job.cardFor !== cardKey) {
-      step("Designing the end card", "fal-ai/nano-banana");
-      const picture = await cardImage(job, aspectRatio);
+      if (!job.cardPicture) {
+        step("Designing the end card", "fal-ai/nano-banana");
+        job.cardPicture = await cardImage(job, aspectRatio);
+        save(job);
+      }
       step("Writing the end card words", "fal-ai/nano-banana");
-      job.cardImage = await withCardText(picture, { ...plan.endCard, website: job.brief.brand?.website }, job.brief.brand?.colors);
+      job.cardImage = await withCardText(job.cardPicture, words, job.brief.brand?.colors);
     }
     step("Finishing the end card", "fal-ai/ltxv-13b-098-distilled/image-to-video");
     job.cardClip = await cardClip(job, cardSecs);
@@ -588,7 +608,11 @@ export async function buildAd(
  * A new version of an ad after the plan changed: scenes whose picture didn't
  * change are kept, so only the changed parts are made (and paid for) again.
  */
-export function changedAdJob(old: AdJob, plan: AdPlan): { job: AdJob; scenes: number; sceneUsd: number; card: boolean; voiceChars: number; music: boolean } {
+export function changedAdJob(
+  old: AdJob,
+  plan: AdPlan,
+  opts: { card?: boolean; newBackground?: boolean } = {},
+): { job: AdJob; scenes: number; sceneUsd: number; card: boolean; cardPicture: boolean; voiceChars: number; music: boolean } {
   const lookSame = old.plan.look === plan.look;
   let scenes = 0;
   let sceneUsd = 0;
@@ -603,7 +627,11 @@ export function changedAdJob(old: AdJob, plan: AdPlan): { job: AdJob; scenes: nu
     sceneUsd += sceneVideoCost(s, old.brief.language, plan.voice);
     return { status: "waiting" };
   });
-  const card = old.plan.endCard.headline !== plan.endCard.headline || old.plan.endCard.tagline !== plan.endCard.tagline || !lookSame;
+  const was = cardWords(old);
+  const now = cardWords({ plan, brief: old.brief });
+  const cardPicture = !lookSame || Boolean(opts.newBackground) || !old.cardPicture;
+  // New words are typed onto the same picture; a new look or a new background needs a new picture.
+  const card = Boolean(opts.card || opts.newBackground) || was.headline !== now.headline || was.tagline !== now.tagline || (was.website ?? "") !== (now.website ?? "") || !lookSame;
   const lines = voiceLines(plan);
   const voiceChars = lines.reduce((n, l, i) => n + (old.voiceFor[i] === `${plan.voice}|${l}` ? 0 : l.length), 0);
   const music = old.musicFor !== plan.music && !old.musicFor?.startsWith(`${plan.music}|`);
@@ -615,6 +643,7 @@ export function changedAdJob(old: AdJob, plan: AdPlan): { job: AdJob; scenes: nu
     voiceFor: [...old.voiceFor],
     productUrl: lookSame ? old.productUrl : undefined,
     productToken: lookSame ? old.productToken : undefined,
+    cardPicture: card && cardPicture ? undefined : old.cardPicture,
     cardImage: card ? undefined : old.cardImage,
     cardClip: card ? undefined : old.cardClip,
     cardFor: card ? undefined : old.cardFor,
@@ -622,5 +651,5 @@ export function changedAdJob(old: AdJob, plan: AdPlan): { job: AdJob; scenes: nu
     step: undefined,
     check: old.check?.on ? { on: true, redosLeft: Math.min(maxRedos(plan.scenes.length), scenes), log: [] } : undefined,
   };
-  return { job, scenes, sceneUsd, card, voiceChars, music };
+  return { job, scenes, sceneUsd, card, cardPicture: card && cardPicture, voiceChars, music };
 }

@@ -28,7 +28,8 @@ export type AdPlan = {
   music: string;
   voice: string; // voice name
   scenes: AdScene[];
-  endCard: { headline: string; tagline: string; voice: string };
+  /** website: shown on the card; left out means the brand kit's website, "" means none. */
+  endCard: { headline: string; tagline: string; voice: string; website?: string };
   seconds: number;
   /** The person asked for words on screen; otherwise scenes carry no writing at all. */
   allowText?: boolean;

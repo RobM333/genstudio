@@ -44,6 +44,28 @@ assert.equal(changed.card, false);
 assert.equal(changed.job.clips[0].url, "a");
 assert.equal(changed.job.clips[1].url, undefined);
 assert.equal(changed.job.joinedUrl, undefined);
+{
+  // Edit end card: new words reuse the plain card picture; a new background, or an ad made before it was kept, makes a new one.
+  const done = { ...job, clips: [...job.clips], cardPicture: "plain", cardImage: "typed", joinedUrl: "j" };
+  const words = changedAdJob(done, { ...plan, endCard: { ...plan.endCard, tagline: "Order today", website: "glow.com" } });
+  assert.equal(words.card, true);
+  assert.equal(words.cardPicture, false);
+  assert.equal(words.scenes, 0);
+  assert.equal(words.job.cardPicture, "plain");
+  assert.equal(words.job.cardImage, undefined);
+  assert.equal(words.job.clips[0].url, "a");
+  const bg = changedAdJob(done, plan, { card: true, newBackground: true });
+  assert.equal(bg.card, true);
+  assert.equal(bg.cardPicture, true);
+  assert.equal(bg.job.cardPicture, undefined);
+  const same = changedAdJob(done, plan);
+  assert.equal(same.card, false);
+  assert.equal(same.job.joinedUrl, "j");
+  const website = changedAdJob(done, { ...plan, endCard: { ...plan.endCard, website: "" } });
+  assert.equal(website.card, (brief as { brand?: { website?: string } }).brand?.website ? true : false);
+  const before = changedAdJob({ ...job, clips: [...job.clips], cardImage: "old" }, plan, { card: true });
+  assert.equal(before.cardPicture, true, "old ads with words drawn into the picture get a new picture");
+}
 // Lines said on screen: the planner marks them, the lips are matched, and the price follows the line's length.
 const talkRaw = JSON.stringify({
   title: "Toasty",

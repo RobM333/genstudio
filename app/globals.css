@@ -895,6 +895,9 @@ label.sub-label { display: block; }
 .chat-offers { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
 .chat-spin { display: inline-block; margin-left: 8px; vertical-align: middle; }
 .chat-chips { display: flex; flex-wrap: wrap; gap: 6px; flex: none; }
+.card-edit { display: flex; flex-direction: column; gap: 6px; flex: none; border: 1px solid var(--line-strong); border-radius: 14px; padding: 12px; background: rgba(0,0,0,0.25); max-height: 60vh; overflow-y: auto; }
+.card-edit .sub-label { margin: 4px 0 0; }
+.card-edit-preview { width: 100%; max-width: 220px; align-self: center; border-radius: 10px; border: 1px solid var(--line); }
 .chat-input { display: flex; gap: 8px; align-items: flex-end; flex: none; border: 1px solid var(--line-strong); border-radius: 14px; padding: 8px 8px 8px 12px; background: rgba(0,0,0,0.3); }
 .chat-input:focus-within { border-color: var(--iris); }
 .chat-input textarea { flex: 1; resize: none; border: 0; background: transparent; color: var(--text); font: inherit; font-size: 14px; outline: none; min-height: 40px; }
