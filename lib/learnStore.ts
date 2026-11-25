@@ -1,4 +1,5 @@
 import "server-only";
+import { safeGetJSON } from "./blobsSafe";
 import { createHash, randomUUID } from "node:crypto";
 import {
   activeLessons,
@@ -51,7 +52,7 @@ async function store(): Promise<Store> {
     const { getStore } = await import("@netlify/blobs");
     const blobs = getStore({ name: "learn", consistency: "strong" });
     cached = {
-      get: (key) => blobs.get(key, { type: "json" }),
+      get: (key) => safeGetJSON(blobs, key),
       set: async (key, value) => {
         await blobs.setJSON(key, value);
       },

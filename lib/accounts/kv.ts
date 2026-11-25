@@ -1,4 +1,5 @@
 import "server-only";
+import { safeGetJSON, safeGetJSONWithEtag } from "../blobsSafe";
 
 // Where accounts are kept: Netlify Blobs, built into every Netlify site (no
 // extra database account). Reads are "strong", so a change is seen at once.
@@ -62,10 +63,10 @@ export async function kv(): Promise<KV> {
     const { getStore } = await import("@netlify/blobs");
     const blobs = getStore({ name: "accounts", consistency: "strong" });
     cached = {
-      get: (key) => blobs.get(key, { type: "json" }),
+      get: (key) => safeGetJSON(blobs, key),
       async getVersioned<T>(key: string) {
-        const r = await blobs.getWithMetadata(key, { type: "json" });
-        return r ? { value: r.data as T, etag: String(r.etag ?? "") } : null;
+        const r = await safeGetJSONWithEtag<T>(blobs, key);
+        return r ? { value: r.data, etag: r.etag } : null;
       },
       async set(key, value, cond) {
         const opts = cond?.onlyIfNew ? { onlyIfNew: true } : cond?.onlyIfMatch !== undefined ? { onlyIfMatch: cond.onlyIfMatch } : {};
