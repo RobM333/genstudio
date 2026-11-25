@@ -141,7 +141,7 @@ export default function Founding() {
         already: data.status === "already",
         number: typeof data.number === "number" ? data.number : null,
         refCode: cleanRefCode(data.refCode),
-        full: data.full === true || (typeof data.number === "number" && data.number > TOTAL_SPOTS),
+        full: data.full === true,
       });
     } catch {
       setStatus({ kind: "error", message: "We couldn't reach the server. Please check your connection and try again." });
@@ -154,7 +154,7 @@ export default function Founding() {
         ? "You're already on the list"
         : status.full
           ? "You're on the early list"
-          : "Your founding spot is held"
+          : "You're on the list"
       : "";
 
   return (
@@ -202,7 +202,7 @@ export default function Founding() {
                   ? "That email already has a spot. We'll be in touch when it's ready."
                   : status.full
                     ? `${FULL_LINE} We've emailed you a copy.`
-                    : "We'll email you when your account is ready. Nothing to pay, nothing else to do for now."}
+                    : "We're inviting people in small groups. We'll email you when it's your turn. Nothing to pay, nothing else to do for now."}
               </p>
               {status.refCode ? (
                 <div className="founding-share">

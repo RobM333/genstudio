@@ -14,9 +14,12 @@ export const TOTAL_SPOTS = 100;
  */
 export const FULL_LINE = "The Founding 100 is full, but you're on the early list. You'll get first access and a launch discount when we open.";
 
-/** Full once 100 people have signed up, or the owner has invited 100 Founding members. */
-export function foundingFull(signups: number, foundingInvites = 0): boolean {
-  return signups >= TOTAL_SPOTS || foundingInvites >= TOTAL_SPOTS;
+/**
+ * Full only once the owner has invited 100 Founding members. Sign-ups alone never
+ * fill it: Rob collects more than 100 and picks the 100 from them.
+ */
+export function foundingFull(foundingInvites: number): boolean {
+  return foundingInvites >= TOTAL_SPOTS;
 }
 
 /** What the offer includes. Wording only, nothing here charges anyone. */

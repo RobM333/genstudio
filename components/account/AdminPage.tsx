@@ -8,7 +8,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { FOUNDING_CREDITS_SHOWN } from "./shared";
-import { FULL_LINE } from "@/lib/founding";
+import { FULL_LINE, TOTAL_SPOTS } from "@/lib/founding";
 
 type Stage = { stage: "active" | "ending-soon" | "ended"; endsOn: string; daysLeft: number } | null;
 type U = {
@@ -199,7 +199,7 @@ export default function AdminPage() {
   }
 
   // People on the list who won't get a Founding spot and haven't been told yet.
-  const fullDue = signups.filter((s) => (!s.spot || isFull) && !invited.has(s.email) && !joined.has(s.email) && !s.fullSent);
+  const fullDue = signups.filter((s) => isFull && !invited.has(s.email) && !joined.has(s.email) && !s.fullSent);
 
   async function sendFullMessage() {
     setBusy("full");
@@ -277,7 +277,8 @@ export default function AdminPage() {
       <section className="account-card">
         <h2>Founding sign-ups</h2>
         <p className="muted small">
-          {signups.filter((s) => s.spot).length} founding spots claimed, {foundingLeft.length} not invited yet. Inviting gives them 1 month of Creator with{" "}
+          {invites.filter((i) => i.founding).length} of {TOTAL_SPOTS} Founding members invited, {foundingLeft.length} sign-ups not invited yet. Pick
+          anyone on the list until {TOTAL_SPOTS} are invited; then the page switches to the early list. Inviting gives them 1 month of Creator with{" "}
           {FOUNDING_CREDITS_SHOWN} credits from the day they first sign in. Invite them in groups of 10 to 20, and check how the last group is using its
           credits (below) before sending the next.
         </p>
