@@ -12,6 +12,7 @@ import {
   LAST_FRAME_MODEL,
   MERGE_VIDEOS_MODEL,
   MUSIC_MODEL,
+  NATIVE_TALK_MODELS,
   unitPrice,
   TALK_VIDEO_MODEL,
   VOICE_MODEL,
@@ -39,7 +40,7 @@ export function generateUsd(model: ModelInfo, duration: number | undefined, soun
 }
 
 /** One /api/tool step (storyboards and full ads). */
-export function toolUsd(tool: string, opts: { seconds?: number; text?: string }): number {
+export function toolUsd(tool: string, opts: { seconds?: number; text?: string; model?: string }): number {
   const secs = Math.max(1, opts.seconds ?? 5);
   switch (tool) {
     case "voice":
@@ -58,6 +59,8 @@ export function toolUsd(tool: string, opts: { seconds?: number; text?: string })
       return secs * unitPrice(TALK_VIDEO_MODEL);
     case "join":
       return secs * unitPrice(COMPOSE_MODEL);
+    case "talk-native":
+      return secs * unitPrice(NATIVE_TALK_MODELS[opts.model === "seedance" ? "seedance" : "kling3"]);
     default:
       return 0;
   }
