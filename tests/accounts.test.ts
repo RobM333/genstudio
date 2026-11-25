@@ -9,6 +9,8 @@ import { getModel } from "../lib/models";
 import { isPublicPath, isSignInPath } from "../lib/publicPaths";
 import * as store from "../lib/accounts/store";
 import { mergeLists } from "../components/account/sync";
+import { foundingFullEmail } from "../lib/accounts/mail";
+import { FULL_LINE } from "../lib/founding";
 import * as refs from "../lib/accounts/referrals";
 import { cronKey, isCronKey } from "../lib/accounts/session";
 import { isCronPath } from "../lib/publicPaths";
@@ -256,6 +258,12 @@ async function main() {
   assert.ok(isCronKey(cronKey()));
   assert.ok(!isCronKey("nope") && !isCronKey(null));
   assert.ok(isCronPath("/api/cron/founding") && !isCronPath("/api/cron/other") && !isPublicPath("/api/cron/founding"));
+
+  // The early-list email carries the exact "Founding 100 is full" line.
+  const fullMail = foundingFullEmail({ name: "Sam", link: "https://toastyfly.com" });
+  assert.ok(fullMail.text.includes(FULL_LINE));
+  assert.ok(fullMail.html.includes("Founding 100 is full"));
+  assert.ok(fullMail.text.startsWith("Hi Sam,"));
 
   console.log("accounts tests passed");
 }

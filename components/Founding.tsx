@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { BRAND_LOGO, BRAND_LOGO_SIZE, BRAND_NAME, cleanRefCode, LOGO_HAS_NAME, MAKES, OFFER, REFERRAL, spotsLine, TOTAL_SPOTS } from "@/lib/founding";
+import { BRAND_LOGO, BRAND_LOGO_SIZE, BRAND_NAME, cleanRefCode, FULL_LINE, LOGO_HAS_NAME, MAKES, OFFER, REFERRAL, spotsLine, TOTAL_SPOTS } from "@/lib/founding";
 import { COPYRIGHT_NOTICE } from "@/lib/appBrand";
 import { FREE_MONTH_MAKES, foundingPriceShort, SHARE_LINE } from "@/lib/foundingOffer";
 
@@ -74,11 +74,12 @@ const NOTES = [
 type Status =
   | { kind: "idle" }
   | { kind: "sending" }
-  | { kind: "done"; already: boolean; number: number | null; refCode: string | null }
+  | { kind: "done"; already: boolean; number: number | null; refCode: string | null; full: boolean }
   | { kind: "error"; message: string };
 
 export default function Founding() {
   const [left, setLeft] = useState<number | null>(null);
+  const [fullFlag, setFullFlag] = useState(false);
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [makes, setMakes] = useState("");
@@ -101,11 +102,14 @@ export default function Founding() {
     }
     fetch("/api/founding", { cache: "no-store" })
       .then((r) => r.json())
-      .then((d) => setLeft(typeof d.left === "number" ? d.left : null))
+      .then((d) => {
+        setLeft(typeof d.left === "number" ? d.left : null);
+        setFullFlag(d.full === true);
+      })
       .catch(() => {});
   }, []);
 
-  const full = left !== null && left <= 0;
+  const full = fullFlag || (left !== null && left <= 0);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -123,6 +127,7 @@ export default function Founding() {
         return;
       }
       if (typeof data.left === "number") setLeft(data.left);
+      if (data.full === true) setFullFlag(true);
       if (data.status === "added") {
         // Copy to Netlify Forms so it also shows (and can email the owner) in the Netlify dashboard.
         fetch("/__forms.html", {
@@ -136,6 +141,7 @@ export default function Founding() {
         already: data.status === "already",
         number: typeof data.number === "number" ? data.number : null,
         refCode: cleanRefCode(data.refCode),
+        full: data.full === true || (typeof data.number === "number" && data.number > TOTAL_SPOTS),
       });
     } catch {
       setStatus({ kind: "error", message: "We couldn't reach the server. Please check your connection and try again." });
@@ -146,8 +152,8 @@ export default function Founding() {
     status.kind === "done"
       ? status.already
         ? "You're already on the list"
-        : status.number !== null && status.number > TOTAL_SPOTS
-          ? "You're on the waitlist"
+        : status.full
+          ? "You're on the early list"
           : "Your founding spot is held"
       : "";
 
@@ -194,8 +200,8 @@ export default function Founding() {
               <p className="muted">
                 {status.already
                   ? "That email already has a spot. We'll be in touch when it's ready."
-                  : status.number !== null && status.number > TOTAL_SPOTS
-                    ? "All founding spots were taken, so you're first in line for what comes next. We'll email you."
+                  : status.full
+                    ? `${FULL_LINE} We've emailed you a copy.`
                     : "We'll email you when your account is ready. Nothing to pay, nothing else to do for now."}
               </p>
               {status.refCode ? (
@@ -223,7 +229,9 @@ export default function Founding() {
           ) : (
             <form onSubmit={submit} noValidate={false}>
               <div className="founding-spots" aria-live="polite">
-                {left === null ? (
+                {full ? (
+                  <strong>The Founding {TOTAL_SPOTS} is full</strong>
+                ) : left === null ? (
                   <span className="muted">{TOTAL_SPOTS} founding spots</span>
                 ) : (
                   <>
@@ -234,7 +242,8 @@ export default function Founding() {
                   </>
                 )}
               </div>
-              <h2>{full ? "Join the waitlist" : "Claim a founding spot"}</h2>
+              <h2>{full ? "Join the early list" : "Claim a founding spot"}</h2>
+              {full && <p className="founding-full-note">{FULL_LINE}</p>}
               {ref && (
                 <p className="founding-friend">
                   A friend sent you this link. Once you both have accounts, you each get {REFERRAL.bonus} bonus credits.
@@ -283,7 +292,7 @@ export default function Founding() {
                 </p>
               )}
               <button type="submit" className="generate small" disabled={status.kind === "sending"}>
-                {status.kind === "sending" ? "Saving your spot…" : full ? "Join the waitlist" : "Claim my founding spot"}
+                {status.kind === "sending" ? "Saving your spot…" : full ? "Join the early list" : "Claim my founding spot"}
               </button>
               <p className="muted small founding-fine">Free to claim. No card, so nothing can be charged. No launch date promised.</p>
             </form>
@@ -346,7 +355,7 @@ export default function Founding() {
 
       <section className="founding-cta">
         <a href="#claim" className="generate small">
-          {full ? "Join the waitlist" : "Claim a founding spot"}
+          {full ? "Join the early list" : "Claim a founding spot"}
         </a>
       </section>
 

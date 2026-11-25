@@ -4,9 +4,12 @@ import { changeCredits, foundingStage, getUser, invite, listInvites, listUsers }
 import { listReferrals } from "@/lib/accounts/referrals";
 import { runFoundingReminders } from "@/lib/accounts/reminders";
 import { shownCredits } from "@/lib/accounts/credits";
-import { inviteEmail, sendEmail } from "@/lib/accounts/mail";
-import { listSignups } from "@/lib/foundingStore";
-import { TOTAL_SPOTS } from "@/lib/founding";
+import { foundingFullEmail, inviteEmail, sendEmail } from "@/lib/accounts/mail";
+import { emailHash, fullMessageKeys, listSignups, markFullMessageSent } from "@/lib/foundingStore";
+import { foundingFull, TOTAL_SPOTS } from "@/lib/founding";
+
+/** Most "Founding 100 is full" emails sent per press, so each batch is small and quick. */
+const FULL_BATCH = 25;
 
 export const dynamic = "force-dynamic";
 
@@ -21,7 +24,13 @@ async function admin(req: Request) {
 export async function GET(req: Request) {
   if (!(await currentUser(req))) return signInNeeded();
   if (!(await admin(req))) return NextResponse.json({ error: "Only the owner can see this." }, { status: 403 });
-  const [users, invites, signups, referrals] = await Promise.all([listUsers(), listInvites(), listSignups(), listReferrals().catch(() => [])]);
+  const [users, invites, signups, referrals, messaged] = await Promise.all([
+    listUsers(),
+    listInvites(),
+    listSignups(),
+    listReferrals().catch(() => []),
+    fullMessageKeys().catch(() => new Set<string>()),
+  ]);
   const invitedBy = new Map(referrals.map((r) => [r.friend, r]));
   return NextResponse.json(
     {
@@ -53,8 +62,9 @@ export async function GET(req: Request) {
       })),
       signups: signups.map((s, n) => {
         const r = invitedBy.get(s.email);
-        return { ...s, spot: n < TOTAL_SPOTS, invitedBy: r?.by || null, reward: r?.state ?? null };
+        return { ...s, spot: n < TOTAL_SPOTS, invitedBy: r?.by || null, reward: r?.state ?? null, fullSent: messaged.has(emailHash(s.email)) };
       }),
+      foundingFull: foundingFull(signups.length, invites.filter((i) => i.founding).length),
     },
     { headers: { "Cache-Control": "no-store" } },
   );
@@ -90,6 +100,27 @@ export async function POST(req: Request) {
     const r = await changeCredits(user.id, credits, "admin", String(b.note || (credits > 0 ? "Credits from ToastyFly" : "Credits taken off")).slice(0, 120));
     if (!r.ok) return NextResponse.json({ error: "That would take the balance below zero." }, { status: 400 });
     return NextResponse.json({ ok: true, credits: shownCredits(r.user.credits) });
+  }
+
+  if (b.action === "full-message") {
+    // "The Founding 100 is full, but you're on the early list": to people on the list
+    // who haven't been invited, haven't joined and haven't had it yet. In small batches.
+    const [users, invites, signups, messaged] = await Promise.all([listUsers(), listInvites(), listSignups(), fullMessageKeys()]);
+    const full = foundingFull(signups.length, invites.filter((i) => i.founding).length);
+    const done = new Set([...users.map((u) => u.email), ...invites.map((i) => i.email)]);
+    const due = signups.filter((s, n) => (n >= TOTAL_SPOTS || full) && !done.has(s.email) && !messaged.has(emailHash(s.email)));
+    const link = new URL(req.url).origin;
+    const sent: string[] = [];
+    const failed: string[] = [];
+    for (const s of due.slice(0, FULL_BATCH)) {
+      const mail = foundingFullEmail({ name: s.name || undefined, link });
+      const r = await sendEmail(s.email, mail.subject, mail.text, mail.html);
+      if (r.ok) {
+        await markFullMessageSent(s.email);
+        sent.push(s.email);
+      } else failed.push(s.email);
+    }
+    return NextResponse.json({ ok: true, sent, failed, left: Math.max(0, due.length - sent.length - failed.length) });
   }
 
   if (b.action === "reminders") {

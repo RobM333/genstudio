@@ -1422,6 +1422,7 @@ select.text-input { appearance: auto; }
 .founding-share { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); text-align: left; }
 .founding-share code { display: block; margin: 6px 0; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line-strong); background: var(--panel-2); font-size: 13px; overflow-wrap: anywhere; }
 .founding-friend { margin: 0 0 12px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel-2); font-size: 14px; }
+.founding-full-note { margin: 0 0 12px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel-2); font-size: 14px; line-height: 1.45; }
 .admin-link { display: inline-block; margin-top: 6px; font-size: 12px; overflow-wrap: anywhere; color: var(--muted); }
 .l-signin { color: var(--muted); text-decoration: none; font-size: 14px; margin-left: auto; margin-right: 12px; }
 .l-signin:hover { color: var(--text); }

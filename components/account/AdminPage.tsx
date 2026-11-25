@@ -8,6 +8,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { FOUNDING_CREDITS_SHOWN } from "./shared";
+import { FULL_LINE } from "@/lib/founding";
 
 type Stage = { stage: "active" | "ending-soon" | "ended"; endsOn: string; daysLeft: number } | null;
 type U = {
@@ -28,7 +29,7 @@ type U = {
   invitedBy: string | null;
 };
 type I = { email: string; name: string; credits: number; founding: boolean; at: number; joined: boolean; group: number | null };
-type S = { email: string; name: string; makes: string; at: string; spot: boolean; invitedBy: string | null; reward: string | null };
+type S = { email: string; name: string; makes: string; at: string; spot: boolean; invitedBy: string | null; reward: string | null; fullSent?: boolean };
 
 const date = (at: number | string) =>
   new Date(typeof at === "string" && /^\d{4}-\d{2}-\d{2}$/.test(at) ? `${at}T00:00:00` : at).toLocaleDateString(undefined, { day: "numeric", month: "short" });
@@ -45,6 +46,7 @@ export default function AdminPage() {
   const [users, setUsers] = useState<U[]>([]);
   const [invites, setInvites] = useState<I[]>([]);
   const [signups, setSignups] = useState<S[]>([]);
+  const [isFull, setIsFull] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ text: string; link?: string } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -68,6 +70,7 @@ export default function AdminPage() {
     setUsers(d.users ?? []);
     setInvites(d.invites ?? []);
     setSignups(d.signups ?? []);
+    setIsFull(d.foundingFull === true);
     setLoaded(true);
   }
   useEffect(() => {
@@ -195,6 +198,26 @@ export default function AdminPage() {
     void load();
   }
 
+  // People on the list who won't get a Founding spot and haven't been told yet.
+  const fullDue = signups.filter((s) => (!s.spot || isFull) && !invited.has(s.email) && !joined.has(s.email) && !s.fullSent);
+
+  async function sendFullMessage() {
+    setBusy("full");
+    setMsg(null);
+    setError(null);
+    const r = await fetch("/api/admin", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "full-message" }) }).catch(() => null);
+    const d = r ? await r.json().catch(() => ({})) : {};
+    setBusy(null);
+    if (!r?.ok) return setError(d.error ?? "Couldn't send the messages.");
+    setMsg({
+      text:
+        `"Founding 100 is full" message sent to ${d.sent?.length ?? 0} ${d.sent?.length === 1 ? "person" : "people"}.` +
+        (d.failed?.length ? ` Couldn't email: ${d.failed.join(", ")}.` : "") +
+        (d.left ? ` ${d.left} still to go: press again in a few days for the next batch.` : ""),
+    });
+    void load();
+  }
+
   const endingSoon = users.filter((u) => u.stage?.stage === "ending-soon");
 
   return (
@@ -285,6 +308,7 @@ export default function AdminPage() {
               {signups.map((s, n) => {
                 const inv = invited.get(s.email);
                 const status = joined.has(s.email) ? `Joined${inv?.group ? ` (group ${inv.group})` : ""}` : inv ? `Invited ${date(inv.at)}${inv.group ? ` (group ${inv.group})` : ""}` : null;
+                const listNote = !status && s.fullSent ? "Told it's full" : null;
                 const canPick = s.spot && !status;
                 return (
                   <tr key={s.email}>
@@ -316,7 +340,10 @@ export default function AdminPage() {
                       {s.makes ? <span className="muted small"> · {s.makes}</span> : null}
                       {s.invitedBy ? <span className="muted small"> · invited by {s.invitedBy}</span> : null}
                     </td>
-                    <td className="muted small">{s.spot ? "Founding" : "Waitlist"}</td>
+                    <td className="muted small">
+                      {s.spot ? "Founding" : "Early list"}
+                      {listNote ? ` · ${listNote}` : ""}
+                    </td>
                     <td>
                       {status ? (
                         <span className="muted small">{status}</span>
@@ -374,6 +401,19 @@ export default function AdminPage() {
             </table>
           </>
         )}
+      </section>
+
+      <section className="account-card">
+        <h2>Early list (after the Founding 100)</h2>
+        <p className="muted small">
+          People who sign up once the Founding 100 is full see this on the page and get it by email: &ldquo;{FULL_LINE}&rdquo; Use the button for
+          anyone on the list who hasn&apos;t had it yet and isn&apos;t being invited. It sends up to 25 at a time, so you can send a batch every few days
+          and see who replies. Nobody gets it twice.
+        </p>
+        <p>{fullDue.length === 0 ? "Nobody is waiting for this message." : `${fullDue.length} ${fullDue.length === 1 ? "person hasn't" : "people haven't"} had it yet.`}</p>
+        <button className="btn" disabled={busy !== null || fullDue.length === 0} onClick={sendFullMessage}>
+          {busy === "full" ? "Sending…" : `Send the "Founding 100 is full" message${fullDue.length > 25 ? " (next 25)" : ""}`}
+        </button>
       </section>
 
       <section className="account-card">

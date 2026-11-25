@@ -71,6 +71,23 @@ export async function addSignup(signup: FoundingSignup, ip: string): Promise<Add
   return "added";
 }
 
+/** Has this person already been sent the "Founding 100 is full" message? */
+export async function fullMessageSent(email: string): Promise<boolean> {
+  return Boolean(await (await store()).get(`fullmsg/${hash(email)}`));
+}
+
+/** Remembers that the "Founding 100 is full" message went to this person, so nobody gets it twice. */
+export async function markFullMessageSent(email: string): Promise<void> {
+  await (await store()).set(`fullmsg/${hash(email)}`, { at: new Date().toISOString() });
+}
+
+/** Everyone who has been sent the "full" message, as scrambled keys (for the owner page). */
+export async function fullMessageKeys(): Promise<Set<string>> {
+  return new Set((await (await store()).keys("fullmsg/")).map((k) => k.slice("fullmsg/".length)));
+}
+
+export const emailHash = (email: string) => hash(email);
+
 /** Every sign-up, oldest first, for the owner's download. */
 export async function listSignups(): Promise<FoundingSignup[]> {
   const s = await store();
