@@ -7,6 +7,7 @@ import { makeDemoMedia } from "@/lib/demo";
 import { payForStep } from "@/lib/accounts/current";
 import { toolUsd } from "@/lib/accounts/credits";
 import { CAPTIONS_MODEL, CARD_MOTION_MODEL, COMPOSE_MODEL, isFalMediaUrl, isStockVideoUrl, MERGE_AUDIO_MODEL, TRANSCRIBE_MODEL, LAST_FRAME_MODEL, MERGE_VIDEOS_MODEL, MUSIC_MODEL, NATIVE_TALK_MODELS, TALK_VIDEO_MODEL, VOICE_MODEL } from "@/lib/models";
+import { MAX_BEATS } from "@/lib/script";
 
 export const dynamic = "force-dynamic";
 
@@ -238,7 +239,7 @@ export async function POST(req: Request) {
       // The voiceover, in runs of lines (a clip whose own sound is kept breaks a run).
       const voiceRuns = (Array.isArray(body.voices) ? body.voices : [])
         .filter((v) => v && typeof v.url === "string" && v.url)
-        .slice(0, 60)
+        .slice(0, MAX_BEATS)
         .map((v) => ({ url: String(v.url), timestamp: Math.max(0, Math.round(Number(v.at) * 1000) || 0), duration: Math.max(500, Math.round(Number(v.seconds) * 1000) || 4000) }));
       if (voiceRuns.length) tracks.push({ id: "voice", type: "audio", keyframes: voiceRuns });
       // The person's own clips whose sound they kept.

@@ -15,7 +15,7 @@ import { post, waitFor } from "./storyRunner";
 import { AD_I2V } from "./adRunner";
 import { loadEleven, speakOwn, usableVoices } from "./elevenConnect";
 import { alignRecording, beatSeconds, partKey, SECTION_SIZE, shotPrompt, stillMove, wordTimings, type ScriptJob } from "@/lib/script";
-import { CAPTIONS_MODEL, CARD_MOTION_MODEL, COMPOSE_MODEL, MERGE_AUDIO_MODEL, MERGE_VIDEOS_MODEL, MUSIC_MODEL, TRANSCRIBE_MODEL, VOICE_MODEL } from "@/lib/models";
+import { CAPTIONS_MODEL, CARD_MOTION_MODEL, COMPOSE_MODEL, MERGE_VIDEOS_MODEL, MUSIC_MODEL, TRANSCRIBE_MODEL, VOICE_MODEL } from "@/lib/models";
 
 const AT_ONCE = 3;
 
@@ -256,25 +256,11 @@ export async function buildScript(job: ScriptJob, save: (j: ScriptJob, stepChang
   let runs: { url: string; at: number; seconds: number }[] = [];
   if (job.voice.kind === "recording") runs = [{ url: job.voice.url, at: 0, seconds: total }];
   else if (opts.live) {
-    // Lines in a row are joined into one track; a clip that keeps its own sound starts a new run.
-    const groups: number[][] = [];
+    // Each line's voice is placed at its own shot's start; a clip that keeps its own sound has no voice.
+    // (fal's audio joiner turned down our voice files, so the mix places the lines itself.)
     for (let i = 0; i < n; i++) {
       if (keeps(i) || !job.voices[i]) continue;
-      const g = groups[groups.length - 1];
-      if (g && g[g.length - 1] === i - 1) g.push(i);
-      else groups.push([i]);
-    }
-    for (const g of groups) {
-      const urls = g.map((i) => job.voices[i]!);
-      const key = urls.join(",");
-      job.voiceRuns ??= {};
-      if (urls.length > 1 && !job.voiceRuns[key]) {
-        step("Joining the voice into one track");
-        job.voiceRuns[key] = await joinAll(urls, 60, (part) => tool({ tool: "voice-join", audioUrls: part }, MERGE_AUDIO_MODEL.id));
-        save(job);
-      }
-      const url = urls.length > 1 ? job.voiceRuns[key] : urls[0];
-      runs.push({ url, at: starts[g[0]], seconds: g.reduce((t, i) => t + lengths[i], 0) });
+      runs.push({ url: job.voices[i]!, at: starts[i], seconds: lengths[i] });
     }
   }
   const keep = opts.live ? beats.map((_, i) => i).filter(keeps).map((i) => ({ url: job.parts[i].url!, at: starts[i], seconds: lengths[i] })) : [];
