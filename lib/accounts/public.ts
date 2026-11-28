@@ -16,6 +16,7 @@ export function publicUser(u: User) {
     voice: u.voice ? { at: u.voice.at } : null,
     promiseUsed: u.promise?.month === monthKey(Date.now()) ? u.promise.used : 0,
     createdAt: u.createdAt,
+    passkeys: (u.passkeys ?? []).map((p) => ({ key: p.key, label: p.label, at: p.at, lastUsed: p.lastUsed ?? null })),
   };
 }
 

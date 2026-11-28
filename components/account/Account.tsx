@@ -19,6 +19,7 @@ export type Me = {
   voice: { at: number } | null;
   promiseUsed: number;
   createdAt: number;
+  passkeys?: { key: string; label: string; at: number; lastUsed: number | null }[];
 };
 
 type Ctx = { me: Me; refresh: () => void; signOut: () => Promise<void> };

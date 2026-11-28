@@ -28,3 +28,10 @@ export function isAdminEmail(email: string | null | undefined): boolean {
   const e = cleanEmail(email ?? "");
   return !!e && adminEmails().includes(e);
 }
+
+// "Continue with Google": on when the Google sign-in settings are in Netlify too.
+//   GOOGLE_CLIENT_ID      from Google Cloud (it isn't secret)
+//   GOOGLE_CLIENT_SECRET  from Google Cloud (secret; only the owner adds it)
+export function googleOn(): boolean {
+  return accountsOn() && Boolean(process.env.GOOGLE_CLIENT_ID?.trim()) && Boolean(process.env.GOOGLE_CLIENT_SECRET?.trim());
+}
