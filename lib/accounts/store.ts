@@ -41,11 +41,18 @@ export type User = {
   group?: number;
   /** The month (e.g. 2026-12) the Free plan's credits were last topped up. */
   freeMonth?: string;
+  /** Passkeys they added for faster sign-in (the keys themselves are kept under passkey/). */
+  passkeys?: PasskeySummary[];
+  /** How they last signed in. */
+  lastMethod?: SignInMethod;
   /** When their free Founding month ended and they moved to the Free plan. */
   foundingEnded?: string;
   /** The free month end date the founding price message was sent for. */
   reminderSent?: string;
 };
+
+export type SignInMethod = "code" | "google" | "passkey";
+export type PasskeySummary = { key: string; label: string; at: number; lastUsed?: number };
 
 export type Invite = {
   email: string;
@@ -203,10 +210,26 @@ export async function finishSignIn(raw: string, code: string, now = Date.now()):
     return { ok: false, reason: "wrong" };
   }
   await s.delete(key);
-  if (!(await maySignIn(email))) return { ok: false, reason: "not-invited" };
+  const r = await signInWithEmail(email, "code", now);
+  return r ?? { ok: false, reason: "not-invited" };
+}
+
+/**
+ * Signs in someone whose email is already proven (by a code we emailed, or by
+ * Google saying the address is theirs). Same invite-only rules as the code:
+ * null when this email isn't invited. Makes the account the first time.
+ */
+export async function signInWithEmail(raw: string, method: SignInMethod, now = Date.now()): Promise<{ ok: true; user: User } | null> {
+  const email = cleanEmail(raw);
+  if (!email || !(await maySignIn(email))) return null;
   const user = (await findUserByEmail(email)) ?? (await createUser(email, now));
-  const signedIn = await saveUser(user.id, (u) => ({ ...u, lastSignIn: now, admin: isAdminEmail(u.email) || undefined }));
-  return { ok: true, user: signedIn ?? user };
+  return signedIn(user, method, now);
+}
+
+/** Notes the sign-in on the account (when, and how). */
+export async function signedIn(user: User, method: SignInMethod, now = Date.now()): Promise<{ ok: true; user: User }> {
+  const saved = await saveUser(user.id, (u) => ({ ...u, lastSignIn: now, lastMethod: method, admin: isAdminEmail(u.email) || undefined }));
+  return { ok: true, user: saved ?? user };
 }
 
 // ---------- credits ----------
@@ -510,6 +533,7 @@ export async function deleteAccount(userId: string): Promise<boolean> {
     `email/${emailKey(user.email)}`,
     `invite/${emailKey(user.email)}`,
     `code/${emailKey(user.email)}`,
+    ...(user.passkeys ?? []).map((p) => `passkey/${p.key}`),
     `user/${userId}`,
   ];
   for (const k of keys) await s.delete(k);

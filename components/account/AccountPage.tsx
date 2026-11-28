@@ -10,6 +10,8 @@ import { clearDevice, SYNCED } from "./sync";
 import { BRAND_NAME } from "@/lib/founding";
 import { MONTHLY_CAP } from "@/lib/promise";
 import { foundingPriceLines, SHARE_LINE } from "@/lib/foundingOffer";
+import { browserSupportsWebAuthn } from "@simplewebauthn/browser";
+import { addPasskeyHere } from "./passkey";
 
 type Line = { at: number; type: string; credits: number; balance: number; what: string };
 type Referral = { code: string | null; joined: number; credited: number; waiting: number; max: number; bonus: number };
@@ -30,6 +32,8 @@ export default function AccountPage() {
   const [referral, setReferral] = useState<Referral | null>(null);
   const [stage, setStage] = useState<Stage>(null);
   const [copied, setCopied] = useState(false);
+  const [canPasskey, setCanPasskey] = useState(false);
+  const [pkBusy, setPkBusy] = useState(false);
 
   async function load() {
     const r = await fetch("/api/me?history=1", { cache: "no-store" }).catch(() => null);
@@ -47,7 +51,25 @@ export default function AccountPage() {
 
   useEffect(() => {
     void load();
+    setCanPasskey(browserSupportsWebAuthn());
   }, []);
+
+  async function addPasskey() {
+    setPkBusy(true);
+    setError(null);
+    const err = await addPasskeyHere();
+    setPkBusy(false);
+    if (err) return setError(err);
+    setDone("Passkey added. Next time, tap “Sign in with a passkey” on the sign-in page.");
+    void load();
+  }
+
+  async function removePasskey(key: string) {
+    const r = await fetch(`/api/me/passkeys?key=${encodeURIComponent(key)}`, { method: "DELETE" }).catch(() => null);
+    if (!r?.ok) return setError("We couldn't remove that passkey. Please try again.");
+    setDone("Passkey removed. It can't be used to sign in any more.");
+    void load();
+  }
 
   async function deleteVoice() {
     const r = await fetch("/api/me/voice", { method: "DELETE" }).catch(() => null);
@@ -182,6 +204,39 @@ export default function AccountPage() {
               ))}
             </tbody>
           </table>
+        )}
+      </section>
+
+      <section className="account-card">
+        <h2>Passkeys</h2>
+        <p className="muted">
+          A passkey lets you sign in with your fingerprint, face or screen lock instead of waiting for an email code. It stays on your device and works only
+          on {BRAND_NAME}.
+        </p>
+        {(me.passkeys ?? []).length > 0 && (
+          <ul className="acct-passkeys">
+            {(me.passkeys ?? []).map((p) => (
+              <li key={p.key}>
+                <span>
+                  {p.label}
+                  <small>
+                    Added {new Date(p.at).toLocaleDateString()}
+                    {p.lastUsed ? `, last used ${new Date(p.lastUsed).toLocaleDateString()}` : ""}
+                  </small>
+                </span>
+                <button className="btn" onClick={() => removePasskey(p.key)}>
+                  Remove
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        {canPasskey ? (
+          <button className="btn" onClick={addPasskey} disabled={pkBusy}>
+            {pkBusy ? "Waiting for your device…" : (me.passkeys ?? []).length ? "Add a passkey on this device" : "Add a passkey"}
+          </button>
+        ) : (
+          <p className="muted">This browser can&apos;t use passkeys. You can still sign in with Google or your email.</p>
         )}
       </section>
 
