@@ -48,6 +48,9 @@ function joinLessons(a?: string[], b?: unknown): string[] | undefined {
 }
 import { BRAND_LOGO, BRAND_LOGO_SIZE, BRAND_MARK as BRAND_MARK_FILE, BRAND_NAME, COPYRIGHT_NOTICE, FILM_NAME, LOGO_HAS_NAME } from "@/lib/appBrand";
 import FilmSet, { draftFromJob } from "./FilmSet";
+import ScriptToVideo from "./ScriptToVideo";
+import { buildScript } from "./scriptRunner";
+import { buildMinutes, captionsFile, newScriptJob, SCRIPT_NAME, scriptCost, scriptSeconds, type ScriptJob } from "@/lib/script";
 import { buildFilm, changeShot, freshFilm, type FilmJob } from "./filmRunner";
 import { filmCost, shotSecondsFor, STILL_MODEL_ID } from "@/lib/filmset";
 import { AI_LABEL_NOTE, characterRefs } from "@/lib/characters";
@@ -91,6 +94,7 @@ type Item = {
   ad?: AdJob; // a full ad: planned scenes, voiceover and music
   talk?: TalkJob; // you, talking: your words in your own voice, said by your own photo
   film?: FilmJob; // Film Set: shots directed one by one, with the same characters in each
+  script?: ScriptJob; // Script to Video: the person's own script, every line with its own shot
   takes?: Takes; // behind the scenes: checked first-frame pictures for a video, or two takes of a premium picture
   scale?: number; // "Sharpen to HD": how much bigger the video gets
   creditUsd?: number; // what an ad version costs to make, worked out when it starts
@@ -201,7 +205,7 @@ const BRAND_MARK = "\n\nOn brand: ";
 /** Asking for a picture in another shape, like "other shapes" or "make it vertical for TikTok". */
 const RESHAPE = /\b(other shapes?|resize|re-size|reshape|(make it|turn it into|as an?) (vertical|square|landscape|portrait|wide|tall)|9:16|1:1|16:9|(for|to fit) (tiktok|reels?|shorts|instagram|youtube))\b/i;
 const SHAPE_USES: Record<string, string> = { "9:16": "TikTok, Reels and Shorts", "1:1": "the Instagram feed", "16:9": "YouTube and websites" };
-type View = "home" | "create" | "templates" | "gallery" | "brand" | "film";
+type View = "home" | "create" | "templates" | "gallery" | "brand" | "film" | "script";
 const STORAGE_KEY = "genstudio.gallery.v1";
 const MAX_ITEMS = 200;
 
@@ -314,6 +318,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
   const [talkLang, setTalkLang] = useState("English");
   const talkRuns = useRef(new Set<string>());
   const filmRuns = useRef(new Set<string>());
+  const scriptRuns = useRef(new Set<string>());
   const [filmDraft, setFilmDraft] = useState<ReturnType<typeof draftFromJob> | null>(null);
   const [filmKey, setFilmKey] = useState(0); // remounts Film Set when a film is reopened
   // Brand kit, saved in this browser and switched on per project.
@@ -444,7 +449,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
     const t = TEMPLATES.find((x) => x.id === params.get("template"));
     const v = params.get("view");
     if (t) startTemplate(t);
-    else if (v === "create" || v === "templates" || v === "gallery" || v === "brand" || v === "film") setView(v);
+    else if (v === "create" || v === "templates" || v === "gallery" || v === "brand" || v === "film" || v === "script") setView(v);
     else return;
     window.history.replaceState(null, "", window.location.pathname);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -611,6 +616,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
     items.filter((it) => it.status === "pending" && it.ad).forEach(runAd);
     items.filter((it) => it.status === "pending" && it.talk).forEach(runTalk);
     items.filter((it) => it.status === "pending" && it.film).forEach(runFilm);
+    items.filter((it) => it.status === "pending" && it.script).forEach(runScript);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded]);
 
@@ -1326,6 +1332,63 @@ export default function Studio({ mode }: { mode: AppMode }) {
     }
   }
 
+  /** Starts a Script to Video. Its whole plan and price were shown first. */
+  function startScript(job: ScriptJob, parentId?: string): string | null {
+    if (mode === "locked") return "Real generation is switched off.";
+    if (!hasAcceptedTerms()) {
+      setAskTerms(true);
+      return null;
+    }
+    const secs = Math.round(scriptSeconds(job.plan.beats));
+    const item: Item = {
+      id: crypto.randomUUID(),
+      kind: "video",
+      modelId: AD_T2V,
+      modelName: `${SCRIPT_NAME} · ${secs < 60 ? `${secs}s` : `${Math.round(secs / 60)} min`}`,
+      prompt: `${job.plan.title}. ${job.plan.beats.map((b) => b.text).join(" ")}`.slice(0, 1500),
+      aspectRatio: job.aspectRatio,
+      duration: secs,
+      status: "pending",
+      createdAt: Date.now(),
+      parentId,
+      wantSound: true,
+      hasAudio: true,
+      creditUsd: scriptCost(job.plan, { voice: job.voice.kind, captions: job.captions, music: job.music }),
+      autoReason: `${job.plan.beats.length} lines of your script, each with its own shot`,
+      script: job,
+    };
+    madeHere.current.add(item.id);
+    setItems((prev) => [item, ...prev]);
+    setSelectedId(item.id);
+    setView("create");
+    setComposing(false);
+    runScript(item);
+    return null;
+  }
+
+  /** Makes a Script to Video one step at a time. Safe to call again to carry on. */
+  async function runScript(start: Item) {
+    if (!start.script || scriptRuns.current.has(start.id)) return;
+    scriptRuns.current.add(start.id);
+    const job: ScriptJob = JSON.parse(JSON.stringify(start.script));
+    const save = (j: ScriptJob, patch: Partial<Item> = {}) => update(start.id, { script: JSON.parse(JSON.stringify(j)), ...patch });
+    try {
+      update(start.id, { status: "pending", error: undefined, stepStartedAt: Date.now(), phase: "working" });
+      const out = await buildScript(job, (j, moved) => save(j, moved ? { stepStartedAt: Date.now() } : {}), { live: mode === "live" });
+      job.lengths = out.lengths;
+      save(job, { status: "done", url: out.url, hasAudio: mode === "live", demo: out.url.startsWith("data:") || undefined });
+    } catch (e) {
+      job.step = undefined;
+      save(job, { status: "failed", error: (e as Error).message || "The video stopped partway." });
+    } finally {
+      scriptRuns.current.delete(start.id);
+    }
+  }
+
+  /** A fresh copy of a Script to Video, made again from the same plan. */
+  const freshScript = (j: ScriptJob) => newScriptJob({ plan: j.plan, aspectRatio: j.aspectRatio, voice: j.voice, language: j.language, captions: j.captions, music: j.music, clips: j.clips, refs: j.refs });
+  const scriptJobCost = (j: ScriptJob) => scriptCost(j.plan, { voice: j.voice.kind, captions: j.captions, music: j.music });
+
   /** What a film costs: only the parts still to make (a changed shot remakes just that shot). */
   function filmJobCost(job: FilmJob): number {
     const todo = job.shots.filter((s) => !s.url && !(job.still && s.frameUrl)).length;
@@ -1355,6 +1418,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
     if (it.ad) return it.creditUsd ?? adCost(it.ad.plan, Boolean(it.ad.refs?.length), Boolean(it.ad.check?.on));
     if (it.talk) return talkCost(it.talk.seconds, it.talk.text.length);
     if (it.film) return it.creditUsd ?? filmJobCost(it.film);
+    if (it.script) return it.creditUsd ?? scriptJobCost(it.script);
     if (it.story) return storyCost(it.story.firstModelId, Math.max(1, it.story.shots.length || it.story.wantShots || 1), it.story.sound, Boolean(it.story.refs?.length));
     const m = getModel(it.modelId);
     return m ? jobCost(m, it.duration, Boolean(it.wantSound), it.quality) : 0;
@@ -1370,7 +1434,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
       if (it.status === "done" && !it.charged) {
         if (!it.free && mode === "live") logUsed(it.id, creditsFor(itemCost(it)), it.modelName);
         if (!it.design) learn(it, "made");
-        const check = mode === "live" && it.kind === "video" && Boolean(it.url) && !it.ad && !it.talk && !it.film && !it.demo;
+        const check = mode === "live" && it.kind === "video" && Boolean(it.url) && !it.ad && !it.talk && !it.film && !it.script && !it.demo;
         update(it.id, { charged: true, promise: undefined, promiseCheck: check ? "running" : undefined });
         if (check) autoCheck(it);
         if (it.ad?.check?.faultsLeft?.length) adPromise(it);
@@ -1378,7 +1442,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
         update(it.id, {
           promise: {
             type: "refund",
-            note: it.ad || it.story || it.film
+            note: it.ad || it.story || it.film || it.script
               ? "It stopped partway, so it uses no credits. Carrying on finishes it without paying again for the parts already made."
               : promiseNote(decide({ failed: true, usedThisMonth: 0 }))!,
           },
@@ -1905,6 +1969,10 @@ export default function Studio({ mode }: { mode: AppMode }) {
       editFilm(it);
       return;
     }
+    if (it.script) {
+      go("script");
+      return;
+    }
     if (it.talk) {
       setAdMode(false);
       setTalkMode(true);
@@ -1968,6 +2036,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
     if (it.ad) return adCost(it.ad.plan, !!it.ad.refs?.length, !!it.ad.check?.on);
     if (it.talk) return talkCost(it.talk.seconds, it.talk.text.length);
     if (it.film) return filmJobCost(freshFilm(it.film));
+    if (it.script) return scriptJobCost(it.script);
     if (it.story) return storyCost(it.story.firstModelId, storyShotCount(it), it.story.sound, !!it.story.refs?.length);
     const m = getModel(it.modelId);
     if (!m) return null;
@@ -1984,6 +2053,11 @@ export default function Studio({ mode }: { mode: AppMode }) {
     if (it.film) {
       const job = freshFilm(it.film);
       const err = startFilm({ ...job, cast: job.cast.map((c) => ({ ...c, ...latestLook(c.id) })) }, it.id);
+      if (err) say(rootOf(it.id), it.id, { text: err });
+      return;
+    }
+    if (it.script) {
+      const err = startScript(freshScript(it.script), it.id);
       if (err) say(rootOf(it.id), it.id, { text: err });
       return;
     }
@@ -2491,6 +2565,12 @@ export default function Studio({ mode }: { mode: AppMode }) {
       });
       return;
     }
+    if (it.script) {
+      // A Script to Video changes line by line, where every line and its shot are shown.
+      reply({ text: `To change a line's shot, swap a shot between AI, stock, a still and your own clip, or change the voice, open it in ${SCRIPT_NAME}. Your plan is still there, ready to change.` });
+      go("script");
+      return;
+    }
     if (it.film && new RegExp(`^open in ${FILM_NAME}$`, "i").test(text)) {
       editFilm(it);
       return;
@@ -2711,7 +2791,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
   const chips: { label: string; text: string }[] = [];
   if (selected?.status === "done" && selected.url) {
     chips.push({ label: "🔍 Find what's wrong", text: "Find what's wrong" });
-    if (selected.talk) {
+    if (selected.talk || selected.script) {
       chips.length = 0;
     } else if (selected.film) {
       chips.length = 0;
@@ -3911,6 +3991,10 @@ export default function Studio({ mode }: { mode: AppMode }) {
         {selected.film && selected.status !== "done" && (
           <StoryPanel item={selected} running={filmRuns.current.has(selected.id)} onResume={runFilm} />
         )}
+        {selected.script && selected.status !== "done" && (
+          <StoryPanel item={selected} running={scriptRuns.current.has(selected.id)} onResume={runScript} />
+        )}
+        {selected.script && selected.status === "done" && <ScriptSummary job={selected.script} />}
         <div className="viewer-actions">
           {selected.url && (
             <button className="btn btn-light" onClick={() => download(selected)}>
@@ -4238,6 +4322,12 @@ export default function Studio({ mode }: { mode: AppMode }) {
             </span>
             {FILM_NAME} <span className="soon-tag new-tag">New</span>
           </button>
+          <button className={view === "script" ? "nav-item active" : "nav-item"} onClick={() => go("script")}>
+            <span className="nav-icon" aria-hidden>
+              📜
+            </span>
+            {SCRIPT_NAME} <span className="soon-tag new-tag">New</span>
+          </button>
           <div className="nav-divider" />
           <button className={view === "brand" ? "nav-item active" : "nav-item"} onClick={() => go("brand")}>
             <span className="nav-icon" aria-hidden>
@@ -4310,6 +4400,17 @@ export default function Studio({ mode }: { mode: AppMode }) {
             }}
           />
         )}
+        {view === "script" && (
+          <ScriptToVideo
+            mode={mode}
+            brand={brand}
+            brandOn={brandOn}
+            kitRefs={kitPics ?? []}
+            eleven={eleven}
+            language={languageFromLocale(typeof navigator === "undefined" ? undefined : navigator.language)}
+            onStart={(job) => startScript(job)}
+          />
+        )}
         {view === "brand" && <BrandKit brand={brand} onChange={setBrand} mode={mode} onUseIdea={makeIdea} eleven={eleven} onEleven={setEleven} />}
       </main>
 
@@ -4318,7 +4419,8 @@ export default function Studio({ mode }: { mode: AppMode }) {
           onCancel={() => setAskTerms(false)}
           onAgree={() => {
             setAskTerms(false);
-            setTimeout(generate, 0);
+            // In Script to Video the person presses Make again; the Create form isn't started from there.
+            if (view !== "script") setTimeout(generate, 0);
           }}
         />
       )}
@@ -4445,6 +4547,32 @@ function PendingTile({ item }: { item: Item }) {
     const t = setInterval(() => setNow(Date.now()), 500);
     return () => clearInterval(t);
   }, []);
+  if (item.script) {
+    const job = item.script;
+    const n = job.plan.beats.length;
+    // Steps: the voice, the shots, joining, and the mix (plus captions).
+    const steps = 4 + (job.captions ? 1 : 0);
+    const voiced = job.lengths.filter(Boolean).length >= n;
+    const shots = job.parts.filter((p) => p.url).length;
+    const done = (voiced ? 1 : 0) + (shots >= n ? 1 : 0) + ((job.sections?.length ?? 0) >= Math.ceil(n / 12) ? 1 : 0) + (job.mixedUrl ? 1 : 0);
+    const view = progressView({
+      phase: "working",
+      elapsedSec: (now - (item.stepStartedAt ?? now)) / 1000,
+      typicalSec: voiced && shots < n ? 100 : 40,
+      step: Math.min(steps, done + 1),
+      steps,
+      stepLabel: job.step ?? "Getting your script ready",
+    });
+    return (
+      <div className="tile-state">
+        <span className="progress-label">{view.label}</span>
+        <div className="progress" role="progressbar" aria-valuenow={Math.round(view.percent)} aria-valuemin={0} aria-valuemax={100}>
+          <div className="progress-fill" style={{ width: `${view.percent}%` }} />
+        </div>
+        <span className="muted small">{voiced ? `${shots} of ${n} shots made · about ${buildMinutes(job.plan.beats)} minutes in all` : view.timeLeft}</span>
+      </div>
+    );
+  }
   if (item.film) {
     const job = item.film;
     const n = job.shots.length;
@@ -4901,6 +5029,28 @@ function AdSummary({ job }: { job: AdJob }) {
         </div>
       )}
     </details>
+  );
+}
+
+/** Under a finished Script to Video: the free captions file with the person's exact words. */
+function ScriptSummary({ job }: { job: ScriptJob }) {
+  const lines = job.plan.beats.map((b) => b.text);
+  const lengths = lines.map((_, i) => job.lengths[i] ?? 3);
+  function save() {
+    const blob = new Blob([captionsFile(lines, lengths)], { type: "application/x-subrip" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `${(job.plan.title || "captions").replace(/[^\w-]+/g, "-").slice(0, 40)}.srt`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+  return (
+    <div className="final-box">
+      <button className="btn btn-light" onClick={save}>
+        Download captions file (.srt)
+      </button>
+      <p className="hint">Your exact words with their timings. Upload it with the video on YouTube or TikTok for captions viewers can switch on.</p>
+    </div>
   );
 }
 

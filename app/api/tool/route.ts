@@ -6,7 +6,7 @@ import { AD_VOICES, DEFAULT_VOICE, lineSeconds, SCENE_AVOID } from "@/lib/adplan
 import { makeDemoMedia } from "@/lib/demo";
 import { payForStep } from "@/lib/accounts/current";
 import { toolUsd } from "@/lib/accounts/credits";
-import { CARD_MOTION_MODEL, COMPOSE_MODEL, isFalMediaUrl, LAST_FRAME_MODEL, MERGE_VIDEOS_MODEL, MUSIC_MODEL, NATIVE_TALK_MODELS, TALK_VIDEO_MODEL, VOICE_MODEL } from "@/lib/models";
+import { CAPTIONS_MODEL, CARD_MOTION_MODEL, COMPOSE_MODEL, isFalMediaUrl, isStockVideoUrl, MERGE_AUDIO_MODEL, TRANSCRIBE_MODEL, LAST_FRAME_MODEL, MERGE_VIDEOS_MODEL, MUSIC_MODEL, NATIVE_TALK_MODELS, TALK_VIDEO_MODEL, VOICE_MODEL } from "@/lib/models";
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +22,18 @@ export const dynamic = "force-dynamic";
 // - talk-native: an ad scene said on screen in one step (Kling 3): the line is in
 //   the prompt and the model makes the voice and the moving mouth together
 // - join: joins scenes of different lengths on one timeline (used if merge can't)
+// Script to Video (long videos):
+// - script-join: places up to 14 shots (AI, stock, stills, the person's own clips) one after another, each cut to its line's length
+// - script-merge: joins finished sections into one video
+// - voice-join: joins the voiceover lines into one track
+// - still-move: a still picture with a slow zoom or pan
+// - script-mix: the whole video, its voice track, music repeated under it, and the sound of the person's own clips they kept
+// - captions: burns captions into the finished video
+// - transcribe: hears the person's own recording, with the time of every word
 type Body = {
+  audioUrls?: unknown;
+  keep?: { url?: string; at?: number; seconds?: number }[];
+  language?: string;
   tool?: string;
   urls?: unknown;
   text?: string;
@@ -55,6 +66,8 @@ export async function POST(req: Request) {
   let input: Record<string, unknown>;
   let demoUrl = "";
   const allUrls: string[] = [];
+  const stockUrls: string[] = []; // may also be free stock videos
+  let scriptSeconds = 0;
 
   switch (body.tool) {
     case "last-frame":
@@ -161,16 +174,123 @@ export async function POST(req: Request) {
       demoUrl = urls[urls.length - 1];
       break;
     }
+    case "script-join": {
+      // Each shot is cut to its line's length. Stock videos come straight from Pexels or Pixabay.
+      const list = Array.isArray(body.urls) ? body.urls.map(String).slice(0, 15) : [];
+      const durations = Array.isArray(body.durations) ? body.durations.map((d) => Math.max(0.5, Math.min(20, Number(d) || 5))) : [];
+      if (list.length === 0 || list.length > 14 || durations.length !== list.length) return bad();
+      let at = 0;
+      const keyframes = list.map((url, i) => {
+        const k = { url, timestamp: Math.round(at * 1000), duration: Math.round(durations[i] * 1000) };
+        at += durations[i];
+        return k;
+      });
+      modelId = COMPOSE_MODEL.id;
+      input = { tracks: [{ id: "video", type: "video", keyframes }] };
+      stockUrls.push(...list);
+      scriptSeconds = at;
+      demoUrl = list[0];
+      break;
+    }
+    case "script-merge": {
+      const list = Array.isArray(body.urls) ? body.urls.map(String).slice(0, 15) : [];
+      if (list.length === 0 || list.length > 14) return bad();
+      modelId = MERGE_VIDEOS_MODEL.id;
+      input = { video_urls: list, resolution_aspect_ratio_video_index: 0 };
+      allUrls.push(...list);
+      demoUrl = list[0];
+      break;
+    }
+    case "voice-join": {
+      const list = Array.isArray(body.audioUrls) ? body.audioUrls.map(String).slice(0, 61) : [];
+      if (list.length === 0 || list.length > 60) return bad();
+      modelId = MERGE_AUDIO_MODEL.id;
+      input = { audio_urls: list, output_format: "mp3_44100_128" };
+      allUrls.push(...list);
+      demoUrl = list[0];
+      break;
+    }
+    case "still-move": {
+      const imageUrl = String(body.imageUrl ?? "");
+      const prompt = String(body.prompt ?? "").trim().slice(0, 400);
+      if (!imageUrl || !prompt || !checkPrompt(prompt).ok) return bad();
+      const secs = Math.max(1, Math.min(10, Number(body.seconds) || 5));
+      modelId = CARD_MOTION_MODEL.id;
+      input = {
+        image_url: imageUrl,
+        prompt,
+        negative_prompt: "morphing, warping, distorted, jittery, blurry, new objects, text, captions",
+        num_frames: Math.min(241, Math.round(secs * 24) + 1),
+        resolution: "720p",
+        aspect_ratio: "auto",
+      };
+      allUrls.push(imageUrl);
+      scriptSeconds = secs;
+      demoUrl = imageUrl;
+      break;
+    }
+    case "script-mix": {
+      const videoUrl = String(body.videoUrl ?? "");
+      const secs = Math.max(1, Math.min(3600, Number(body.seconds) || 0));
+      if (!videoUrl || !secs) return bad();
+      const ms = Math.round(secs * 1000);
+      const tracks: Record<string, unknown>[] = [{ id: "video", type: "video", keyframes: [{ url: videoUrl, timestamp: 0, duration: ms }] }];
+      // The voiceover, in runs of lines (a clip whose own sound is kept breaks a run).
+      const voiceRuns = (Array.isArray(body.voices) ? body.voices : [])
+        .filter((v) => v && typeof v.url === "string" && v.url)
+        .slice(0, 60)
+        .map((v) => ({ url: String(v.url), timestamp: Math.max(0, Math.round(Number(v.at) * 1000) || 0), duration: Math.max(500, Math.round(Number(v.seconds) * 1000) || 4000) }));
+      if (voiceRuns.length) tracks.push({ id: "voice", type: "audio", keyframes: voiceRuns });
+      // The person's own clips whose sound they kept.
+      const keep = (Array.isArray(body.keep) ? body.keep : [])
+        .filter((v) => v && typeof v.url === "string" && v.url)
+        .slice(0, 60)
+        .map((v) => ({ url: String(v.url), timestamp: Math.max(0, Math.round(Number(v.at) * 1000) || 0), duration: Math.max(500, Math.round(Number(v.seconds) * 1000) || 4000) }));
+      if (keep.length) tracks.push({ id: "own", type: "audio", keyframes: keep });
+      // One music bed, repeated under a long video.
+      if (body.musicUrl) {
+        const bed = 60000;
+        const music = [];
+        for (let t = 0; t < ms && music.length < 60; t += bed) music.push({ url: String(body.musicUrl), timestamp: t, duration: Math.min(bed, ms - t) });
+        tracks.push({ id: "music", type: "audio", keyframes: music });
+      }
+      modelId = COMPOSE_MODEL.id;
+      input = { tracks };
+      allUrls.push(videoUrl, ...voiceRuns.map((v) => v.url), ...keep.map((k) => k.url), ...(body.musicUrl ? [String(body.musicUrl)] : []));
+      scriptSeconds = secs;
+      demoUrl = videoUrl;
+      break;
+    }
+    case "captions": {
+      const videoUrl = String(body.videoUrl ?? "");
+      if (!videoUrl) return bad();
+      modelId = CAPTIONS_MODEL.id;
+      input = { video_url: videoUrl, language: captionLanguage(body.language), font_size: 70, words_per_subtitle: 4, position: "bottom", highlight_color: "yellow" };
+      allUrls.push(videoUrl);
+      scriptSeconds = Math.max(1, Math.min(3600, Number(body.seconds) || 60));
+      demoUrl = videoUrl;
+      break;
+    }
+    case "transcribe": {
+      const audioUrl = String(body.audioUrl ?? "");
+      if (!audioUrl) return bad();
+      modelId = TRANSCRIBE_MODEL.id;
+      input = { audio_url: audioUrl, task: "transcribe", chunk_level: "word", language: captionLanguage(body.language) };
+      allUrls.push(audioUrl);
+      scriptSeconds = Math.max(1, Math.min(3600, Number(body.seconds) || 60));
+      break;
+    }
     default:
       return bad();
   }
 
   // Demo mode has no AI service: pictures and videos pass straight through, sound is skipped.
   if (mode === "demo") return NextResponse.json({ status: "COMPLETED", demo: true, url: demoUrl });
+  if (!stockUrls.every((u) => isFalMediaUrl(u) || isStockVideoUrl(u))) return NextResponse.json({ error: "Only results made in ToastyFly, or free stock videos, can be used." }, { status: 400 });
   if (!allUrls.every(isFalMediaUrl)) return NextResponse.json({ error: "Only results made in ToastyFly can be used." }, { status: 400 });
 
   const spoken = body.tool === "talk-scene" ? String(body.text ?? "") : typeof input.text === "string" ? input.text : "";
-  const pay = await payForStep(req, toolUsd(String(body.tool), { model: body.model, seconds: body.tool === "talk-native" ? 5 : body.tool === "talk-scene" ? lineSeconds(spoken) + 0.5 : seconds, text: spoken }), TOOL_NAMES[String(body.tool)] ?? "Video tool");
+  const pay = await payForStep(req, toolUsd(String(body.tool), { model: body.model, seconds: body.tool === "talk-native" ? 5 : body.tool === "talk-scene" ? lineSeconds(spoken) + 0.5 : scriptSeconds || seconds, text: spoken }), TOOL_NAMES[String(body.tool)] ?? "Video tool");
   if (pay.error) return pay.error;
   try {
     const { request_id } = await fal.queue.submit(modelId, { input });
@@ -193,7 +313,20 @@ const TOOL_NAMES: Record<string, string> = {
   mix: "Mixing the ad",
   "talk-scene": "Talking scene, lips matched",
   join: "Joining scenes",
+  "script-join": "Joining shots",
+  "script-merge": "Joining sections",
+  "voice-join": "Joining the voiceover",
+  "still-move": "Picture with a slow move",
+  "script-mix": "Mixing the video",
+  captions: "Captions",
+  transcribe: "Lining up your recording",
 };
+
+/** The captions and transcription language code, from the language name. */
+function captionLanguage(l: unknown): string {
+  const codes: Record<string, string> = { English: "en", Spanish: "es", French: "fr", German: "de", Italian: "it", Portuguese: "pt", Dutch: "nl", Polish: "pl", Swedish: "sv", Danish: "da", Norwegian: "no", Finnish: "fi", Greek: "el", Czech: "cs", Romanian: "ro", Hungarian: "hu", Ukrainian: "uk", Russian: "ru", Turkish: "tr", Arabic: "ar", Hindi: "hi", Tamil: "ta", Indonesian: "id", Malay: "ms", Vietnamese: "vi", Japanese: "ja", Korean: "ko", Chinese: "zh" };
+  return codes[String(l)] ?? "en";
+}
 
 function bad() {
   return NextResponse.json({ error: "Bad request." }, { status: 400 });

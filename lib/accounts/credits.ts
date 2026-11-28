@@ -6,7 +6,10 @@
 
 import { CREDIT_COST_USD, COST_MARGIN } from "../pricing";
 import {
+  CAPTIONS_MODEL,
   CARD_MOTION_MODEL,
+  MERGE_AUDIO_MODEL,
+  TRANSCRIBE_MODEL,
   COMPOSE_MODEL,
   estimateCost,
   LAST_FRAME_MODEL,
@@ -59,6 +62,19 @@ export function toolUsd(tool: string, opts: { seconds?: number; text?: string; m
       return secs * unitPrice(TALK_VIDEO_MODEL);
     case "join":
       return secs * unitPrice(COMPOSE_MODEL);
+    case "script-join":
+    case "script-mix":
+      return secs * unitPrice(COMPOSE_MODEL);
+    case "script-merge":
+      return unitPrice(MERGE_VIDEOS_MODEL);
+    case "voice-join":
+      return unitPrice(MERGE_AUDIO_MODEL);
+    case "still-move":
+      return secs * unitPrice(CARD_MOTION_MODEL);
+    case "captions":
+      return Math.ceil(secs / 60) * unitPrice(CAPTIONS_MODEL);
+    case "transcribe":
+      return Math.ceil(secs / 60) * unitPrice(TRANSCRIBE_MODEL);
     case "talk-native":
       return secs * unitPrice(NATIVE_TALK_MODELS[opts.model === "seedance" ? "seedance" : "kling3"]);
     default:
