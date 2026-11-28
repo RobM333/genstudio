@@ -33,7 +33,7 @@ export async function POST(req: Request) {
     const { fal } = await import("@/lib/fal");
     let timer: ReturnType<typeof setTimeout> | undefined;
     const result = (await Promise.race([
-      fal.run("fal-ai/any-llm", {
+      fal.run("openrouter/router", {
         input: {
           model: process.env.ENHANCER_MODEL || "google/gemini-2.5-flash",
           system_prompt: scriptPlanInstructions({ count: lines.length, first: Boolean(body.first), look, brand, star }),

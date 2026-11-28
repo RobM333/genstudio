@@ -695,7 +695,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
         }
         const urls = t.urls!;
         t.step = urls.length > 1 ? "Picking the best take" : "Checking the shot";
-        save({ stepStartedAt: Date.now(), jobModelId: "fal-ai/any-llm/vision" });
+        save({ stepStartedAt: Date.now(), jobModelId: "openrouter/router/vision" });
         const checks = await Promise.all(urls.map((u) => checkPart("image", u, basePrompt(start))));
         let i = pickBest(checks);
         if (video && !t.redone && allClearlyWrong(checks)) {
@@ -1743,7 +1743,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
       update(start.id, { status: "pending", error: undefined, stepStartedAt: Date.now(), phase: "working" });
       if (story.shots.length === 0) {
         story.step = "Planning the shots";
-        save({ jobModelId: "fal-ai/any-llm" });
+        save({ jobModelId: "openrouter/router" });
         const prompts = await planStory(start.prompt, story.shotSeconds, (story.wantShots ?? 2) * story.shotSeconds);
         story.shots = prompts.map((prompt) => ({ prompt, status: "waiting" as const }));
         save();

@@ -46,7 +46,7 @@ export async function POST(req: Request) {
         ? `Product: ${brief.product}\nAudience: ${brief.audience}\n\nCurrent plan:\n${JSON.stringify(body.plan).slice(0, 6000)}\n\nChange requested by the user:\n${request}`
         : `Product: ${brief.product}\nAudience: ${brief.audience || "not given, pick the most likely buyers"}`;
       const result = (await Promise.race([
-        fal.run("fal-ai/any-llm", {
+        fal.run("openrouter/router", {
           input: {
             model: process.env.ENHANCER_MODEL || "google/gemini-2.5-flash",
             system_prompt: revising ? revisePlanInstructions(brief) : adPlanInstructions(brief),
