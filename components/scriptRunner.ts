@@ -19,6 +19,11 @@ import { CAPTIONS_MODEL, CARD_MOTION_MODEL, COMPOSE_MODEL, MERGE_VIDEOS_MODEL, T
 
 const AT_ONCE = 3;
 
+/** A recorded line far longer than it would take to say: the voice came out dragged. */
+function tooSlow(secs: number, text: string): boolean {
+  return secs > beatSeconds(text) * 1.5 + 0.5;
+}
+
 /** How long a sound or video file lasts, read by the browser (free). Unknown gives null. */
 export function mediaSeconds(url: string, kind: "audio" | "video" = "audio"): Promise<number | null> {
   if (typeof document === "undefined" || !url || url.startsWith("data:image")) return Promise.resolve(null);
@@ -148,14 +153,22 @@ export async function buildScript(job: ScriptJob, save: (j: ScriptJob, stepChang
     const todo = beats.map((_, i) => i).filter((i) => !keeps(i));
     await pool(todo, AT_ONCE, async (i) => {
       const key = `${voiceId}|${beats[i].text}`;
-      if (job.voices[i] && job.voiceFor[i] === key && job.lengths[i]) {
+      if (job.voices[i] && job.voiceFor[i] === key && job.lengths[i] && !(opts.live && tooSlow(job.lengths[i]!, beats[i].text))) {
         done++;
         return;
       }
       step(`Recording the voice (${Math.min(done + 1, todo.length)} of ${todo.length} lines)`);
       if (opts.live) {
-        job.voices[i] = (own ? await speakOwn(conn!, voiceId, beats[i].text, job.language) : await tool({ tool: "voice", text: beats[i].text, voice: voiceId }, VOICE_MODEL.id)) || undefined;
-        job.lengths[i] = (job.voices[i] ? await mediaSeconds(job.voices[i]!) : null) ?? beatSeconds(beats[i].text);
+        // The voice service now and then drags a line out, which sounds like slow motion; such a take is made again.
+        let best: { url?: string; secs: number } | null = null;
+        for (let take = 0; take < 3; take++) {
+          const url = (own ? await speakOwn(conn!, voiceId, beats[i].text, job.language) : await tool({ tool: "voice", text: beats[i].text, voice: voiceId }, VOICE_MODEL.id)) || undefined;
+          const secs = (url ? await mediaSeconds(url) : null) ?? beatSeconds(beats[i].text);
+          if (!best || secs < best.secs) best = { url, secs };
+          if (!tooSlow(secs, beats[i].text)) break;
+        }
+        job.voices[i] = best!.url;
+        job.lengths[i] = best!.secs;
       } else job.lengths[i] = beatSeconds(beats[i].text);
       job.voiceFor[i] = key;
       done++;
