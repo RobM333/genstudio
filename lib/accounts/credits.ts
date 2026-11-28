@@ -12,6 +12,7 @@ import {
   TRANSCRIBE_MODEL,
   COMPOSE_MODEL,
   TRIM_MODEL,
+  LOUDNORM_MODEL,
   estimateCost,
   LAST_FRAME_MODEL,
   MERGE_VIDEOS_MODEL,
@@ -70,6 +71,8 @@ export function toolUsd(tool: string, opts: { seconds?: number; text?: string; m
       return unitPrice(MERGE_VIDEOS_MODEL);
     case "script-trim":
       return unitPrice(TRIM_MODEL);
+    case "music-quiet":
+      return unitPrice(LOUDNORM_MODEL);
     case "voice-join":
       return unitPrice(MERGE_AUDIO_MODEL);
     case "still-move":

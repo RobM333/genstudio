@@ -434,6 +434,7 @@ export type ScriptJob = {
   voices: (string | undefined)[]; // one per line (our voices or ElevenLabs)
   voiceFor: string[];
   lengths: (number | undefined)[]; // how long each line lasts, from its recording
+  musicQuiet?: { url: string; for: string }; // the music bed at one quiet level
   trims?: Record<string, string>; // each shot cut to its line, by "clip url|seconds"
   sections?: { url: string; for: string }[];
   voiceRuns?: Record<string, string>; // lines in a row joined into one track, by the lines' recordings

@@ -6,7 +6,7 @@ import { AD_VOICES, DEFAULT_VOICE, lineSeconds, SCENE_AVOID } from "@/lib/adplan
 import { makeDemoMedia } from "@/lib/demo";
 import { payForStep } from "@/lib/accounts/current";
 import { toolUsd } from "@/lib/accounts/credits";
-import { CAPTIONS_MODEL, CARD_MOTION_MODEL, COMPOSE_MODEL, isFalMediaUrl, isStockVideoUrl, MERGE_AUDIO_MODEL, TRIM_MODEL, TRANSCRIBE_MODEL, LAST_FRAME_MODEL, MERGE_VIDEOS_MODEL, MUSIC_MODEL, NATIVE_TALK_MODELS, TALK_VIDEO_MODEL, VOICE_MODEL } from "@/lib/models";
+import { CAPTIONS_MODEL, CARD_MOTION_MODEL, COMPOSE_MODEL, isFalMediaUrl, isStockVideoUrl, MERGE_AUDIO_MODEL, TRIM_MODEL, LOUDNORM_MODEL, TRANSCRIBE_MODEL, LAST_FRAME_MODEL, MERGE_VIDEOS_MODEL, MUSIC_MODEL, NATIVE_TALK_MODELS, TALK_VIDEO_MODEL, VOICE_MODEL } from "@/lib/models";
 import { MAX_BEATS } from "@/lib/script";
 
 export const dynamic = "force-dynamic";
@@ -177,13 +177,24 @@ export async function POST(req: Request) {
       break;
     }
     case "script-trim": {
-      // Each shot is cut to its line's length first. Stock videos come straight from Pexels or Pixabay.
+      // Each shot is cut to its line's length first (stock videos come straight from Pexels or Pixabay),
+      // and the mixed video is cut to the script's length, since the music bed can run past the end.
       const url = String(body.url ?? "");
-      const secs = Math.max(0.5, Math.min(30, Number(body.seconds) || 5));
+      const secs = Math.max(0.5, Math.min(3600, Number(body.seconds) || 5));
       if (!url) return bad();
       modelId = TRIM_MODEL.id;
       input = { video_url: url, start_time: 0, duration: Math.round(secs * 100) / 100 };
       stockUrls.push(url);
+      demoUrl = url;
+      break;
+    }
+    case "music-quiet": {
+      // AI music often starts soft and ends loud; the bed is set to one quiet, even level so the voice stays clear.
+      const url = String(body.url ?? "");
+      if (!url) return bad();
+      modelId = LOUDNORM_MODEL.id;
+      input = { audio_url: url, integrated_loudness: -30, true_peak: -3, loudness_range: 5 };
+      allUrls.push(url);
       demoUrl = url;
       break;
     }
@@ -312,6 +323,8 @@ const TOOL_NAMES: Record<string, string> = {
   "talk-scene": "Talking scene, lips matched",
   join: "Joining scenes",
   "script-join": "Joining shots",
+  "script-trim": "Cutting shots",
+  "music-quiet": "Evening out the music",
   "script-merge": "Joining sections",
   "voice-join": "Joining the voiceover",
   "still-move": "Picture with a slow move",

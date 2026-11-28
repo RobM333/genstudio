@@ -15,7 +15,7 @@ import { post, waitFor } from "./storyRunner";
 import { AD_I2V } from "./adRunner";
 import { loadEleven, speakOwn, usableVoices } from "./elevenConnect";
 import { alignRecording, beatSeconds, partKey, SECTION_SIZE, shotPrompt, stillMove, wordTimings, type ScriptJob } from "@/lib/script";
-import { CAPTIONS_MODEL, CARD_MOTION_MODEL, COMPOSE_MODEL, MERGE_VIDEOS_MODEL, TRIM_MODEL, MUSIC_MODEL, TRANSCRIBE_MODEL, VOICE_MODEL } from "@/lib/models";
+import { CAPTIONS_MODEL, CARD_MOTION_MODEL, COMPOSE_MODEL, MERGE_VIDEOS_MODEL, TRIM_MODEL, LOUDNORM_MODEL, MUSIC_MODEL, TRANSCRIBE_MODEL, VOICE_MODEL } from "@/lib/models";
 
 const AT_ONCE = 3;
 
@@ -286,11 +286,21 @@ export async function buildScript(job: ScriptJob, save: (j: ScriptJob, stepChang
     save(job);
   }
 
-  const mixKey = `${video}|${JSON.stringify(runs)}|${JSON.stringify(keep)}|${job.music ? job.musicUrl : ""}`;
+  if (job.music && opts.live && job.musicUrl && job.musicQuiet?.for !== job.musicUrl) {
+    step("Evening out the music");
+    job.musicQuiet = { url: await tool({ tool: "music-quiet", url: job.musicUrl }, LOUDNORM_MODEL.id), for: job.musicUrl };
+    save(job);
+  }
+  const bed = job.music ? job.musicQuiet?.url ?? job.musicUrl : undefined;
+
+  const mixKey = `v3|${video}|${JSON.stringify(runs)}|${JSON.stringify(keep)}|${bed ?? ""}`;
   if (!job.mixedUrl || job.mixedFor !== mixKey) {
-    if (runs.length || keep.length || (job.music && job.musicUrl)) {
+    if (runs.length || keep.length || bed) {
       step("Mixing the voice and music");
-      job.mixedUrl = await tool({ tool: "script-mix", videoUrl: video, voices: runs, keep, musicUrl: job.music ? job.musicUrl : undefined, seconds: Math.round(total * 10) / 10 }, COMPOSE_MODEL.id);
+      const mixed = await tool({ tool: "script-mix", videoUrl: video, voices: runs, keep, musicUrl: bed, seconds: Math.round(total * 10) / 10 }, COMPOSE_MODEL.id);
+      // The mix lasts as long as its longest sound (the music bed), so it is cut back to the script's length.
+      step("Trimming the video to the script's length");
+      job.mixedUrl = await tool({ tool: "script-trim", url: mixed, seconds: Math.round(total * 100) / 100 }, TRIM_MODEL.id);
     } else job.mixedUrl = video;
     job.mixedFor = mixKey;
     job.captionedUrl = undefined;
