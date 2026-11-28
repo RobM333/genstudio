@@ -42,10 +42,22 @@ export function mediaSeconds(url: string, kind: "audio" | "video" = "audio"): Pr
   });
 }
 
+/** Joining and mixing cost almost nothing and a failed one is free, so they get two more tries. */
+const RETRIED = new Set(["script-join", "script-merge", "voice-join", "script-mix", "captions"]);
+
 async function tool(body: Record<string, unknown>, fallbackModel: string): Promise<string> {
-  const res = await post("/api/tool", body);
-  if (res.status === "COMPLETED") return res.url ?? "";
-  return waitFor(res.modelId ?? fallbackModel, res);
+  const tries = RETRIED.has(String(body.tool)) ? 3 : 1;
+  for (let t = 1; ; t++) {
+    try {
+      const res = await post("/api/tool", body);
+      if (res.status === "COMPLETED") return res.url ?? "";
+      return await waitFor(res.modelId ?? fallbackModel, res);
+    } catch (e) {
+      // A file that was only just made can be briefly unreadable by the joining service.
+      if (t >= tries) throw e;
+      await new Promise((r) => setTimeout(r, t * 8000));
+    }
+  }
 }
 
 /** Runs the work a few at a time; the first failure is thrown once the running ones finish. */

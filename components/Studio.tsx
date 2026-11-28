@@ -249,6 +249,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
   // Picture-first is no longer shown: people found the extra picture step confusing.
   const pictureFirst = false;
   const [askTerms, setAskTerms] = useState(false);
+  const scriptAfterTerms = useRef<{ job: ScriptJob; parentId?: string } | null>(null);
   const [prompt, setPrompt] = useState("");
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>("1:1");
   const [duration, setDuration] = useState<number | undefined>(undefined);
@@ -1336,6 +1337,7 @@ export default function Studio({ mode }: { mode: AppMode }) {
   function startScript(job: ScriptJob, parentId?: string): string | null {
     if (mode === "locked") return "Real generation is switched off.";
     if (!hasAcceptedTerms()) {
+      scriptAfterTerms.current = { job, parentId };
       setAskTerms(true);
       return null;
     }
@@ -4416,11 +4418,18 @@ export default function Studio({ mode }: { mode: AppMode }) {
 
       {askTerms && (
         <AgreeModal
-          onCancel={() => setAskTerms(false)}
+          onCancel={() => {
+            scriptAfterTerms.current = null;
+            setAskTerms(false);
+          }}
           onAgree={() => {
             setAskTerms(false);
-            // In Script to Video the person presses Make again; the Create form isn't started from there.
-            if (view !== "script") setTimeout(generate, 0);
+            // Script to Video carries on with the video the person asked for; elsewhere the Create form starts.
+            const waiting = scriptAfterTerms.current;
+            scriptAfterTerms.current = null;
+            if (view === "script") {
+              if (waiting) setTimeout(() => startScript(waiting.job, waiting.parentId), 0);
+            } else setTimeout(generate, 0);
           }}
         />
       )}
