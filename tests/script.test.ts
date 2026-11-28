@@ -99,3 +99,4 @@ assert.ok(partKey(job, 3, 4).startsWith("mine|https://v3.fal.media/a.mp4"));
 assert.ok(beatSeconds("one two three four five") > 2);
 
 console.log("script tests passed");
+assert.deepEqual(splitScript("   "), []);

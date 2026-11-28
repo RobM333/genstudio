@@ -112,7 +112,7 @@ function cutLong(sentence: string): string[] {
  */
 export function splitScript(text: string): string[] {
   const lines: string[] = [];
-  for (const para of tidyScript(text).split("\n\n")) {
+  for (const para of tidyScript(text).split("\n\n").filter(Boolean)) {
     const sentences = para.match(/[^.!?…]+(?:[.!?…]+["”’')\]]*|$)/g)?.map((s) => s.trim()).filter(Boolean) ?? [para];
     const out: string[] = [];
     for (const p of sentences.flatMap(cutLong)) {
