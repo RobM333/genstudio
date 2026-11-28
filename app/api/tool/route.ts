@@ -6,7 +6,7 @@ import { AD_VOICES, DEFAULT_VOICE, lineSeconds, SCENE_AVOID } from "@/lib/adplan
 import { makeDemoMedia } from "@/lib/demo";
 import { payForStep } from "@/lib/accounts/current";
 import { toolUsd } from "@/lib/accounts/credits";
-import { CAPTIONS_MODEL, CARD_MOTION_MODEL, COMPOSE_MODEL, isFalMediaUrl, isStockVideoUrl, MERGE_AUDIO_MODEL, TRANSCRIBE_MODEL, LAST_FRAME_MODEL, MERGE_VIDEOS_MODEL, MUSIC_MODEL, NATIVE_TALK_MODELS, TALK_VIDEO_MODEL, VOICE_MODEL } from "@/lib/models";
+import { CAPTIONS_MODEL, CARD_MOTION_MODEL, COMPOSE_MODEL, isFalMediaUrl, isStockVideoUrl, MERGE_AUDIO_MODEL, TRIM_MODEL, TRANSCRIBE_MODEL, LAST_FRAME_MODEL, MERGE_VIDEOS_MODEL, MUSIC_MODEL, NATIVE_TALK_MODELS, TALK_VIDEO_MODEL, VOICE_MODEL } from "@/lib/models";
 import { MAX_BEATS } from "@/lib/script";
 
 export const dynamic = "force-dynamic";
@@ -37,6 +37,7 @@ type Body = {
   language?: string;
   tool?: string;
   urls?: unknown;
+  url?: string;
   text?: string;
   voice?: string;
   prompt?: string;
@@ -175,29 +176,25 @@ export async function POST(req: Request) {
       demoUrl = urls[urls.length - 1];
       break;
     }
-    case "script-join": {
-      // Each shot is cut to its line's length. Stock videos come straight from Pexels or Pixabay.
-      const list = Array.isArray(body.urls) ? body.urls.map(String).slice(0, 15) : [];
-      const durations = Array.isArray(body.durations) ? body.durations.map((d) => Math.max(0.5, Math.min(20, Number(d) || 5))) : [];
-      if (list.length === 0 || list.length > 14 || durations.length !== list.length) return bad();
-      let at = 0;
-      const keyframes = list.map((url, i) => {
-        const k = { url, timestamp: Math.round(at * 1000), duration: Math.round(durations[i] * 1000) };
-        at += durations[i];
-        return k;
-      });
-      modelId = COMPOSE_MODEL.id;
-      input = { tracks: [{ id: "video", type: "video", keyframes }] };
-      stockUrls.push(...list);
-      scriptSeconds = at;
-      demoUrl = list[0];
+    case "script-trim": {
+      // Each shot is cut to its line's length first. Stock videos come straight from Pexels or Pixabay.
+      const url = String(body.url ?? "");
+      const secs = Math.max(0.5, Math.min(30, Number(body.seconds) || 5));
+      if (!url) return bad();
+      modelId = TRIM_MODEL.id;
+      input = { video_url: url, start_time: 0, duration: Math.round(secs * 100) / 100 };
+      stockUrls.push(url);
+      demoUrl = url;
       break;
     }
+    case "script-join":
     case "script-merge": {
+      // The trimmed shots (or joined sections) are re-made at one size and frame rate, so mixed sources play smoothly.
       const list = Array.isArray(body.urls) ? body.urls.map(String).slice(0, 15) : [];
       if (list.length === 0 || list.length > 14) return bad();
+      const size = body.aspectRatio === "9:16" ? { width: 720, height: 1280 } : body.aspectRatio === "1:1" ? { width: 1024, height: 1024 } : { width: 1280, height: 720 };
       modelId = MERGE_VIDEOS_MODEL.id;
-      input = { video_urls: list, resolution_aspect_ratio_video_index: 0 };
+      input = { video_urls: list, target_fps: 24, resolution: size };
       allUrls.push(...list);
       demoUrl = list[0];
       break;

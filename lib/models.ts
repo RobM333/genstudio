@@ -404,6 +404,16 @@ export const COMPOSE_MODEL: ModelInfo = {
 };
 
 /** Script to Video helpers (used through /api/tool). Prices checked on fal.ai 2026-11-28. */
+export const TRIM_MODEL: ModelInfo = {
+  id: "fal-ai/workflow-utilities/trim-video",
+  typicalSeconds: 10,
+  name: "Trim shot",
+  kind: "video",
+  tagline: "Cuts a shot to the length of its line.",
+  approxCost: "~$0.001",
+  aspectRatios: ["1:1", "16:9", "9:16"],
+  buildInput: () => ({}),
+};
 export const MERGE_AUDIO_MODEL: ModelInfo = {
   id: "fal-ai/ffmpeg-api/merge-audios",
   typicalSeconds: 15,
@@ -562,7 +572,7 @@ export const NATIVE_TALK_MODELS: Record<"kling3" | "seedance", ModelInfo> = {
   },
 };
 
-const HIDDEN = [...Object.values(NATIVE_TALK_MODELS), HD_IMAGE_MODEL, HD_VIDEO_MODEL, ADD_SOUND_MODEL, EDIT_IMAGE_MODEL, REFERENCE_IMAGE_MODEL, REFERENCE_IMAGE_PRO_MODEL, LAST_FRAME_MODEL, MERGE_VIDEOS_MODEL, VOICE_MODEL, MUSIC_MODEL, COMPOSE_MODEL, CARD_MOTION_MODEL, MERGE_AUDIO_MODEL, TRANSCRIBE_MODEL, CAPTIONS_MODEL, TALK_SPEECH_MODEL, TALK_VIDEO_MODEL, ...ANIMATE_MODELS];
+const HIDDEN = [...Object.values(NATIVE_TALK_MODELS), HD_IMAGE_MODEL, HD_VIDEO_MODEL, ADD_SOUND_MODEL, EDIT_IMAGE_MODEL, REFERENCE_IMAGE_MODEL, REFERENCE_IMAGE_PRO_MODEL, LAST_FRAME_MODEL, MERGE_VIDEOS_MODEL, VOICE_MODEL, MUSIC_MODEL, COMPOSE_MODEL, CARD_MOTION_MODEL, MERGE_AUDIO_MODEL, TRIM_MODEL, TRANSCRIBE_MODEL, CAPTIONS_MODEL, TALK_SPEECH_MODEL, TALK_VIDEO_MODEL, ...ANIMATE_MODELS];
 
 export function getModel(id: string): ModelInfo | undefined {
   return MODELS.find((m) => m.id === id) ?? HIDDEN.find((m) => m.id === id);

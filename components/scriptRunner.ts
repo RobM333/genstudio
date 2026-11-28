@@ -15,7 +15,7 @@ import { post, waitFor } from "./storyRunner";
 import { AD_I2V } from "./adRunner";
 import { loadEleven, speakOwn, usableVoices } from "./elevenConnect";
 import { alignRecording, beatSeconds, partKey, SECTION_SIZE, shotPrompt, stillMove, wordTimings, type ScriptJob } from "@/lib/script";
-import { CAPTIONS_MODEL, CARD_MOTION_MODEL, COMPOSE_MODEL, MERGE_VIDEOS_MODEL, MUSIC_MODEL, TRANSCRIBE_MODEL, VOICE_MODEL } from "@/lib/models";
+import { CAPTIONS_MODEL, CARD_MOTION_MODEL, COMPOSE_MODEL, MERGE_VIDEOS_MODEL, TRIM_MODEL, MUSIC_MODEL, TRANSCRIBE_MODEL, VOICE_MODEL } from "@/lib/models";
 
 const AT_ONCE = 3;
 
@@ -43,7 +43,7 @@ export function mediaSeconds(url: string, kind: "audio" | "video" = "audio"): Pr
 }
 
 /** Joining and mixing cost almost nothing and a failed one is free, so they get two more tries. */
-const RETRIED = new Set(["script-join", "script-merge", "voice-join", "script-mix", "captions"]);
+const RETRIED = new Set(["script-trim", "script-join", "script-merge", "voice-join", "script-mix", "captions"]);
 
 async function tool(body: Record<string, unknown>, fallbackModel: string): Promise<string> {
   const tries = RETRIED.has(String(body.tool)) ? 3 : 1;
@@ -227,18 +227,33 @@ export async function buildScript(job: ScriptJob, save: (j: ScriptJob, stepChang
     },
   );
 
-  // ---------- 3. the shots joined: sections of 12, then the sections ----------
+  // ---------- 3. each shot cut to its line, then joined: sections of 12, then the sections ----------
+  // Shots come from different places (stock, AI, the person's own clips) with different sizes and
+  // frame rates, so each is trimmed on its own and the joins re-make them at one size and frame rate.
+  job.trims ??= {};
+  const trims = job.trims;
+  await pool(
+    beats.map((_, i) => i),
+    AT_ONCE,
+    async (i) => {
+      const secs = Math.round(lengths[i] * 100) / 100;
+      const key = `${job.parts[i].url}|${secs}`;
+      if (trims[key]) return;
+      step(`Cutting shot ${i + 1} of ${n} to its line`);
+      trims[key] = await tool({ tool: "script-trim", url: job.parts[i].url!, seconds: secs }, TRIM_MODEL.id);
+      save(job);
+    },
+  );
+  const cut = beats.map((_, i) => trims[`${job.parts[i].url}|${Math.round(lengths[i] * 100) / 100}`]);
   const sections: string[] = [];
   const count = Math.ceil(n / SECTION_SIZE);
   job.sections ??= [];
   for (let s = 0; s < count; s++) {
-    const idx = beats.map((_, i) => i).slice(s * SECTION_SIZE, (s + 1) * SECTION_SIZE);
-    const urls = idx.map((i) => job.parts[i].url!);
-    const durations = idx.map((i) => Math.round(lengths[i] * 100) / 100);
-    const key = `${urls.join(",")}|${durations.join(",")}`;
+    const urls = cut.slice(s * SECTION_SIZE, (s + 1) * SECTION_SIZE);
+    const key = `join2|${urls.join(",")}`;
     if (job.sections[s]?.for !== key) {
       step(`Joining the shots (part ${s + 1} of ${count})`);
-      job.sections[s] = { url: await tool({ tool: "script-join", urls, durations }, COMPOSE_MODEL.id), for: key };
+      job.sections[s] = { url: urls.length === 1 ? urls[0] : await tool({ tool: "script-join", urls, aspectRatio: job.aspectRatio }, MERGE_VIDEOS_MODEL.id), for: key };
       job.mixedUrl = undefined;
       save(job);
     }
@@ -247,7 +262,7 @@ export async function buildScript(job: ScriptJob, save: (j: ScriptJob, stepChang
   job.sections = job.sections.slice(0, count);
   const video = await joinAll(sections, 14, (part) => {
     step("Joining the parts into one video");
-    return tool({ tool: "script-merge", urls: part }, MERGE_VIDEOS_MODEL.id);
+    return tool({ tool: "script-merge", urls: part, aspectRatio: job.aspectRatio }, MERGE_VIDEOS_MODEL.id);
   });
 
   // ---------- 4. voice, music and kept clip sound ----------
