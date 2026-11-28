@@ -4,7 +4,7 @@ import { isFalMediaUrl } from "@/lib/models";
 import { checkPrompt } from "@/lib/safety";
 import { analysisInstructions, IMAGE_ANALYZER, parseAnalysis, SPEECH_CHECKER, VIDEO_ANALYZER } from "@/lib/analyze";
 import { isRealSpeech } from "@/lib/promise";
-import { fal } from "@/lib/fal";
+import { fal, submitCheck } from "@/lib/fal";
 
 export const dynamic = "force-dynamic";
 
@@ -56,9 +56,7 @@ export async function POST(req: Request) {
     const { request_id } =
       kind === "video"
         ? await fal.queue.submit(VIDEO_ANALYZER, { input: { video_url: url, prompt: instructions } })
-        : await fal.queue.submit(IMAGE_ANALYZER, {
-            input: { model: "google/gemini-2.5-flash", prompt: instructions, image_urls: productUrl ? [url, productUrl] : [url] },
-          });
+        : await submitCheck(IMAGE_ANALYZER, { model: "google/gemini-2.5-flash", prompt: instructions, image_urls: productUrl ? [url, productUrl] : [url] });
     return NextResponse.json({ status: "IN_QUEUE", requestId: request_id, kind });
   } catch (err) {
     console.error("analyze submit failed", err);

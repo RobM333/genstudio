@@ -211,14 +211,12 @@ async function enhanceWithAI(
   seconds = 5,
   lessons: ActiveLesson[] = [],
 ): Promise<{ prompt: string; note?: string; avoid?: string }> {
-  const { fal } = await import("./fal");
-  const call = fal.run("openrouter/router", {
-    input: {
+  const { askWriter } = await import("./fal");
+  const call = askWriter({
       model: process.env.ENHANCER_MODEL || "google/gemini-2.5-flash",
       system_prompt: systemPrompt(model, sound, purpose, seconds) + refNote(refKinds) + lessonsBlock(lessons),
       prompt: `User's description:\n${prompt}`,
-    },
-  });
+    });
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new Error("enhancer timed out")), TIMEOUT_MS);

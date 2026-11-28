@@ -562,7 +562,39 @@ export const NATIVE_TALK_MODELS: Record<"kling3" | "seedance", ModelInfo> = {
   },
 };
 
-const HIDDEN = [...Object.values(NATIVE_TALK_MODELS), HD_IMAGE_MODEL, HD_VIDEO_MODEL, ADD_SOUND_MODEL, EDIT_IMAGE_MODEL, REFERENCE_IMAGE_MODEL, REFERENCE_IMAGE_PRO_MODEL, LAST_FRAME_MODEL, MERGE_VIDEOS_MODEL, VOICE_MODEL, MUSIC_MODEL, COMPOSE_MODEL, CARD_MOTION_MODEL, MERGE_AUDIO_MODEL, TRANSCRIBE_MODEL, CAPTIONS_MODEL, TALK_SPEECH_MODEL, TALK_VIDEO_MODEL, ...ANIMATE_MODELS];
+/**
+ * Models used only as backups (lib/backups.ts), never picked by people directly.
+ * Veo 3.1 Fast: checked on fal.ai 2026-11-28, same input and price as Veo 3 Fast
+ * ($0.15/s with sound, $0.10/s without), which fal now lists as deprecated.
+ */
+export const BACKUP_ONLY_MODELS: ModelInfo[] = [
+  {
+    id: "fal-ai/veo3.1/fast",
+    typicalSeconds: 75,
+    audio: true,
+    silentApproxPrice: 0.1,
+    name: "Google Veo 3.1 Fast",
+    kind: "video",
+    tagline: "Top quality, with sound.",
+    approxCost: "~$0.15 / second",
+    durations: [8],
+    aspectRatios: ["16:9", "9:16"],
+    buildInput: ({ prompt, aspectRatio, sound, avoid }) => ({
+      prompt,
+      aspect_ratio: aspectRatio,
+      duration: "8s",
+      generate_audio: sound !== false,
+      ...(avoid ? { negative_prompt: avoid } : {}),
+    }),
+  },
+];
+
+const HIDDEN = [...Object.values(NATIVE_TALK_MODELS), HD_IMAGE_MODEL, HD_VIDEO_MODEL, ADD_SOUND_MODEL, EDIT_IMAGE_MODEL, REFERENCE_IMAGE_MODEL, REFERENCE_IMAGE_PRO_MODEL, LAST_FRAME_MODEL, MERGE_VIDEOS_MODEL, VOICE_MODEL, MUSIC_MODEL, COMPOSE_MODEL, CARD_MOTION_MODEL, MERGE_AUDIO_MODEL, TRANSCRIBE_MODEL, CAPTIONS_MODEL, TALK_SPEECH_MODEL, TALK_VIDEO_MODEL, ...ANIMATE_MODELS, ...BACKUP_ONLY_MODELS];
+
+/** Every model id in the catalogue, shown or not. */
+export function allModelIds(): string[] {
+  return [...MODELS, ...HIDDEN].map((m) => m.id);
+}
 
 export function getModel(id: string): ModelInfo | undefined {
   return MODELS.find((m) => m.id === id) ?? HIDDEN.find((m) => m.id === id);

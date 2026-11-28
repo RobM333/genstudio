@@ -25,16 +25,14 @@ export async function POST(req: Request) {
 
   if (getMode() === "live") {
     try {
-      const { fal } = await import("@/lib/fal");
+      const { askWriter } = await import("@/lib/fal");
       let timer: ReturnType<typeof setTimeout> | undefined;
       const result = (await Promise.race([
-        fal.run("openrouter/router", {
-          input: {
+        askWriter({
             model: process.env.ENHANCER_MODEL || "google/gemini-2.5-flash",
             system_prompt: planInstructions(targetSeconds),
             prompt: `User's idea:\n${prompt}`,
-          },
-        }),
+          }),
         new Promise<never>((_, reject) => {
           timer = setTimeout(() => reject(new Error("planner timed out")), TIMEOUT_MS);
         }),

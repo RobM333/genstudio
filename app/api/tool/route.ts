@@ -6,7 +6,8 @@ import { AD_VOICES, DEFAULT_VOICE, lineSeconds, SCENE_AVOID } from "@/lib/adplan
 import { makeDemoMedia } from "@/lib/demo";
 import { payForStep } from "@/lib/accounts/current";
 import { toolUsd } from "@/lib/accounts/credits";
-import { CAPTIONS_MODEL, CARD_MOTION_MODEL, COMPOSE_MODEL, isFalMediaUrl, isStockVideoUrl, MERGE_AUDIO_MODEL, TRANSCRIBE_MODEL, LAST_FRAME_MODEL, MERGE_VIDEOS_MODEL, MUSIC_MODEL, NATIVE_TALK_MODELS, TALK_VIDEO_MODEL, VOICE_MODEL } from "@/lib/models";
+import { CAPTIONS_MODEL, CARD_MOTION_MODEL, COMPOSE_MODEL, isFalMediaUrl, isStockVideoUrl, MERGE_AUDIO_MODEL, TRANSCRIBE_MODEL, LAST_FRAME_MODEL, MERGE_VIDEOS_MODEL, MUSIC_MODEL, NATIVE_TALK_MODELS, TALK_VIDEO_MODEL, VOICE_MODEL, type ModelInfo } from "@/lib/models";
+import { submitWithBackups } from "@/lib/backups";
 
 export const dynamic = "force-dynamic";
 
@@ -65,6 +66,9 @@ export async function POST(req: Request) {
   let modelId: string;
   let input: Record<string, unknown>;
   let demoUrl = "";
+  // Talking scenes can move to a similar model if the first one is gone or down (lib/backups.ts).
+  let talkModel: ModelInfo | undefined;
+  let talkOpts: Parameters<ModelInfo["buildInput"]>[0] | undefined;
   const allUrls: string[] = [];
   const stockUrls: string[] = []; // may also be free stock videos
   let scriptSeconds = 0;
@@ -153,7 +157,9 @@ export async function POST(req: Request) {
       if (!checkPrompt(prompt).ok) return NextResponse.json({ error: "This scene can't be used." }, { status: 422 });
       modelId = m.id;
       const ratio = body.aspectRatio === "16:9" || body.aspectRatio === "1:1" ? body.aspectRatio : "9:16";
-      input = m.buildInput({ prompt, aspectRatio: ratio, duration: 5, sourceUrl: imageUrl, avoid: SCENE_AVOID });
+      talkOpts = { prompt, aspectRatio: ratio, duration: 5, sourceUrl: imageUrl, avoid: SCENE_AVOID };
+      talkModel = m;
+      input = m.buildInput(talkOpts);
       allUrls.push(imageUrl);
       demoUrl = makeDemoMedia({ prompt, kind: "video", aspectRatio: ratio, modelName: m.name });
       break;
@@ -293,6 +299,11 @@ export async function POST(req: Request) {
   const pay = await payForStep(req, toolUsd(String(body.tool), { model: body.model, seconds: body.tool === "talk-native" ? 5 : body.tool === "talk-scene" ? lineSeconds(spoken) + 0.5 : scriptSeconds || seconds, text: spoken }), TOOL_NAMES[String(body.tool)] ?? "Video tool");
   if (pay.error) return pay.error;
   try {
+    if (talkModel && talkOpts) {
+      const sent = await submitWithBackups((id, args) => fal.queue.submit(id, args), talkModel, talkOpts);
+      await pay.done(sent.requestId);
+      return NextResponse.json({ status: "IN_QUEUE", requestId: sent.requestId, modelId: sent.model.id });
+    }
     const { request_id } = await fal.queue.submit(modelId, { input });
     await pay.done(request_id);
     return NextResponse.json({ status: "IN_QUEUE", requestId: request_id, modelId });

@@ -11,6 +11,7 @@ import { lessonsFor } from "@/lib/learnStore";
 import { payForStep } from "@/lib/accounts/current";
 import { generateUsd } from "@/lib/accounts/credits";
 import { SCENE_AVOID } from "@/lib/adplan";
+import { submitWithBackups } from "@/lib/backups";
 
 export const dynamic = "force-dynamic";
 
@@ -138,11 +139,10 @@ export async function POST(req: Request) {
   if (pay.error) return pay.error;
 
   try {
-    const { request_id } = await fal.queue.submit(model.id, {
-      input: model.buildInput({ prompt: finalPrompt, aspectRatio, duration, sourceUrl, sound: body.sound !== false, refUrls, avoid, scale: Number(body.scale) || undefined }),
-    });
-    await pay.done(request_id);
-    return NextResponse.json({ status: "IN_QUEUE", requestId: request_id, modelId: model.id, aspectRatio, duration, enhancedPrompt, enhanceNote, lessons: lessonIds, credits: pay.credits || undefined });
+    // If this model is gone or down, a similar one quietly takes the job (lib/backups.ts).
+    const sent = await submitWithBackups((id, args) => fal.queue.submit(id, args), model, { prompt: finalPrompt, aspectRatio, duration, sourceUrl, sound: body.sound !== false, refUrls, avoid, scale: Number(body.scale) || undefined });
+    await pay.done(sent.requestId);
+    return NextResponse.json({ status: "IN_QUEUE", requestId: sent.requestId, modelId: sent.model.id, aspectRatio, duration, enhancedPrompt, enhanceNote, lessons: lessonIds, credits: pay.credits || undefined });
   } catch (err) {
     await pay.undo();
     console.error("fal submit failed", err);
