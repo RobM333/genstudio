@@ -461,7 +461,7 @@ export async function buildAd(
       }
       // A cheap look at the first frame before the expensive part: one new frame if it's clearly off.
       if (check && !clip.frameChecked) {
-        step(`Scene ${i + 1} of ${n}: checking the shot`, "fal-ai/any-llm/vision");
+        step(`Scene ${i + 1} of ${n}: checking the shot`, "openrouter/router/vision");
         const a = await checkPart("image", clip.frame, scenePrompt(job.plan, i), productRef);
         if (a?.serious) {
           step(`Scene ${i + 1} of ${n}: fixing the shot`, "fal-ai/nano-banana/edit");

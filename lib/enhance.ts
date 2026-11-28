@@ -212,7 +212,7 @@ async function enhanceWithAI(
   lessons: ActiveLesson[] = [],
 ): Promise<{ prompt: string; note?: string; avoid?: string }> {
   const { fal } = await import("./fal");
-  const call = fal.run("fal-ai/any-llm", {
+  const call = fal.run("openrouter/router", {
     input: {
       model: process.env.ENHANCER_MODEL || "google/gemini-2.5-flash",
       system_prompt: systemPrompt(model, sound, purpose, seconds) + refNote(refKinds) + lessonsBlock(lessons),

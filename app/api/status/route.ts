@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getMode } from "@/lib/config";
-import { extractMediaUrl, getModel } from "@/lib/models";
+import { extractMediaUrl, getModel, TRANSCRIBE_MODEL } from "@/lib/models";
 import { fal } from "@/lib/fal";
 import { sign } from "@/lib/references";
 import { stepFailed } from "@/lib/accounts/current";
@@ -26,6 +26,11 @@ export async function GET(req: Request) {
       });
     }
     const result = await fal.queue.result(model.id, { requestId });
+    // Script to Video: the person's own recording comes back as words with their times, not as a file.
+    if (model.id === TRANSCRIBE_MODEL.id) {
+      const d = (result.data ?? {}) as { chunks?: unknown[]; text?: string };
+      return NextResponse.json({ status: "COMPLETED", chunks: Array.isArray(d.chunks) ? d.chunks.slice(0, 20000) : [], text: String(d.text ?? "").slice(0, 60000) });
+    }
     const mediaUrl = extractMediaUrl(result.data);
     if (!mediaUrl) {
       await stepFailed(req, requestId, "no result came back");

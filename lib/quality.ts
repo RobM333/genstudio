@@ -15,7 +15,7 @@ import type { Analysis } from "./analyze";
 import { estimateCost, getModel, KEYFRAME_MODEL_ID, type ModelInfo } from "./models";
 import type { Quality } from "./router";
 
-/** One look at a picture by the checker (fal-ai/any-llm/vision with Gemini Flash). */
+/** One look at a picture by the checker (openrouter/router/vision with Gemini Flash). */
 export const CHECK_PICTURE_USD = 0.01;
 
 /** Models that are premium on their own; any job made "higher quality" counts too. */

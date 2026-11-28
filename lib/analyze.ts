@@ -5,7 +5,7 @@ import { cleanFaults, type FaultCode } from "./promise";
 // Pictures use a vision model (about 1 cent); videos use a video model
 // (about 1 cent per 5 seconds).
 
-export const IMAGE_ANALYZER = "fal-ai/any-llm/vision";
+export const IMAGE_ANALYZER = "openrouter/router/vision";
 export const VIDEO_ANALYZER = "fal-ai/video-understanding";
 
 export type Analysis = { problems: string[]; fix: string; prompt: string; serious?: boolean; faults?: FaultCode[] };

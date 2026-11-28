@@ -403,6 +403,58 @@ export const COMPOSE_MODEL: ModelInfo = {
   buildInput: () => ({}),
 };
 
+/** Script to Video helpers (used through /api/tool). Prices checked on fal.ai 2026-11-28. */
+export const TRIM_MODEL: ModelInfo = {
+  id: "fal-ai/workflow-utilities/trim-video",
+  typicalSeconds: 10,
+  name: "Trim shot",
+  kind: "video",
+  tagline: "Cuts a shot to the length of its line.",
+  approxCost: "~$0.001",
+  aspectRatios: ["1:1", "16:9", "9:16"],
+  buildInput: () => ({}),
+};
+export const LOUDNORM_MODEL: ModelInfo = {
+  id: "fal-ai/ffmpeg-api/loudnorm",
+  typicalSeconds: 10,
+  name: "Even out the music",
+  kind: "video",
+  tagline: "Sets the music bed to one quiet, even level under the voice.",
+  approxCost: "~$0.001",
+  aspectRatios: ["1:1", "16:9", "9:16"],
+  buildInput: () => ({}),
+};
+export const MERGE_AUDIO_MODEL: ModelInfo = {
+  id: "fal-ai/ffmpeg-api/merge-audios",
+  typicalSeconds: 15,
+  name: "Join voice",
+  kind: "video",
+  tagline: "Joins the voiceover lines into one track.",
+  approxCost: "~$0.001",
+  aspectRatios: ["1:1", "16:9", "9:16"],
+  buildInput: () => ({}),
+};
+export const TRANSCRIBE_MODEL: ModelInfo = {
+  id: "fal-ai/whisper",
+  typicalSeconds: 30,
+  name: "Line up your recording",
+  kind: "video",
+  tagline: "Hears your own recording so each shot starts with its line.",
+  approxCost: "~$0.02 / minute",
+  aspectRatios: ["1:1", "16:9", "9:16"],
+  buildInput: () => ({}),
+};
+export const CAPTIONS_MODEL: ModelInfo = {
+  id: "fal-ai/workflow-utilities/auto-subtitle",
+  typicalSeconds: 60,
+  name: "Captions",
+  kind: "video",
+  tagline: "Adds captions to the finished video.",
+  approxCost: "~$0.03 / minute",
+  aspectRatios: ["1:1", "16:9", "9:16"],
+  buildInput: () => ({}),
+};
+
 /** Brings the ad's end card to life with a gentle, nearly still move ($0.02 per second). */
 export const CARD_MOTION_MODEL: ModelInfo = {
   id: "fal-ai/ltxv-13b-098-distilled/image-to-video",
@@ -530,13 +582,23 @@ export const NATIVE_TALK_MODELS: Record<"kling3" | "seedance", ModelInfo> = {
   },
 };
 
-const HIDDEN = [...Object.values(NATIVE_TALK_MODELS), HD_IMAGE_MODEL, HD_VIDEO_MODEL, ADD_SOUND_MODEL, EDIT_IMAGE_MODEL, REFERENCE_IMAGE_MODEL, REFERENCE_IMAGE_PRO_MODEL, LAST_FRAME_MODEL, MERGE_VIDEOS_MODEL, VOICE_MODEL, MUSIC_MODEL, COMPOSE_MODEL, CARD_MOTION_MODEL, TALK_SPEECH_MODEL, TALK_VIDEO_MODEL, ...ANIMATE_MODELS];
+const HIDDEN = [...Object.values(NATIVE_TALK_MODELS), HD_IMAGE_MODEL, HD_VIDEO_MODEL, ADD_SOUND_MODEL, EDIT_IMAGE_MODEL, REFERENCE_IMAGE_MODEL, REFERENCE_IMAGE_PRO_MODEL, LAST_FRAME_MODEL, MERGE_VIDEOS_MODEL, VOICE_MODEL, MUSIC_MODEL, COMPOSE_MODEL, CARD_MOTION_MODEL, MERGE_AUDIO_MODEL, TRIM_MODEL, LOUDNORM_MODEL, TRANSCRIBE_MODEL, CAPTIONS_MODEL, TALK_SPEECH_MODEL, TALK_VIDEO_MODEL, ...ANIMATE_MODELS];
 
 export function getModel(id: string): ModelInfo | undefined {
   return MODELS.find((m) => m.id === id) ?? HIDDEN.find((m) => m.id === id);
 }
 
 /** Only accept result images and videos that fal.ai itself hosts, so the key can't be used on random URLs. */
+/** Free stock video files (Pexels and Pixabay) that Script to Video may place in a video. */
+export function isStockVideoUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return u.protocol === "https:" && (u.hostname === "videos.pexels.com" || u.hostname === "cdn.pixabay.com") && /\.mp4$/i.test(u.pathname);
+  } catch {
+    return false;
+  }
+}
+
 export function isFalMediaUrl(url: string): boolean {
   try {
     const u = new URL(url);

@@ -34,7 +34,7 @@ async function ask(system: string, prompt: string): Promise<string> {
   const { fal } = await import("@/lib/fal");
   let timer: ReturnType<typeof setTimeout> | undefined;
   const result = (await Promise.race([
-    fal.run("fal-ai/any-llm", { input: { model: process.env.ENHANCER_MODEL || "google/gemini-2.5-flash", system_prompt: system, prompt } }),
+    fal.run("openrouter/router", { input: { model: process.env.ENHANCER_MODEL || "google/gemini-2.5-flash", system_prompt: system, prompt } }),
     new Promise<never>((_, reject) => {
       timer = setTimeout(() => reject(new Error("ideas timed out")), TIMEOUT_MS);
     }),
