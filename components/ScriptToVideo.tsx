@@ -112,7 +112,7 @@ export default function ScriptToVideo({
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [stockOn, setStockOn] = useState(false);
+  const [stockKeys, setStockKeys] = useState({ on: false, wideOnly: true });
   const [showAll, setShowAll] = useState(false);
   const [clipConsent, setClipConsent] = useState(false);
   const [voiceConsent, setVoiceConsent] = useState(false);
@@ -123,8 +123,8 @@ export default function ScriptToVideo({
     setLoaded(true);
     fetch("/api/stock")
       .then((r) => r.json())
-      .then((j) => setStockOn(Boolean(j.on)))
-      .catch(() => setStockOn(false));
+      .then((j) => setStockKeys({ on: Boolean(j.on), wideOnly: j.wideOnly !== false }))
+      .catch(() => setStockKeys({ on: false, wideOnly: true }));
   }, []);
   useEffect(() => {
     if (!loaded) return;
@@ -137,6 +137,8 @@ export default function ScriptToVideo({
   }, [d, loaded]);
 
   const set = (patch: Partial<Draft>) => setD((x) => ({ ...x, ...patch }));
+  // Stock for this shape: Pixabay alone only has wide videos.
+  const stockOn = stockKeys.on && (d.shape === "16:9" || !stockKeys.wideOnly);
   const lines = useMemo(() => (d.plan ? d.plan.beats.map((b) => b.text) : splitScript(d.script)), [d.plan, d.script]);
   const seconds = d.plan ? scriptSeconds(d.plan.beats) : scriptSeconds(lines.map((text) => ({ text })));
   const extras = { voice: d.voice.kind, captions: d.captions, music: d.music };
@@ -372,7 +374,11 @@ export default function ScriptToVideo({
             );
           })}
         </div>
-        {!stockOn && <p className="muted small g-hint">Stock video isn&apos;t switched on yet, so lines that would use stock get an AI still with a slow move instead.</p>}
+        {!stockOn && (
+          <p className="muted small g-hint">
+            {stockKeys.on ? "Stock video is only for wide 16:9 videos for now" : "Stock video isn't switched on yet"}, so lines that would use stock get an AI still with a slow move instead.
+          </p>
+        )}
         <div className="sub-label">Star of the video</div>
         <div className="pills">
           <button className={d.star === "" ? "pill active" : "pill"} onClick={() => set({ star: "" })}>
@@ -464,7 +470,7 @@ export default function ScriptToVideo({
                         </button>
                       </div>
                     ) : (
-                      <p className="muted small">{b.stockTried ? "No stock video fits this line, so it becomes an AI still with a slow move." : "Finding a stock video..."}</p>
+                      <p className="muted small">{b.stockTried || !stockOn ? "No stock video fits this line, so it becomes an AI still with a slow move." : "Finding a stock video..."}</p>
                     )
                   ) : null}
                   {b.source !== "mine" && (
@@ -489,7 +495,7 @@ export default function ScriptToVideo({
               {showAll ? "Show fewer lines" : `Show all ${beats.length} lines`}
             </button>
           )}
-          {stockOn && <p className="muted small g-hint">Stock videos from Pexels (https://www.pexels.com) and Pixabay (https://pixabay.com), free to use in your videos.</p>}
+          {stockOn && <p className="muted small g-hint">Stock videos from {stockKeys.wideOnly ? "Pixabay (https://pixabay.com)" : "Pixabay (https://pixabay.com) and Pexels (https://www.pexels.com)"}, free to use in your videos.</p>}
         </section>
       )}
 

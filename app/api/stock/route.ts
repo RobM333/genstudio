@@ -20,7 +20,8 @@ function stockOn(): boolean {
 }
 
 export async function GET() {
-  return NextResponse.json({ on: stockOn() });
+  // Pixabay videos are almost all wide, so tall and square stock needs Pexels.
+  return NextResponse.json({ on: stockOn(), wideOnly: !process.env.PEXELS_API_KEY?.trim() });
 }
 
 export async function POST(req: Request) {
