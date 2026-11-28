@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getMode } from "@/lib/config";
-import { extractMediaUrl, getModel, TRANSCRIBE_MODEL } from "@/lib/models";
+import { allModelIds, extractMediaUrl, getModel, TRANSCRIBE_MODEL } from "@/lib/models";
+import { readBackupRequestId } from "@/lib/backups";
 import { fal } from "@/lib/fal";
 import { sign } from "@/lib/references";
 import { stepFailed } from "@/lib/accounts/current";
@@ -10,22 +11,26 @@ export const dynamic = "force-dynamic";
 // The browser calls this every few seconds while a job is running.
 export async function GET(req: Request) {
   const url = new URL(req.url);
-  const model = getModel(url.searchParams.get("modelId") ?? "");
+  const asked = getModel(url.searchParams.get("modelId") ?? "");
   const requestId = url.searchParams.get("requestId") ?? "";
 
-  if (!model || !/^[\w-]{8,100}$/.test(requestId))
+  if (!asked || !/^[\w-]{8,111}$/.test(requestId))
     return NextResponse.json({ error: "Bad request." }, { status: 400 });
+  // A job that went to a backup model (lib/backups.ts) is checked on that model.
+  const backup = readBackupRequestId(requestId, allModelIds());
+  const model = (backup && getModel(backup.modelId)) || asked;
+  const falId = backup ? backup.requestId : requestId;
   if (getMode() !== "live") return NextResponse.json({ error: "Real generation is not switched on." }, { status: 403 });
 
   try {
-    const status = await fal.queue.status(model.id, { requestId });
+    const status = await fal.queue.status(model.id, { requestId: falId });
     if (status.status !== "COMPLETED") {
       return NextResponse.json({
         status: status.status,
         queuePosition: status.status === "IN_QUEUE" ? status.queue_position : undefined,
       });
     }
-    const result = await fal.queue.result(model.id, { requestId });
+    const result = await fal.queue.result(model.id, { requestId: falId });
     // Script to Video: the person's own recording comes back as words with their times, not as a file.
     if (model.id === TRANSCRIBE_MODEL.id) {
       const d = (result.data ?? {}) as { chunks?: unknown[]; text?: string };

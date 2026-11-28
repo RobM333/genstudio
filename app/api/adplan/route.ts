@@ -40,19 +40,17 @@ export async function POST(req: Request) {
 
   if (getMode() === "live") {
     try {
-      const { fal } = await import("@/lib/fal");
+      const { askWriter } = await import("@/lib/fal");
       let timer: ReturnType<typeof setTimeout> | undefined;
       const prompt = revising
         ? `Product: ${brief.product}\nAudience: ${brief.audience}\n\nCurrent plan:\n${JSON.stringify(body.plan).slice(0, 6000)}\n\nChange requested by the user:\n${request}`
         : `Product: ${brief.product}\nAudience: ${brief.audience || "not given, pick the most likely buyers"}`;
       const result = (await Promise.race([
-        fal.run("openrouter/router", {
-          input: {
+        askWriter({
             model: process.env.ENHANCER_MODEL || "google/gemini-2.5-flash",
             system_prompt: revising ? revisePlanInstructions(brief) : adPlanInstructions(brief),
             prompt,
-          },
-        }),
+          }),
         new Promise<never>((_, reject) => {
           timer = setTimeout(() => reject(new Error("ad planner timed out")), TIMEOUT_MS);
         }),

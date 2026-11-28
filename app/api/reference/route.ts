@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getMode } from "@/lib/config";
-import { fal } from "@/lib/fal";
+import { fal, submitCheck } from "@/lib/fal";
 import { IMAGE_ANALYZER } from "@/lib/analyze";
 import { isFalMediaUrl } from "@/lib/models";
 import { safeFetch } from "@/lib/safefetch";
@@ -69,9 +69,7 @@ export async function POST(req: Request) {
 
   try {
     const url = await fal.storage.upload(new Blob([bytes], { type }));
-    const { request_id } = await fal.queue.submit(IMAGE_ANALYZER, {
-      input: { model: "google/gemini-2.5-flash", prompt: refCheckInstructions(kind), image_urls: [url] },
-    });
+    const { request_id } = await submitCheck(IMAGE_ANALYZER, { model: "google/gemini-2.5-flash", prompt: refCheckInstructions(kind), image_urls: [url] });
     // Ties this check to this exact picture, so a passing check can't be reused for another one.
     const checkToken = sign("check", request_id, url, kind);
     return NextResponse.json({ status: "IN_QUEUE", requestId: request_id, url, checkToken });

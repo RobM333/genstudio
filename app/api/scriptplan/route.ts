@@ -30,16 +30,14 @@ export async function POST(req: Request) {
 
   if (getMode() !== "live") return NextResponse.json({ ...rules(), by: "rules" });
   try {
-    const { fal } = await import("@/lib/fal");
+    const { askWriter } = await import("@/lib/fal");
     let timer: ReturnType<typeof setTimeout> | undefined;
     const result = (await Promise.race([
-      fal.run("openrouter/router", {
-        input: {
+      askWriter({
           model: process.env.ENHANCER_MODEL || "google/gemini-2.5-flash",
           system_prompt: scriptPlanInstructions({ count: lines.length, first: Boolean(body.first), look, brand, star }),
           prompt: lines.map((l, i) => `${i + 1}. ${l}`).join("\n"),
-        },
-      }),
+        }),
       new Promise<never>((_, reject) => {
         timer = setTimeout(() => reject(new Error("script planner timed out")), TIMEOUT_MS);
       }),
