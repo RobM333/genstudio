@@ -433,7 +433,15 @@ export default function ScriptToVideo({
                 <div className="script-shot">
                   <div className="pills script-sources" role="radiogroup" aria-label={`Shot for line ${i + 1}`}>
                     {(["ai", "stock", "still", "mine"] as ShotSource[]).map((s) => (
-                      <button key={s} role="radio" aria-checked={b.source === s} title={SOURCE_HINT[s]} className={b.source === s ? "pill active" : "pill"} onClick={() => swap(i, s)}>
+                      <button
+                        key={s}
+                        role="radio"
+                        aria-checked={b.source === s}
+                        disabled={s === "stock" && !stockOn && b.source !== "stock"}
+                        title={s === "stock" && !stockOn ? "Stock video isn't available for this shape yet" : SOURCE_HINT[s]}
+                        className={b.source === s ? "pill active" : "pill"}
+                        onClick={() => swap(i, s)}
+                      >
                         {SOURCE_LABEL[s]}
                       </button>
                     ))}
